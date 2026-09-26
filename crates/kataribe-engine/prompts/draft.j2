@@ -1,0 +1,103 @@
+{% import "_macros.j2" as m %}
+{% block system %}
+{{ m.writer_role(project) }}与えられた設計に沿って、小説の本文を書きます。
+
+{{ m.genre_and_rating(project) }}
+
+【本文を書くときの約束】
+- 出力するのは小説の本文だけ。題名・章番号・見出し・注釈・前置き・後書き・「つづく」は書かない。
+- 文体ガイドに従う。特に語りの人称（一人称か三人称か）を守る。
+- 設計の「視点」は、語りが寄り添う人物のこと。三人称のときは地の文で「私」と書かず、名前や「彼」「彼女」で書く。人物の一人称（「私」など）は台詞の中で使う。
+- 文体見本は雰囲気の手本。見本の文や言い回しをそのまま使わない。
+- 説明で済ませず、行動・会話・五感の描写で場面を立ち上げる。
+- 登場人物の口調（一人称・呼び方・語尾・口癖）を資料のとおりに保つ。
+- 視点人物が見ていないこと・知りえないことは書かない。
+- 設計にない重大な出来事を起こさない。この後のシーンの出来事や、まだ明かしていない真相・推理の結論を先取りしない。
+- 同じ言い回しや、同じ文末（「〜た。」など）を何度も続けない。
+- 台詞の頭に「……」を付けるのは、ためらいや沈黙を表すときだけにする。
+- 段落は数文ごとに改行する。会話文は「」で囲み、発言ごとに改行する。
+{% endblock %}
+
+{% block user %}
+{{ m.project_info(project) }}
+
+{{ m.document("文体ガイド", style) }}
+
+{{ m.document("世界観（抜粋）", world) }}
+
+{% if characters %}
+【登場人物】
+{{ m.character_list(characters) }}
+
+{% endif %}
+{% if story_so_far %}
+【これまでの物語】
+{% for entry in story_so_far %}
+・{{ entry.label }}: {{ entry.summary }}
+{% endfor %}
+
+{% endif %}
+【この章「{{ chapter.title }}」の流れ】
+{{ chapter.storyline }}
+
+{% for planned in chapter.scenes %}
+{{ loop.index }}. {{ planned.title }}{% if planned.status == "current" %}　←今回{% elif planned.status == "done" %}（書き終えた）{% else %}（この後のシーン。今回は書かない）{% endif %}: {{ planned.summary }}
+{% if planned.status == "current" and unit == "chapter" %}
+   {{ m.scene_details(planned) }}
+{% endif %}
+{% endfor %}
+
+{% if scene %}
+【今回のシーン「{{ scene.title }}」】
+{{ scene.summary }}
+{{ m.scene_details(scene) }}
+
+{% endif %}
+{% if beat %}
+【今回書く部分（全 {{ beat.total }} 部のうち {{ beat.index }} 部目）】
+{{ beat.text }}
+{% if beat.next %}
+（次の部分「{{ beat.next }}」は次の回に書くので、今回は書かない）
+{% endif %}
+
+{% endif %}
+{% if previous_scene_ending %}
+【前のシーンの終わり（参考。この場面から時間や場所が変わってよい）】
+{{ previous_scene_ending }}
+
+{% endif %}
+{% if written_so_far %}
+【このシーンの書きかけの本文（この続きから書く）】
+{{ written_so_far }}
+
+{% endif %}
+{% if narration %}
+【語りの人称と視点（文体ガイドより。必ず守る）】
+{{ narration }}
+
+{% endif %}
+【指示】
+{% if unit == "chapter" %}
+この章のシーン {{ chapter.first_current }} からシーン {{ chapter.last_current }} までの本文を、順に約{{ target_chars }}字で書いてください。
+シーンとシーンの間には「◇」だけの行を入れること。各シーンの内容をすべて描き、シーン {{ chapter.last_current }} の終わりまで書くこと。
+{% elif beat %}
+上の「今回書く部分」だけを、約{{ target_chars }}字の本文にしてください。
+{% if beat.index == beat.total %}
+このシーンの最後の部分なので、シーンを締めくくること。
+{% else %}
+まだシーンを終わらせないこと。
+{% endif %}
+{% elif part.total > 1 %}
+このシーンを {{ part.total }} 回に分けて書きます。今回はシーンの{{ part.label }}を、約{{ target_chars }}字で書いてください。
+{% if part.index < part.total %}
+まだシーンを終わらせないこと。
+{% else %}
+シーンの終わりまで書き、次のシーンにつながる余韻で締めくくること。
+{% endif %}
+{% else %}
+このシーンの本文を、約{{ target_chars }}字で書いてください。シーンの内容をすべて描き、シーンの終わりまで書くこと。
+{% endif %}
+{% if written_so_far %}
+書きかけの本文の続きとして自然につなげ、書きかけの本文の内容や文・台詞を繰り返さないこと。
+{% endif %}
+{% endblock %}

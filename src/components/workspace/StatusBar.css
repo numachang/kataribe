@@ -1,0 +1,26 @@
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 6px 16px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-raised);
+  font-size: 12px;
+  color: var(--color-ink-soft);
+}
+
+.status-bar__save {
+  margin-left: auto;
+}
+
+.status-bar__save--dirty {
+  color: var(--color-warning);
+}
+
+.status-bar__save--error {
+  color: var(--color-error);
+}
+
+.status-bar__save--saving {
+  color: var(--color-focus);
+}

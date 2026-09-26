@@ -1,0 +1,38 @@
+[package]
+name = "kataribe-engine"
+description = "設定資料と本文を段階的に生成する執筆エンジン"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+ts = ["dep:ts-rs", "kataribe-project/ts", "kataribe-llm/ts", "kataribe-text/ts"]
+
+[dependencies]
+dirs.workspace = true
+futures-util.workspace = true
+keyring.workspace = true
+kataribe-llm.workspace = true
+kataribe-project.workspace = true
+kataribe-text.workspace = true
+minijinja.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde-saphyr.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+ts-rs = { workspace = true, optional = true }
+
+[dev-dependencies]
+insta.workspace = true
+kataribe-llm = { workspace = true, features = ["testing"] }
+pretty_assertions.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

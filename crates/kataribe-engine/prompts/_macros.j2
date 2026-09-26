@@ -1,0 +1,59 @@
+{# すべてのプロンプトで共有する部品 #}
+
+{% macro writer_role(project) %}
+あなたはプロの小説家です。{% if project.specialty %}特に{{ project.specialty }}を得意とします。{% endif %}
+{% endmacro %}
+
+{% macro editor_role(project) %}
+あなたは腕のよい小説の編集者です。{% if project.specialty %}特に{{ project.specialty }}に詳しい。{% endif %}
+{% endmacro %}
+
+{% macro genre_and_rating(project) %}
+【ジャンル】{{ project.genre_label }}
+{{ project.genre_guidance }}
+{% if project.genre_note %}
+補足: {{ project.genre_note }}
+{% endif %}
+
+【年齢区分】{{ project.rating_label }}（ジャンルの指針より優先する）
+{{ project.rating_rule }}
+{% endmacro %}
+
+{% macro project_info(project) %}
+【作品】
+題名: {{ project.title }}
+ジャンル: {{ project.genre_label }}{% if project.genre_note %}（{{ project.genre_note }}）{% endif %}
+
+年齢区分: {{ project.rating_label }}
+目標の長さ: 約{{ project.target_length }}字
+
+【構想（作家の最初の指示。ここに書かれた人物・舞台・出来事は変えずに守る）】
+{{ project.idea }}
+{% endmacro %}
+
+{% macro document(title, body) %}
+{% if body %}
+【{{ title }}】
+{{ body }}
+{% endif %}
+{% endmacro %}
+
+{% macro character_list(characters) %}
+{% for character in characters %}
+■ {{ character.name }}{% if character.reading %}（{{ character.reading }}）{% endif %}　{{ character.role }}
+{{ character.summary }}
+{% if character.profile %}
+{{ character.profile }}
+{% endif %}
+{% endfor %}
+{% endmacro %}
+
+{% macro scene_details(scene) %}
+{% if scene.pov %}視点: {{ scene.pov }}　{% endif %}{% if scene.place %}場所: {{ scene.place }}　{% endif %}{% if scene.time %}時間: {{ scene.time }}　{% endif %}{% if scene.characters %}登場: {{ scene.characters | join("、") }}{% endif %}
+{% endmacro %}
+
+{% macro output_rules() %}
+【出力の約束】
+- 日本語で書く。
+- 求められたものだけを出力する。前置き・あいさつ・補足説明・後書きは書かない。
+{% endmacro %}

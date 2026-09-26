@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-text-stats"
+description = "Enables the text_stats command without any pre-configured scope."
+commands.allow = ["text_stats"]
+
+[[permission]]
+identifier = "deny-text-stats"
+description = "Denies the text_stats command without any pre-configured scope."
+commands.deny = ["text_stats"]

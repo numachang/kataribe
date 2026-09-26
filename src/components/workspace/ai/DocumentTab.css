@@ -1,0 +1,12 @@
+.document-tab {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.document-tab__empty {
+  padding: 14px;
+  color: var(--color-ink-faint);
+  font-size: 13px;
+}

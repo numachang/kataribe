@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-apply-change-set"
+description = "Enables the apply_change_set command without any pre-configured scope."
+commands.allow = ["apply_change_set"]
+
+[[permission]]
+identifier = "deny-apply-change-set"
+description = "Denies the apply_change_set command without any pre-configured scope."
+commands.deny = ["apply_change_set"]

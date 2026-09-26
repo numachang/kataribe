@@ -1,0 +1,46 @@
+.new-project-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.new-project-dialog__row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.new-project-dialog__folder {
+  border-top: 1px solid var(--color-border);
+  padding-top: 14px;
+}
+
+.new-project-dialog__folder-label {
+  font-size: 13px;
+  font-weight: bold;
+}
+
+.new-project-dialog__hint {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  color: var(--color-ink-soft);
+}
+
+.new-project-dialog__folder-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.new-project-dialog__folder-path {
+  font-size: 12px;
+  color: var(--color-ink-soft);
+  word-break: break-all;
+}
+
+.new-project-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}

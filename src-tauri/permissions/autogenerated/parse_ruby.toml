@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-parse-ruby"
+description = "Enables the parse_ruby command without any pre-configured scope."
+commands.allow = ["parse_ruby"]
+
+[[permission]]
+identifier = "deny-parse-ruby"
+description = "Denies the parse_ruby command without any pre-configured scope."
+commands.deny = ["parse_ruby"]

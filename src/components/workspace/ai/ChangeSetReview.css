@@ -1,0 +1,60 @@
+.changeset-review {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  overflow-y: auto;
+  height: 100%;
+}
+
+.changeset-review__summary {
+  margin: 0;
+  font-size: 13px;
+  font-weight: bold;
+}
+
+.changeset-review__files {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.changeset-review__file {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-raised);
+  overflow: hidden;
+}
+
+.changeset-review__file-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 12px;
+}
+
+.changeset-review__file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.changeset-review__content {
+  margin: 0;
+  padding: 12px;
+  white-space: pre-wrap;
+  font-family: var(--font-mincho);
+  font-size: 13px;
+  line-height: 1.7;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.changeset-review__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}

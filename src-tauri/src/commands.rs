@@ -1,0 +1,202 @@
+//! 画面から呼ぶ Tauri コマンド。engine・project・text を公開するだけの薄い層にする。
+//!
+//! ここに置くのは Tauri の呼び出し規約（`State`・`Channel`・戻り値の形）に合わせるための
+//! 薄いラッパーだけ。実際の判断は `crate::files`・`crate::projects`・`crate::generation`・
+//! `crate::engine_client`・`crate::settings` の、Tauri に依存しない関数が行う。
+
+use tauri::State;
+use tauri::ipc::Channel;
+
+use kataribe_engine::{
+    ChangeSet, GenerationEvent, GenrePreset, LlmSettings, NewProject, PipelineStep,
+    ProjectOverview, Task,
+};
+use kataribe_llm::ModelInfo;
+use kataribe_text::count::TextStats;
+use kataribe_text::quality::{QualityOptions, QualityReport};
+use kataribe_text::ruby::Segment;
+
+use crate::error::CommandError;
+use crate::settings::AppSettings;
+use crate::state::AppState;
+use crate::text_file::TextFile;
+use crate::{engine_client, files, generation, projects, settings};
+
+// ---- 設定 ----
+
+#[tauri::command]
+pub async fn load_settings(state: State<'_, AppState>) -> Result<AppSettings, CommandError> {
+    let loaded = settings::load(state.settings_path())?;
+    state.set_settings(loaded.clone());
+    Ok(loaded)
+}
+
+#[tauri::command]
+pub async fn save_settings(
+    state: State<'_, AppState>,
+    settings: AppSettings,
+) -> Result<(), CommandError> {
+    settings::save(state.settings_path(), &settings)?;
+    state.set_settings(settings);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_api_key(
+    state: State<'_, AppState>,
+    api_key: Option<String>,
+) -> Result<(), CommandError> {
+    match api_key {
+        Some(key) => state.api_key_store().save(&key).map_err(CommandError::from),
+        None => state.api_key_store().delete().map_err(CommandError::from),
+    }
+}
+
+#[tauri::command]
+pub async fn has_api_key(state: State<'_, AppState>) -> Result<bool, CommandError> {
+    let key = state.api_key_store().load().map_err(CommandError::from)?;
+    Ok(key.is_some())
+}
+
+/// `llm` を渡すと、保存前の入力中の接続先で試す（接続テスト用）。API キーは保存済みのものを使う。
+#[tauri::command]
+pub async fn list_models(
+    state: State<'_, AppState>,
+    llm: Option<LlmSettings>,
+) -> Result<Vec<ModelInfo>, CommandError> {
+    let effective_llm = llm.unwrap_or_else(|| state.settings().llm);
+    let api_key = state.api_key_store().load().map_err(CommandError::from)?;
+    engine_client::list_models(&effective_llm, api_key).await
+}
+
+#[tauri::command]
+pub async fn list_genres() -> Result<Vec<GenrePreset>, CommandError> {
+    let catalog = kataribe_engine::GenreCatalog::builtin().map_err(CommandError::from)?;
+    Ok(catalog.genres().to_vec())
+}
+
+// ---- 作品 ----
+
+#[tauri::command]
+pub async fn create_project(
+    state: State<'_, AppState>,
+    folder: String,
+    project: NewProject,
+) -> Result<ProjectOverview, CommandError> {
+    let (opened, overview) = projects::create_project(std::path::Path::new(&folder), project)?;
+    state.set_project(opened);
+    state.record_recent_project(&folder)?;
+    Ok(overview)
+}
+
+#[tauri::command]
+pub async fn open_project(
+    state: State<'_, AppState>,
+    folder: String,
+) -> Result<ProjectOverview, CommandError> {
+    let (opened, overview) = projects::open_project(std::path::Path::new(&folder))?;
+    state.set_project(opened);
+    state.record_recent_project(&folder)?;
+    Ok(overview)
+}
+
+#[tauri::command]
+pub async fn close_project(state: State<'_, AppState>) -> Result<(), CommandError> {
+    state.clear_project();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn overview(state: State<'_, AppState>) -> Result<ProjectOverview, CommandError> {
+    let project = state.require_project()?;
+    kataribe_engine::overview(&project).map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn pipeline(state: State<'_, AppState>) -> Result<Vec<PipelineStep>, CommandError> {
+    let project = state.require_project()?;
+    let unit = state.settings().generation.draft_unit;
+    kataribe_engine::pipeline(&project, unit).map_err(CommandError::from)
+}
+
+// ---- ファイル ----
+
+#[tauri::command]
+pub async fn read_file(state: State<'_, AppState>, path: String) -> Result<TextFile, CommandError> {
+    let project = state.require_project()?;
+    files::read_file(&project, &path)
+}
+
+#[tauri::command]
+pub async fn write_file(
+    state: State<'_, AppState>,
+    path: String,
+    content: String,
+    expected_hash: Option<String>,
+) -> Result<String, CommandError> {
+    let project = state.require_project()?;
+    files::write_file(&project, &path, &content, expected_hash.as_deref())
+}
+
+// ---- テキスト ----
+//
+// Tauri コマンドは IPC から受け取った値の持ち主になるので、ここでは借用ではなく
+// 所有した `String` を受ける（`#[tauri::command]` の呼び出し規約）。中身は借用するだけなので
+// clippy::needless_pass_by_value を意図的に無効にする。
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub fn text_stats(text: String) -> TextStats {
+    kataribe_text::count::stats(&text)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub fn parse_ruby(text: String) -> Vec<Segment> {
+    kataribe_text::ruby::parse(&text)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub fn analyze_quality(text: String, target_chars: Option<usize>) -> QualityReport {
+    kataribe_text::quality::analyze(&text, &QualityOptions { target_chars })
+}
+
+// ---- 生成 ----
+
+#[tauri::command]
+pub async fn generate(
+    state: State<'_, AppState>,
+    job_id: String,
+    task: Task,
+    on_event: Channel<GenerationEvent>,
+) -> Result<ChangeSet, CommandError> {
+    let project = state.require_project()?;
+    let current_settings = state.settings();
+    let api_key = state.api_key_store().load().map_err(CommandError::from)?;
+    let engine =
+        engine_client::build_engine(&current_settings.llm, &current_settings.generation, api_key)?;
+    let sink = move |event: GenerationEvent| {
+        let _ = on_event.send(event);
+    };
+    generation::generate(state.jobs(), &engine, &project, &job_id, &task, &sink).await
+}
+
+#[tauri::command]
+pub async fn cancel_generation(
+    state: State<'_, AppState>,
+    job_id: String,
+) -> Result<(), CommandError> {
+    generation::cancel(state.jobs(), &job_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn apply_change_set(
+    state: State<'_, AppState>,
+    change_set: ChangeSet,
+) -> Result<ProjectOverview, CommandError> {
+    let project = state.require_project()?;
+    change_set.apply(&project).map_err(CommandError::from)?;
+    kataribe_engine::overview(&project).map_err(CommandError::from)
+}

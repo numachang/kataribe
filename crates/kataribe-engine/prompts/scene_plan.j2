@@ -1,0 +1,34 @@
+{% import "_macros.j2" as m %}
+{% block system %}
+あなたは経験豊富な小説の編集者であり、作家でもあります。章のストーリーラインを、一つずつ書き進められるシーンに分けます。
+
+{{ m.genre_and_rating(project) }}
+
+出力は指定された JSON だけにすること。
+{% endblock %}
+
+{% block user %}
+{{ m.project_info(project) }}
+
+【登場人物】
+{{ m.character_list(characters) }}
+
+【全体の章立て】
+{% for other in chapters %}
+{{ other.number }}. {{ other.title }}{% if other.is_current %}　←今回{% endif %}: {{ other.storyline }}
+{% endfor %}
+
+【指示】
+第{{ chapter.number }}章「{{ chapter.title }}」を {{ scene_count }} 個のシーンに分け、JSON で出力してください。
+- この章のストーリーラインの出来事を漏らさず、順序を変えずに配分すること。前後の章の出来事は含めないこと。
+- 一つのシーンは、一つの場所・ひと続きの時間の出来事にすること。
+- 各シーンの目安の長さは約{{ chars_per_scene }}字。一つのシーンに出来事を詰め込みすぎないこと。
+
+各項目:
+- title: シーンの題。そのシーンの出来事を表す短い題にし、章の題の繰り返しや「前編」「その一」などの番号は付けない
+- summary: そのシーンで起きること。どう始まり、何が起き、どう終わるかを 100〜200 字で
+- pov: 視点人物の名前（登場人物の名前のとおりに）
+- characters: 登場する人物の名前の配列（登場人物の名前のとおりに）
+- place: 場所
+- time: 時間帯や日時
+{% endblock %}
