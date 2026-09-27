@@ -291,6 +291,7 @@ class MockBackend implements Backend {
     }
     const job = createGenerationJob();
     this.jobs.set(jobId, job);
+    onEvent({ kind: "started", model: describeLlm(this.effectiveSettings().llm) });
     try {
       const changes = await runGeneration(
         project,
@@ -350,4 +351,13 @@ export function createMockBackend(options: MockBackendOptions = {}): Backend {
 /** 偽の作品の kataribe.yaml のハッシュ（作品の設定の競合検出に使う）。 */
 function manifestHash(project: ProjectState): string {
   return hashText(readMockFile(project, MANIFEST_PATH) ?? "");
+}
+
+/** 偽の生成で知らせる、使っている LLM の名前（本物の ChatModel::describe と同じ形）。 */
+function describeLlm(llm: LlmSettings): string {
+  if (llm.provider === "claude_code") {
+    return `Claude Code（${llm.claude_model}）`;
+  }
+  const host = llm.base_url.replace(/^[a-z]+:\/\//, "").split("/")[0];
+  return `OpenAI 互換 API（${host}）・${llm.model.trim() || "サーバーの既定のモデル"}`;
 }

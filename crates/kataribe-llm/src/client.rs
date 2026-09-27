@@ -142,6 +142,26 @@ impl OpenAiCompatClient {
 }
 
 impl ChatModel for OpenAiCompatClient {
+    /// 例: `OpenAI 互換 API（localhost:1234）・gemma`。同じ API 形式のサーバーは見分けられないので、
+    /// どこにつないでいるかをホスト名で見せる。
+    fn describe(&self) -> String {
+        let host = self
+            .config
+            .base_url
+            .split_once("://")
+            .map_or(self.config.base_url.as_str(), |(_, rest)| rest)
+            .split('/')
+            .next()
+            .unwrap_or_default();
+        let model = self.config.model.trim();
+        let model = if model.is_empty() {
+            "サーバーの既定のモデル"
+        } else {
+            model
+        };
+        format!("OpenAI 互換 API（{host}）・{model}")
+    }
+
     fn stream_chat(&self, request: ChatRequest) -> ChatStream {
         let state = StreamState {
             http: self.http.clone(),
@@ -389,4 +409,38 @@ fn is_retryable(error: &LlmError) -> bool {
 fn backoff_delay(attempt: u32) -> Duration {
     let shift = attempt.saturating_sub(1).min(10);
     INITIAL_BACKOFF * (1u32 << shift)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn client(base_url: &str, model: &str) -> OpenAiCompatClient {
+        OpenAiCompatClient::new(ClientConfig {
+            base_url: base_url.to_owned(),
+            model: model.to_owned(),
+            ..ClientConfig::default()
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn the_description_shows_the_server_host_and_the_model() {
+        assert_eq!(
+            client("http://localhost:1234/v1", "google/gemma-4-12b-qat").describe(),
+            "OpenAI 互換 API（localhost:1234）・google/gemma-4-12b-qat"
+        );
+        assert_eq!(
+            client("https://openrouter.ai/api/v1/", "anthropic/claude").describe(),
+            "OpenAI 互換 API（openrouter.ai）・anthropic/claude"
+        );
+    }
+
+    #[test]
+    fn a_blank_model_is_described_as_the_server_default() {
+        assert_eq!(
+            client("http://localhost:1234/v1", " ").describe(),
+            "OpenAI 互換 API（localhost:1234）・サーバーの既定のモデル"
+        );
+    }
 }

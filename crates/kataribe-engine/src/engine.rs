@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 use crate::caller::Caller;
 use crate::change_set::ChangeSet;
 use crate::error::Result;
-use crate::events::EventSink;
+use crate::events::{EventSink, GenerationEvent};
 use crate::genre::GenreCatalog;
 use crate::prompt::PromptLibrary;
 use crate::settings::GenerationSettings;
@@ -50,6 +50,9 @@ impl Engine {
         events: &dyn EventSink,
         cancel: &CancellationToken,
     ) -> Result<ChangeSet> {
+        events.emit(GenerationEvent::Started {
+            model: self.model.describe(),
+        });
         let caller = Caller::new(
             self.model.as_ref(),
             events,

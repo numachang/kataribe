@@ -5,8 +5,8 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use kataribe_engine::{
-    DraftUnit, Engine, GenerationSettings, IgnoreEvents, NewProject, StepState, Task,
-    create_project, pipeline,
+    DraftUnit, Engine, EventSink, GenerationEvent, GenerationSettings, IgnoreEvents, NewProject,
+    StepState, Task, create_project, pipeline,
 };
 use kataribe_llm::testing::{Script, ScriptedChatModel};
 use kataribe_project::{ChapterId, Project, Rating, RelPath, SceneId};
@@ -102,6 +102,46 @@ async fn run_until_blocked(engine: &Engine, project: &Project, unit: DraftUnit) 
         executed.push(step.task);
     }
     executed
+}
+
+/// 届いたイベントを順に記録する。
+#[derive(Default)]
+struct RecordEvents(std::sync::Mutex<Vec<GenerationEvent>>);
+
+impl EventSink for RecordEvents {
+    fn emit(&self, event: GenerationEvent) {
+        self.0.lock().unwrap().push(event);
+    }
+}
+
+#[tokio::test]
+async fn generation_first_tells_which_llm_it_uses_then_reports_each_step() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path());
+    let model = Arc::new(ScriptedChatModel::new([Script::reply([CONCEPT])]));
+    let engine = Engine::new(model, settings(DraftUnit::Beat)).unwrap();
+    let events = RecordEvents::default();
+
+    engine
+        .generate(&project, &Task::Concept, &events, &CancellationToken::new())
+        .await
+        .unwrap();
+
+    let events = events.0.into_inner().unwrap();
+    assert_eq!(
+        events.first(),
+        Some(&GenerationEvent::Started {
+            model: "台本どおりに応答するテスト用のモデル".to_owned()
+        })
+    );
+    assert!(matches!(
+        events.get(1),
+        Some(GenerationEvent::StepStarted { index: 1, .. })
+    ));
+    assert!(matches!(
+        events.last(),
+        Some(GenerationEvent::StepFinished { .. })
+    ));
 }
 
 #[tokio::test]

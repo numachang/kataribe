@@ -12,6 +12,8 @@ export interface GenerationStepDisplay {
   label: string;
   index: number;
   total: number;
+  /** この回を始めた時刻（エポックからのミリ秒）。経過時間の表示に使う。 */
+  startedAt: number;
   content: string;
   reasoning: string;
   notices: GenerationNotice[];
@@ -22,11 +24,13 @@ export interface GenerationStepDisplay {
 }
 
 export interface GenerationDisplay {
+  /** 使っている LLM の名前。生成を始めたときに届く。 */
+  model: string | null;
   steps: GenerationStepDisplay[];
 }
 
 export function createEmptyGenerationDisplay(): GenerationDisplay {
-  return { steps: [] };
+  return { model: null, steps: [] };
 }
 
 function updateLastStep(
@@ -40,20 +44,27 @@ function updateLastStep(
   }
   const steps = [...display.steps];
   steps[lastIndex] = update(last);
-  return { steps };
+  return { ...display, steps };
 }
 
-/** 1 件の GenerationEvent を積み上げて、新しい表示状態を返す。 */
+/**
+ * 1 件の GenerationEvent を積み上げて、新しい表示状態を返す。
+ * `receivedAt` はイベントを受け取った時刻（エポックからのミリ秒）。純粋な関数に保つため、呼び出し側が渡す。
+ */
 export function applyGenerationEvent(
   display: GenerationDisplay,
   event: GenerationEvent,
+  receivedAt: number,
 ): GenerationDisplay {
   switch (event.kind) {
+    case "started":
+      return { ...display, model: event.model };
     case "step_started": {
       const step: GenerationStepDisplay = {
         label: event.label,
         index: event.index,
         total: event.total,
+        startedAt: receivedAt,
         content: "",
         reasoning: "",
         notices: [],
@@ -62,7 +73,7 @@ export function applyGenerationEvent(
         completionTokens: null,
         elapsedMs: null,
       };
-      return { steps: [...display.steps, step] };
+      return { ...display, steps: [...display.steps, step] };
     }
     case "content":
       return updateLastStep(display, (step) => ({ ...step, content: step.content + event.text }));

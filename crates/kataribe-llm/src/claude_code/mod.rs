@@ -83,6 +83,10 @@ fn alias_models() -> Vec<ModelInfo> {
 }
 
 impl ChatModel for ClaudeCodeModel {
+    fn describe(&self) -> String {
+        format!("Claude Code（{}）", self.config.model)
+    }
+
     fn stream_chat(&self, request: ChatRequest) -> ChatStream {
         run::stream_chat(self.config.clone(), request)
     }
@@ -253,6 +257,16 @@ mod tests {
         assert_eq!(argument.get("$schema"), None);
         assert_eq!(argument["$defs"], schema["$defs"]);
         assert_eq!(argument["properties"], schema["properties"]);
+    }
+
+    #[test]
+    fn the_description_names_claude_code_and_the_model() {
+        let model = ClaudeCodeModel::new(ClaudeCodeConfig {
+            model: "haiku".to_owned(),
+            ..ClaudeCodeConfig::default()
+        });
+
+        assert_eq!(model.describe(), "Claude Code（haiku）");
     }
 
     #[test]

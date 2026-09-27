@@ -107,7 +107,8 @@ export function useGenerationSession(): GenerationSessionApi {
           if (unmountedRef.current) {
             return;
           }
-          setDisplay((previous) => applyGenerationEvent(previous, event));
+          const receivedAt = Date.now();
+          setDisplay((previous) => applyGenerationEvent(previous, event, receivedAt));
         });
         if (unmountedRef.current) {
           return null;

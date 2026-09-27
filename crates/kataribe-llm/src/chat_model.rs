@@ -19,4 +19,7 @@ pub trait ChatModel: Send + Sync + std::fmt::Debug {
     /// 何も送信していない状態でも即座に返る。実際の通信は、返したストリームが
     /// 初めてポーリングされたときに始まる。
     fn stream_chat(&self, request: ChatRequest) -> ChatStream;
+
+    /// 利用者に見せる、この LLM の名前（接続先とモデル）。例: `Claude Code（haiku）`。
+    fn describe(&self) -> String;
 }

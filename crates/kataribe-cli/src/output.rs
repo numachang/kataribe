@@ -162,6 +162,10 @@ pub(crate) fn report_generation_event(
     event: &GenerationEvent,
 ) {
     match event {
+        GenerationEvent::Started { model } => {
+            // 作品の設定で接続先が変わることがあるので、何で生成するかを見せる
+            let _ = console.eprint(&format!("  使う LLM: {model}\n"));
+        }
         GenerationEvent::Content { text } => {
             if !quiet {
                 let _ = console.print(text);
@@ -282,6 +286,19 @@ mod tests {
 
         assert_eq!(console.stdout(), "");
         assert!(console.stderr().contains("企画を生成"));
+    }
+
+    #[test]
+    fn the_llm_in_use_is_shown_on_stderr_even_when_quiet() {
+        let console = BufferConsole::new();
+        let event = GenerationEvent::Started {
+            model: "Claude Code（haiku）".into(),
+        };
+
+        report_generation_event(&console, true, false, &StdoutBoundary::new(), &event);
+
+        assert_eq!(console.stderr(), "  使う LLM: Claude Code（haiku）\n");
+        assert_eq!(console.stdout(), "");
     }
 
     #[test]

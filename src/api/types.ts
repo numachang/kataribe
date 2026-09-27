@@ -235,6 +235,8 @@ export interface PipelineStep {
 }
 
 export type GenerationEvent =
+  /** 生成を始めた。model は使う LLM の名前（作品の設定を重ねた後の、実際の接続先とモデル）。 */
+  | { kind: "started"; model: string }
   | { kind: "step_started"; label: string; index: number; total: number }
   | { kind: "content"; text: string }
   | { kind: "reasoning"; text: string }

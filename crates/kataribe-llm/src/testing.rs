@@ -148,6 +148,10 @@ impl ScriptedChatModel {
 }
 
 impl ChatModel for ScriptedChatModel {
+    fn describe(&self) -> String {
+        "台本どおりに応答するテスト用のモデル".to_owned()
+    }
+
     fn stream_chat(&self, request: ChatRequest) -> ChatStream {
         self.requests
             .lock()

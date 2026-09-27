@@ -2,11 +2,33 @@ import { describe, expect, it } from "vitest";
 import type { GenerationEvent } from "../../api/types";
 import { applyGenerationEvent, createEmptyGenerationDisplay } from "./eventAccumulator";
 
+const RECEIVED_AT = 1_700_000_000_000;
+
 function replay(events: GenerationEvent[]) {
-  return events.reduce(applyGenerationEvent, createEmptyGenerationDisplay());
+  return events.reduce(
+    (display, event) => applyGenerationEvent(display, event, RECEIVED_AT),
+    createEmptyGenerationDisplay(),
+  );
 }
 
 describe("applyGenerationEvent", () => {
+  it("started で、使っている LLM の名前を覚える", () => {
+    const display = replay([{ kind: "started", model: "Claude Code（haiku）" }]);
+
+    expect(display.model).toBe("Claude Code（haiku）");
+    expect(display.steps).toEqual([]);
+  });
+
+  it("段階が進んでも、使っている LLM の名前は残る", () => {
+    const display = replay([
+      { kind: "started", model: "Claude Code（haiku）" },
+      { kind: "step_started", label: "企画を生成", index: 1, total: 1 },
+      { kind: "content", text: "企画" },
+    ]);
+
+    expect(display.model).toBe("Claude Code（haiku）");
+  });
+
   it("step_started で新しい段階を追加する", () => {
     const display = replay([
       { kind: "step_started", label: "企画を生成しています", index: 1, total: 1 },
@@ -16,6 +38,7 @@ describe("applyGenerationEvent", () => {
         label: "企画を生成しています",
         index: 1,
         total: 1,
+        startedAt: RECEIVED_AT,
         content: "",
         reasoning: "",
         notices: [],
