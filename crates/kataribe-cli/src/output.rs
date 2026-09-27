@@ -5,6 +5,7 @@
 //! 本番では実際の標準出力・標準エラー出力に、テストでは共有バッファに書く。
 
 use std::io::Write as _;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
 
 use kataribe_engine::{GenerationEvent, NoticeLevel};
@@ -101,10 +102,51 @@ impl Console for BufferConsole {
     }
 }
 
+/// 標準出力へ書いた最後の内容が改行で終わっていたかどうかを覚えておく、工程間の区切り用の状態。
+///
+/// `generate` は 1 回の `engine.generate` 呼び出しの中で複数回の生成（`chars_per_call` を超える
+/// シーンを書き継ぐときなど）に分かれることがあり、その区切りは `GenerationEvent::StepStarted` の
+/// `index` で判定できる。一方 `run` は工程（タスク）ごとに別々の `engine.generate` 呼び出しをするため、
+/// `index` は呼び出しのたびに 1 から数え直されてしまう。この状態を `run` のループでも共有することで、
+/// 工程をまたいだ区切りも同じ規則（直前の出力が改行で終わっていなければ改行を補ってから空行を入れる）
+/// で出せるようにする。
+#[derive(Debug)]
+pub(crate) struct StdoutBoundary(AtomicBool);
+
+impl StdoutBoundary {
+    /// まだ何も出力していない状態（行頭）から始める。
+    pub(crate) fn new() -> Self {
+        Self(AtomicBool::new(true))
+    }
+
+    /// 標準出力へ実際に書いた内容を記録する。
+    fn record(&self, text: &str) {
+        if let Some(last) = text.chars().next_back() {
+            self.0.store(last == '\n', Ordering::Relaxed);
+        }
+    }
+
+    /// 区切りの空行を入れる。直前の出力が改行で終わっていなければ、まず改行を補ってから入れる。
+    pub(crate) fn separate(&self, console: &dyn Console) {
+        if !self.0.load(Ordering::Relaxed) {
+            let _ = console.print("\n");
+        }
+        let _ = console.print("\n");
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+impl Default for StdoutBoundary {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// 生成中のイベントを `console` へ振り分ける。
 ///
-/// - `StepStarted`: 標準エラー出力へ進捗を 1 行。2 つ目以降の工程では、直前の工程の本文と
-///   混ざらないよう標準出力側にも区切りの空行を入れる（`quiet` なら本文自体を出さないので不要）。
+/// - `StepStarted`: 標準エラー出力へ進捗を 1 行。2 つ目以降の工程では、`boundary` を使って
+///   直前の工程の本文と混ざらないよう標準出力側にも区切りの空行を入れる
+///   （`quiet` なら本文自体を出さないので不要）。
 /// - `Content`（本文の断片）: 標準出力へそのまま。`quiet` なら出さない。
 /// - `StepFinished` / `Notice`: 標準エラー出力へ 1 行で。
 /// - `Reasoning`（推論モデルの思考）: 既定では出さない。`verbose` なら薄く標準エラー出力へ。
@@ -112,16 +154,18 @@ impl Console for BufferConsole {
 /// `kataribe_engine::EventSink` は戻り値を持たないため、書き込みに失敗しても生成そのものは
 /// 続ける（表示できないことより、生成した内容を最後まで得られないことのほうが損失が大きい）。
 /// そのため、ここでの書き込み失敗は最善努力として無視する。
-pub fn report_generation_event(
+pub(crate) fn report_generation_event(
     console: &dyn Console,
     quiet: bool,
     verbose: bool,
+    boundary: &StdoutBoundary,
     event: &GenerationEvent,
 ) {
     match event {
         GenerationEvent::Content { text } => {
             if !quiet {
                 let _ = console.print(text);
+                boundary.record(text);
             }
         }
         GenerationEvent::StepStarted {
@@ -130,7 +174,7 @@ pub fn report_generation_event(
             total,
         } => {
             if !quiet && *index > 1 {
-                let _ = console.print("\n");
+                boundary.separate(console);
             }
             let _ = console.eprint(&format!("  ▶ [{index}/{total}] {label}\n"));
         }
@@ -214,10 +258,12 @@ mod tests {
     #[test]
     fn quiet_suppresses_content_but_not_progress() {
         let console = BufferConsole::new();
+        let boundary = StdoutBoundary::new();
         report_generation_event(
             &console,
             true,
             false,
+            &boundary,
             &GenerationEvent::Content {
                 text: "本文の断片".into(),
             },
@@ -226,6 +272,7 @@ mod tests {
             &console,
             true,
             false,
+            &boundary,
             &GenerationEvent::StepStarted {
                 label: "企画を生成".into(),
                 index: 1,
@@ -240,24 +287,27 @@ mod tests {
     #[test]
     fn reasoning_is_hidden_unless_verbose() {
         let console = BufferConsole::new();
+        let boundary = StdoutBoundary::new();
         let event = GenerationEvent::Reasoning {
             text: "考え中".into(),
         };
 
-        report_generation_event(&console, false, false, &event);
+        report_generation_event(&console, false, false, &boundary, &event);
         assert_eq!(console.stderr(), "");
 
-        report_generation_event(&console, false, true, &event);
+        report_generation_event(&console, false, true, &boundary, &event);
         assert!(console.stderr().contains("考え中"));
     }
 
     #[test]
     fn second_step_started_separates_stdout_from_the_previous_step_with_a_blank_line() {
         let console = BufferConsole::new();
+        let boundary = StdoutBoundary::new();
         report_generation_event(
             &console,
             false,
             false,
+            &boundary,
             &GenerationEvent::Content {
                 text: "第一段落。".into(),
             },
@@ -266,6 +316,7 @@ mod tests {
             &console,
             false,
             false,
+            &boundary,
             &GenerationEvent::StepStarted {
                 label: "続きを生成".into(),
                 index: 2,
@@ -276,21 +327,53 @@ mod tests {
             &console,
             false,
             false,
+            &boundary,
             &GenerationEvent::Content {
                 text: "第二段落。".into(),
             },
         );
 
-        assert_eq!(console.stdout(), "第一段落。\n第二段落。");
+        // 第一段落は改行で終わっていないので、区切りの前に改行を補ってから空行を入れる。
+        assert_eq!(console.stdout(), "第一段落。\n\n第二段落。");
+    }
+
+    #[test]
+    fn step_started_does_not_add_an_extra_newline_when_the_previous_output_already_ends_with_one() {
+        let console = BufferConsole::new();
+        let boundary = StdoutBoundary::new();
+        report_generation_event(
+            &console,
+            false,
+            false,
+            &boundary,
+            &GenerationEvent::Content {
+                text: "第一段落。\n".into(),
+            },
+        );
+        report_generation_event(
+            &console,
+            false,
+            false,
+            &boundary,
+            &GenerationEvent::StepStarted {
+                label: "続きを生成".into(),
+                index: 2,
+                total: 2,
+            },
+        );
+
+        assert_eq!(console.stdout(), "第一段落。\n\n");
     }
 
     #[test]
     fn first_step_started_does_not_add_a_leading_blank_line() {
         let console = BufferConsole::new();
+        let boundary = StdoutBoundary::new();
         report_generation_event(
             &console,
             false,
             false,
+            &boundary,
             &GenerationEvent::StepStarted {
                 label: "企画を生成".into(),
                 index: 1,

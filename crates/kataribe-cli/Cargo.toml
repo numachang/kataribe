@@ -22,6 +22,7 @@ kataribe-engine.workspace = true
 kataribe-llm.workspace = true
 kataribe-project.workspace = true
 kataribe-text.workspace = true
+same-file.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["signal"] }

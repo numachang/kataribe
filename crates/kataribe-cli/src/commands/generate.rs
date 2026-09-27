@@ -8,8 +8,9 @@ use kataribe_llm::ChatModel;
 use kataribe_project::Project;
 use tokio_util::sync::CancellationToken;
 
+use crate::ApplyGuard;
 use crate::args::{GenerateArgs, GlobalOptions};
-use crate::output::{Console, report_generation_event};
+use crate::output::{Console, StdoutBoundary, report_generation_event};
 use crate::settings;
 
 use super::{Outcome, render_change_set};
@@ -19,6 +20,7 @@ pub async fn run(
     global: &GlobalOptions,
     console: &dyn Console,
     cancel: &CancellationToken,
+    apply_guard: &ApplyGuard,
 ) -> anyhow::Result<Outcome> {
     let settings = settings::load_effective_settings(global)?;
     let api_key = settings::resolve_api_key(&global.api_key_env)?;
@@ -33,24 +35,25 @@ pub async fn run(
     // --dry-run では、流れてくる生成そのものは見せず、最後に変更案だけをまとめて出す
     // （そうしないと、ストリーミング表示と変更案の表示とで同じ内容が二度出てしまう）。
     let suppress_content = global.quiet || args.dry_run;
+    let boundary = StdoutBoundary::new();
     let sink = |event: GenerationEvent| {
-        report_generation_event(console, suppress_content, global.verbose, &event);
+        report_generation_event(console, suppress_content, global.verbose, &boundary, &event);
     };
 
     match engine.generate(&project, &task, &sink, cancel).await {
-        Ok(changes) => apply_or_show(&changes, &project, args.dry_run, console),
-        Err(EngineError::Cancelled) => {
-            console.eprint("生成を中止しました。\n")?;
-            Ok(Outcome::Cancelled)
-        }
+        Ok(changes) => apply_or_show(&changes, &project, args.dry_run, apply_guard, console).await,
+        // 中止したことは呼び出し元（`run_cancellable`）が一度だけ知らせるので、ここでは
+        // 何も出力せず、中止した結果だけを伝える。
+        Err(EngineError::Cancelled) => Ok(Outcome::Cancelled),
         Err(error) => Err(error.into()),
     }
 }
 
-fn apply_or_show(
+async fn apply_or_show(
     changes: &ChangeSet,
     project: &Project,
     dry_run: bool,
+    apply_guard: &ApplyGuard,
     console: &dyn Console,
 ) -> anyhow::Result<Outcome> {
     if changes.is_empty() {
@@ -61,13 +64,7 @@ fn apply_or_show(
         console.print(&render_change_set(changes))?;
         return Ok(Outcome::Success);
     }
-    if let Err(error) = changes.apply(project) {
-        // 適用に失敗すると、せっかく生成した内容が画面のどこにも残らず消えてしまう。
-        // 何を失ったか分かるように、エラーで終わる前に生成結果を出しておく。
-        console.eprint("適用に失敗しました。生成した内容を表示します。\n")?;
-        console.print(&render_change_set(changes))?;
-        return Err(error).context("変更を作品フォルダに書き込めません");
-    }
+    super::apply_change_set(changes, project, apply_guard, console).await?;
     for file in &changes.files {
         console.eprint(&format!("書き込み: {}\n", file.path))?;
     }
@@ -78,29 +75,14 @@ fn apply_or_show(
 mod tests {
     use super::*;
     use crate::output::BufferConsole;
-    use kataribe_engine::{FileChange, NewProject, create_project};
+    use crate::test_support::new_test_project;
+    use kataribe_engine::FileChange;
     use kataribe_project::RelPath;
 
-    fn new_project(folder: &std::path::Path) -> Project {
-        create_project(
-            folder,
-            NewProject {
-                title: "みさき館の殺人".into(),
-                author: None,
-                genre: "mystery".into(),
-                genre_note: None,
-                rating: kataribe_project::Rating::General,
-                target_length: 6000,
-                idea: "嵐で孤立した洋館で起きる密室殺人。".into(),
-            },
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn apply_or_show_prints_the_generated_content_when_apply_fails() {
+    #[tokio::test]
+    async fn apply_or_show_prints_the_generated_content_when_apply_fails() {
         let folder = tempfile::tempdir().unwrap();
-        let project = new_project(folder.path());
+        let project = new_test_project(folder.path());
         // わざと外部で先に concept.md を作っておき、`base_hash` が無い（新規のはず）
         // 変更案の適用を Conflict で失敗させる。
         project
@@ -121,7 +103,10 @@ mod tests {
         });
 
         let console = BufferConsole::new();
-        let error = apply_or_show(&changes, &project, false, &console).unwrap_err();
+        let apply_guard = ApplyGuard::new();
+        let error = apply_or_show(&changes, &project, false, &apply_guard, &console)
+            .await
+            .unwrap_err();
 
         assert!(error.to_string().contains("書き込めません"));
         assert!(

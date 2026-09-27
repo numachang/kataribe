@@ -154,7 +154,7 @@ pub async fn collect(stream, on_event) -> Result<Completion, LlmError>;   // 全
 | モジュール | 公開 API | 内容 |
 |---|---|---|
 | `path` | `RelPath` | 作品フォルダ内の相対パス。`..`・絶対パス・ドライブ指定・`\`・Windows 予約名・末尾のドット／空白・制御文字を拒否する |
-| `store` | `ProjectStore`、`TextFile { content, hash }`、`ContentHash`、`WriteCondition`、`BackupMode` | フォルダ外に出られないファイル操作。アトミック書き込み、競合検出、バックアップ、ゴミ箱 |
+| `store` | `ProjectStore`、`TextFile { content, hash }`、`ContentHash`、`WriteCondition`、`BackupMode`、`normalize_text(&str) -> String` | フォルダ外に出られないファイル操作。アトミック書き込み、競合検出、バックアップ、ゴミ箱 |
 | `frontmatter` | `Document<M> { meta, body }`、`parse`、`render` | YAML front matter の分解・合成（未知の項目を保持） |
 | `layout` | パス定数と `character_path(id)` などの関数 | §2 のフォルダ構成の唯一の定義 |
 | `model` | `Manifest`・`Rating`・`MarkdownDoc`・`Character`/`CharacterMeta`・`Chapter`/`ChapterMeta`・`ScenePlan`・`ChapterId`・`SceneId`・`CharacterId` | 各ファイルの型。`render()` でファイル内容を生成 |
@@ -257,7 +257,8 @@ Gemma には前者だけ、Qwen には後者だけが効き、両方を指定す
   生成物が Rust の型と一致していることは、CI で `cargo test --all-features` の後に `src/bindings` に差分が無いことで確かめる。
 - ブラウザ単体（`pnpm dev`）では、メモリ上の偽バックエンドで動く（画面の開発とテスト用）。
 - 起動オプション `--settings=<PATH>`（`--settings <PATH>` も可）で、既定の場所の代わりに使う設定ファイルを指定できる
-  （CLI の同名のオプションと同じ意味）。E2E テストが利用者の設定に触れずに動くためにも使う。
+  （設定ファイルの場所を指定する点は CLI と同じ。ただし指定したファイルが無い場合、CLI はエラーにするのに対し、
+  GUI は既定値から始める）。E2E テストが利用者の設定に触れずに動くためにも使う。
 
 ### 5.1 IPC の契約
 

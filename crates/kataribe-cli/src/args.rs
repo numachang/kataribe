@@ -22,7 +22,7 @@ pub struct Cli {
 /// 設定ファイルの値を上書きするグローバルオプション。
 #[derive(Debug, Default, Args)]
 pub struct GlobalOptions {
-    /// 設定ファイル（既定: GUI と同じ場所）。
+    /// 設定ファイル（既定: GUI と同じ場所。明示したのに無ければエラー）。
     #[arg(long, global = true, value_name = "PATH")]
     pub settings: Option<PathBuf>,
 

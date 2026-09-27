@@ -2469,6 +2469,7 @@ dependencies = [
  "kataribe-llm",
  "kataribe-project",
  "kataribe-text",
+ "same-file",
  "serde_json",
  "tempfile",
  "tokio",

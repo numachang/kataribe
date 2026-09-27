@@ -11,18 +11,20 @@ use kataribe_llm::ChatModel;
 use kataribe_project::Project;
 use tokio_util::sync::CancellationToken;
 
+use crate::ApplyGuard;
 use crate::args::{GlobalOptions, RunArgs};
-use crate::output::{Console, report_generation_event};
+use crate::output::{Console, StdoutBoundary, report_generation_event};
 use crate::settings;
 use crate::stage::{Stage, reached_stage, task_is_within_stage};
 
-use super::{Outcome, render_change_set};
+use super::Outcome;
 
 pub async fn run(
     args: &RunArgs,
     global: &GlobalOptions,
     console: &dyn Console,
     cancel: &CancellationToken,
+    apply_guard: &ApplyGuard,
 ) -> anyhow::Result<Outcome> {
     let settings = settings::load_effective_settings(global)?;
     let unit = settings.generation.draft_unit;
@@ -33,6 +35,7 @@ pub async fn run(
         Engine::new(model, settings.generation).context("執筆エンジンを初期化できません")?;
 
     let project = Project::open(&args.folder).context("作品フォルダを開けません")?;
+    let boundary = StdoutBoundary::new();
 
     let mut executed = 0u32;
     loop {
@@ -64,21 +67,25 @@ pub async fn run(
             return Ok(Outcome::Success);
         }
 
+        // 2 つ目以降の工程は、別の `engine.generate` 呼び出しになるため `StepStarted` の
+        // `index` が 1 から数え直される。ここで明示的に区切りを入れないと、前の工程の本文と
+        // 混ざって見えてしまう。
+        if executed > 0 && !global.quiet {
+            boundary.separate(console);
+        }
         console.eprint(&format!("=== {} ===\n", next.label))?;
         let started = Instant::now();
         let sink = |event: GenerationEvent| {
-            report_generation_event(console, global.quiet, global.verbose, &event);
+            report_generation_event(console, global.quiet, global.verbose, &boundary, &event);
         };
 
         let changes = match engine.generate(&project, &next.task, &sink, cancel).await {
             Ok(changes) => changes,
-            Err(EngineError::Cancelled) => {
-                console.eprint("生成を中止しました。\n")?;
-                return Ok(Outcome::Cancelled);
-            }
+            // 中止したことは呼び出し元（`run_cancellable`）が一度だけ知らせる。
+            Err(EngineError::Cancelled) => return Ok(Outcome::Cancelled),
             Err(error) => return Err(error.into()),
         };
-        apply(&changes, &project, console)?;
+        apply(&changes, &project, apply_guard, console).await?;
         console.eprint(&format!(
             "--- 完了(所要 {:.1} 秒) ---\n",
             started.elapsed().as_secs_f64()
@@ -100,12 +107,13 @@ fn candidates_up_to(steps: Vec<PipelineStep>, until: Option<Stage>) -> Vec<Pipel
 
 /// 変更案を適用する。適用に失敗した（外部での編集と競合したなど）ときは、
 /// 生成した内容を失わないよう標準出力に表示してから、エラーとして返す。
-fn apply(changes: &ChangeSet, project: &Project, console: &dyn Console) -> anyhow::Result<()> {
-    if let Err(error) = changes.apply(project) {
-        console.eprint("適用に失敗しました。生成した内容を表示します。\n")?;
-        console.print(&render_change_set(changes))?;
-        return Err(error).context("変更を作品フォルダに書き込めません");
-    }
+async fn apply(
+    changes: &ChangeSet,
+    project: &Project,
+    apply_guard: &ApplyGuard,
+    console: &dyn Console,
+) -> anyhow::Result<()> {
+    super::apply_change_set(changes, project, apply_guard, console).await?;
     for file in &changes.files {
         console.eprint(&format!("  書き込み: {}\n", file.path))?;
     }
