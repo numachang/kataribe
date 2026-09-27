@@ -115,7 +115,7 @@ jobs:
         run: |
           $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
           "管理者として動いているか: $($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))"
-          $policy = 'HKCU:\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
+          $policy = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
           New-Item -Path $policy -Force | Out-Null
           New-ItemProperty -Path $policy -Name 'kataribe.exe' -Value '--remote-debugging-port=9333' -PropertyType String -Force | Out-Null
           New-ItemProperty -Path $policy -Name '*' -Value '--remote-debugging-port=9333' -PropertyType String -Force | Out-Null
