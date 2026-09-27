@@ -110,26 +110,23 @@ jobs:
           "KATARIBE_E2E_MSEDGEDRIVER=$dir\msedgedriver.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: 画面を埋め込んだアプリを作る
         run: pnpm tauri build --debug --no-bundle
-      - name: 診断（一時的）WebView2 のリモートデバッグが止められていないか見る
+      - name: 診断（一時的）WebView2 のポリシーで引数を渡せるか見る
         shell: pwsh
         run: |
-          '--- Edge / WebView2 のポリシー'
-          foreach ($key in 'HKLM:\SOFTWARE\Policies\Microsoft\Edge', 'HKLM:\SOFTWARE\Policies\Microsoft\Edge\WebView2', 'HKCU:\SOFTWARE\Policies\Microsoft\Edge', 'HKLM:\SOFTWARE\WOW6432Node\Policies\Microsoft\Edge') {
-            "[$key]"
-            Get-ItemProperty -Path $key -ErrorAction SilentlyContinue | Out-String
-            Get-ChildItem -Path $key -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
-          }
+          $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+          "管理者として動いているか: $($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))"
+          $policy = 'HKCU:\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
+          New-Item -Path $policy -Force | Out-Null
+          New-ItemProperty -Path $policy -Name 'kataribe.exe' -Value '--remote-debugging-port=9333' -PropertyType String -Force | Out-Null
           '{}' | Out-File -Encoding utf8 "$env:RUNNER_TEMP\diag-settings.json"
-          $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9333'
           $app = Start-Process target\debug\kataribe.exe -ArgumentList "--settings=$env:RUNNER_TEMP\diag-settings.json" -PassThru
           Start-Sleep -Seconds 15
-          '--- WebView2 のプロセスの引数'
           Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" |
-            Select-Object -First 2 -ExpandProperty CommandLine |
-            ForEach-Object { $_.Substring(0, [Math]::Min(1500, $_.Length)) }
+            Where-Object { $_.CommandLine -like '*webview-exe-name=kataribe.exe*' -and $_.CommandLine -notlike '*--type=*' } |
+            Select-Object -ExpandProperty CommandLine
           try { (Invoke-WebRequest http://127.0.0.1:9333/json/version -UseBasicParsing -TimeoutSec 5).Content } catch { "devtools: $_" }
-          Get-Content "$env:LOCALAPPDATA\io.github.numachang.kataribe\EBWebView\DevToolsActivePort" -ErrorAction SilentlyContinue
           Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path $policy -Recurse -Force
       - run: pnpm e2e
       - name: テスト中に撮った画面を残す
         if: always()
