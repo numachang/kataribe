@@ -1,9 +1,13 @@
 name: CI
 
+# 非公開リポジトリの Windows ランナーは実行時間の 2 倍で課金されるので、待ち時間と課金を抑える。
+# - 各ジョブは互いを待たずに並列に走らせる
+# - インストーラの作成（LTO 付きのリリースビルドで最も重い）は、PR では行わず、main へのプッシュと手動実行のときだけ行う
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -55,7 +59,7 @@ jobs:
 
   bundle:
     name: インストーラの作成
-    needs: [rust, frontend]
+    if: github.event_name != 'pull_request'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -75,7 +79,6 @@ jobs:
 
   e2e:
     name: E2E（本物のアプリを WebView2 で操作）
-    needs: [rust, frontend]
     runs-on: windows-latest
     env:
       KATARIBE_E2E_DEBUG_PORT: "9222"
