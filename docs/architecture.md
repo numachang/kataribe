@@ -165,6 +165,11 @@ pub async fn collect(stream, on_event) -> Result<Completion, LlmError>;   // 全
   - 同じフォルダの一時ファイルに書いて fsync してから置き換える。Windows で一時的にロックされていたら短く再試行する。
   - `BackupMode::Throttled`（同じファイルは 10 分に 1 回まで）/ `Always`（LLM による置き換え時）/ `Never`。
     バックアップは `.kataribe/backups/<相対パス>/<日時>.<拡張子>`、1 ファイルあたり最新 20 件を残す。
+- `ProjectStore::write_all(&[PendingWrite { path, content, condition }], backup)` は複数のファイルを
+  **すべて書くか、何も書かないか** のどちらかで書く。先にすべての条件を確かめ、全ファイルを一時ファイルに書いてから
+  順に置き換える。置き換えの途中で失敗したら書き終えたファイルを元に戻し、戻せなければ `PartialWrite` を返す。
+- 「条件の確認から置き換えまで」は同じプロセスの中で排他する（自動保存と変更案の適用が重なっても、
+  両方が同じ内容を前提に通って片方の変更が消えることがないように）。
 - `remove` は削除せず `.kataribe/trash/<日時>/<相対パス>` へ移す。
 - 作品全体の一覧（文字数や生成工程の状態を含む `ProjectOverview`）は engine が組み立てる。
 - `Project` はキャッシュを持たず、毎回ファイルを読む（外部エディタや `git checkout` による変更を常に反映するため）。
@@ -186,14 +191,19 @@ pub async fn collect(stream, on_event) -> Result<Completion, LlmError>;   // 全
 | `Draft { chapter, scene }` | §4.3 の文脈 | `manuscript/<NN>/<scene-id>.txt` |
 | `Revise { path, instruction }` | 対象ファイル・指示 | 書き直した同じファイル |
 
-どのタスクも **ファイルを直接書き換えず**、変更案 `ChangeSet { files: Vec<FileChange> }` を返す。
+どのタスクも **ファイルを直接書き換えず**、変更案 `ChangeSet { summary, files: Vec<FileChange>, project_root }` を返す。
 GUI は変更案を見せてから適用し、CLI は自動で適用する。
+
+- 適用（`ChangeSet::apply`）は `write_all` を使い、すべてのファイルを書くか、何も書かないかのどちらかにする。
+  各ファイルは生成を始めたときの内容のハッシュを条件にするので、その後に利用者が編集していれば `Conflict` になる。
+- `project_root` は生成元の作品フォルダ（正規化した絶対パス）。生成中に別の作品を開き直しても、
+  前の作品の変更案を今の作品に書き込まないよう、適用時に照合する。
 
 ### 4.2 本文の生成単位（設定で切り替え）
 
 | 単位 | 1 回の生成 | 向いている環境 |
 |---|---|---|
-| `chapter` | 1 章を丸ごと（シーン区切りで分割して保存） | 長い文脈に強い大きなモデル |
+| `chapter` | 指定したシーンから、次に本文のあるシーンの手前まで（シーン区切りで分割して保存）。手で書いたシーンは置き換えない | 長い文脈に強い大きなモデル |
 | `scene` | 1 シーン。`chars_per_call` を超えるシーンは複数回に分けて書き継ぐ | 中規模モデル（既定） |
 | `beat` | シーンを展開（ビート）に分け、1 ビートずつ書く | 小さなモデル。設定から外れにくい |
 
