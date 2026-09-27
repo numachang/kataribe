@@ -8,6 +8,8 @@ import type {
   NewProject,
   PipelineStep,
   ProjectOverview,
+  ProjectSettings,
+  ProjectSettingsFile,
   QualityReport,
   Segment,
   Task,
@@ -27,9 +29,17 @@ export interface Backend {
   /** API キーを OS の資格情報ストアに保存する。null で削除。 */
   setApiKey(apiKey: string | null): Promise<void>;
   hasApiKey(): Promise<boolean>;
+  /** 開いている作品の設定（kataribe.yaml の settings）と、読んだ時点の kataribe.yaml のハッシュ。 */
+  loadProjectSettings(): Promise<ProjectSettingsFile>;
+  /**
+   * 開いている作品の設定を保存し、新しいハッシュを返す。空なら settings の項目ごと消す。
+   * expectedHash（読んだときのハッシュ）から kataribe.yaml が変わっていれば kind = "conflict" で失敗する。
+   */
+  saveProjectSettings(settings: ProjectSettings, expectedHash: string): Promise<string>;
   /**
    * LLM サーバーのモデル一覧。接続テストにも使う。
    * llm を渡すと、保存前の入力中の接続先で試す（API キーは保存済みのものを使う）。
+   * 渡さなければ、開いている作品の設定を重ねた接続先を使う。
    */
   listModels(llm?: LlmSettings): Promise<ModelInfo[]>;
   listGenres(): Promise<GenrePreset[]>;

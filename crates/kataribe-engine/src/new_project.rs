@@ -43,6 +43,7 @@ pub fn create_project(folder: &Path, new_project: NewProject) -> Result<Project>
         rating: new_project.rating,
         target_length: new_project.target_length,
         idea: new_project.idea.trim().to_owned(),
+        settings: None,
         extra: BTreeMap::default(),
     };
     Ok(Project::create(folder, &manifest)?)

@@ -9,6 +9,8 @@
     "dialog:allow-open",
     "allow-load-settings",
     "allow-save-settings",
+    "allow-load-project-settings",
+    "allow-save-project-settings",
     "allow-set-api-key",
     "allow-has-api-key",
     "allow-list-models",

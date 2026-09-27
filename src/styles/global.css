@@ -129,14 +129,25 @@ button:disabled {
   font-size: 13px;
 }
 
+/* .app-input は、.app-field の外に置く入力欄に同じ見た目を付けるためのもの。
+   付けないと背景がブラウザ既定の白のまま文字色だけテーマを受け継ぎ、ダークテーマで読めなくなる。 */
 .app-field input,
 .app-field select,
-.app-field textarea {
+.app-field textarea,
+.app-input {
   border: 1px solid var(--color-border);
   background: var(--color-bg-raised);
   border-radius: var(--radius-sm);
   padding: 6px 8px;
   font-size: 13px;
+}
+
+.app-field input:disabled,
+.app-field select:disabled,
+.app-input:disabled {
+  background: var(--color-bg-sunken);
+  color: var(--color-ink-faint);
+  cursor: not-allowed;
 }
 
 .app-field textarea {

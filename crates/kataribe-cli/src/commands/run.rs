@@ -24,13 +24,13 @@ pub async fn run(
     cancel: &CancellationToken,
     apply_guard: &ApplyGuard,
 ) -> anyhow::Result<Outcome> {
-    let settings = settings::load_effective_settings(global)?;
+    let project = Project::open(&args.folder).context("作品フォルダを開けません")?;
+    let settings = settings::load_effective_settings(global, Some(&project))?;
     let unit = settings.generation.draft_unit;
     let model = super::build_chat_model(&settings.llm, &global.api_key_env)?;
     let engine =
         Engine::new(model, settings.generation).context("執筆エンジンを初期化できません")?;
 
-    let project = Project::open(&args.folder).context("作品フォルダを開けません")?;
     let boundary = StdoutBoundary::new();
 
     let mut executed = 0u32;

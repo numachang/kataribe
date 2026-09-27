@@ -707,3 +707,82 @@ async fn run_separates_stdout_between_consecutive_pipeline_steps_with_a_blank_li
         "工程の間に空行が入るはず: {stdout:?}"
     );
 }
+
+#[tokio::test]
+async fn the_project_settings_choose_the_model_unless_the_command_line_overrides_it() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    let folder = project_dir.display().to_string();
+    let server = MockServer::start().await;
+    create_test_project(&project_dir).await;
+    let settings_path = temp_dir.path().join("settings.json");
+    std::fs::write(&settings_path, "{}").unwrap();
+    let with_options = |options: &[&str]| -> Vec<String> {
+        let mut args = vec![
+            "kataribe-cli".to_owned(),
+            "--settings".to_owned(),
+            settings_path.display().to_string(),
+            "--base-url".to_owned(),
+            format!("{}/v1", server.uri()),
+            "--api-key-env".to_owned(),
+            "PATH".to_owned(),
+        ];
+        args.extend(options.iter().map(|option| (*option).to_owned()));
+        args
+    };
+
+    let console = BufferConsole::new();
+    let save = with_options(&[
+        "--model",
+        "project-model",
+        "project-settings",
+        &folder,
+        "--save",
+    ]);
+    assert_eq!(
+        run(save, &console).await,
+        std::process::ExitCode::from(0),
+        "{}",
+        console.stderr()
+    );
+
+    for options in [
+        vec!["generate", &folder, "concept", "--dry-run"],
+        vec![
+            "--model",
+            "cli-model",
+            "generate",
+            &folder,
+            "concept",
+            "--dry-run",
+        ],
+    ] {
+        respond_once_with(
+            &server,
+            "# 企画\n## ログライン\n嵐の洋館で起きる密室殺人。\n",
+        )
+        .await;
+        let console = BufferConsole::new();
+        let code = run(with_options(&options), &console).await;
+        assert_eq!(
+            code,
+            std::process::ExitCode::from(0),
+            "{}",
+            console.stderr()
+        );
+    }
+
+    let models: Vec<String> = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .map(|request| {
+            request.body_json::<Value>().unwrap()["model"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(models, vec!["project-model", "cli-model"]);
+}

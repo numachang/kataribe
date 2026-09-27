@@ -1,4 +1,4 @@
-import type { Manifest } from "../types";
+import type { Manifest, ProjectSettings } from "../types";
 import {
   CONCEPT_PATH,
   chapterPath,
@@ -19,7 +19,7 @@ function renderFrontMatter(fields: Array<[string, string]>): string {
   return `---\n${body}\n---\n`;
 }
 
-export function renderManifest(manifest: Manifest): string {
+export function renderManifest(manifest: Manifest, settings: ProjectSettings = {}): string {
   const idea = manifest.idea
     .split("\n")
     .map((line) => `  ${line}`)
@@ -35,6 +35,12 @@ export function renderManifest(manifest: Manifest): string {
     "idea: |",
     idea,
   ];
+  const settingLines = Object.entries(settings)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `  ${key}: ${String(value)}`);
+  if (settingLines.length > 0) {
+    lines.push("settings:", ...settingLines);
+  }
   return `${lines.join("\n")}\n`;
 }
 
@@ -82,7 +88,7 @@ export function renderChapterFile(chapter: MockChapter): string {
 /** 状態を書き換えずに、パスに対応するファイルの内容を読む。存在しなければ null。 */
 export function readMockFile(state: ProjectState, path: string): string | null {
   if (path === MANIFEST_PATH) {
-    return renderManifest(state.manifest);
+    return renderManifest(state.manifest, state.settings);
   }
   if (path === CONCEPT_PATH) {
     return state.concept;

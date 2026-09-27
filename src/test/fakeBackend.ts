@@ -15,6 +15,8 @@ export function createStubBackend(overrides: Partial<Backend> = {}): Backend {
   const base: Backend = {
     loadSettings: notImplemented("loadSettings"),
     saveSettings: notImplemented("saveSettings"),
+    loadProjectSettings: notImplemented("loadProjectSettings"),
+    saveProjectSettings: notImplemented("saveProjectSettings"),
     setApiKey: notImplemented("setApiKey"),
     hasApiKey: notImplemented("hasApiKey"),
     listModels: notImplemented("listModels"),

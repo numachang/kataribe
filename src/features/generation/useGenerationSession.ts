@@ -3,10 +3,9 @@ import { BackendError } from "../../api/backend";
 import { useBackend } from "../../api/context";
 import type { ChangeSet, Task } from "../../api/types";
 import { toErrorMessage } from "../../lib/errorMessage";
-import { useEditorStore } from "../../store/editorStore";
 import { useUiStore } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
-import { documentSaveController } from "../editor/documentSaveController";
+import { writeBesideEditor } from "../editor/openDocumentSync";
 import {
   applyGenerationEvent,
   createEmptyGenerationDisplay,
@@ -137,38 +136,8 @@ export function useGenerationSession(): GenerationSessionApi {
   );
 
   /**
-   * 適用が完了した文書を、今開いていれば読み直す。開いているかどうかは currentPath で判定する。
-   * 適用の間にエディタへ入力されていたら（`contentBeforeApply` から変わっていたら）読み直さない。
-   * その編集の基準は古いハッシュのままなので、次の保存で競合として知らせることになる。
-   */
-  const reloadOpenDocumentIfTouched = useCallback(
-    async (result: ChangeSet, contentBeforeApply: string): Promise<void> => {
-      const openPath = useWorkspaceStore.getState().currentPath;
-      if (openPath === null || !touchesDocument(result, openPath)) {
-        return;
-      }
-      try {
-        const file = await backend.readFile(openPath);
-        const editor = useEditorStore.getState();
-        const isUntouchedSinceApply =
-          editor.path === openPath && editor.content === contentBeforeApply;
-        if (
-          !unmountedRef.current &&
-          useWorkspaceStore.getState().currentPath === openPath &&
-          isUntouchedSinceApply
-        ) {
-          useEditorStore.getState().loadDocument(openPath, file.content, file.hash);
-        }
-      } catch (error) {
-        showToast(toErrorMessage(error, "適用後に文書を読み直せませんでした。"), "error");
-      }
-    },
-    [backend, showToast],
-  );
-
-  /**
-   * 変更案を適用する。適用の前に、開いている文書の保存を済ませておく
-   * （そうすればディスク側の競合検出が働き、未保存の編集を黙って上書きしない）。
+   * 変更案を適用する。開いている文書との食い違いを防ぐ手順（先に保存を済ませ、適用後に読み直す）は
+   * `writeBesideEditor` に任せる。
    * 成功したかどうかを返す。呼び出し側（自動で進めるループ）はこれで止まるべきかを判断する。
    */
   const applyResult = useCallback(
@@ -179,32 +148,25 @@ export function useGenerationSession(): GenerationSessionApi {
       setIsApplying(true);
       setApplyErrorMessage(null);
       try {
-        await documentSaveController.flush(backend);
-        if (unmountedRef.current) {
-          return false;
+        const applied = await writeBesideEditor(backend, {
+          touches: (path) => touchesDocument(result, path),
+          unsavedWorkMessage: UNSAVED_WORK_BLOCKS_APPLY,
+          write: async () => {
+            // 保存を待つ間に画面が閉じられた（作品を閉じたなど）なら、適用しない
+            if (unmountedRef.current) {
+              return false;
+            }
+            const overview = await backend.applyChangeSet(result);
+            if (!unmountedRef.current) {
+              useWorkspaceStore.getState().setOverview(overview);
+              await useWorkspaceStore.getState().refreshPipeline(backend);
+            }
+            return true;
+          },
+        });
+        if (!applied || unmountedRef.current) {
+          return applied;
         }
-        // 開いている文書の保存に失敗していると、ディスクは生成したときのままなので適用が通り、
-        // 適用後の読み直しで保存できていない編集が消える。そうなる前に止める。
-        const openPath = useWorkspaceStore.getState().currentPath;
-        if (
-          openPath !== null &&
-          touchesDocument(result, openPath) &&
-          documentSaveController.hasUnsavedWork()
-        ) {
-          throw new Error(UNSAVED_WORK_BLOCKS_APPLY);
-        }
-        const contentBeforeApply = useEditorStore.getState().content;
-        const overview = await backend.applyChangeSet(result);
-        if (unmountedRef.current) {
-          return true;
-        }
-        useWorkspaceStore.getState().setOverview(overview);
-        await useWorkspaceStore.getState().refreshPipeline(backend);
-        if (unmountedRef.current) {
-          return true;
-        }
-
-        await reloadOpenDocumentIfTouched(result, contentBeforeApply);
 
         setPhase("idle");
         setCurrentTask(null);
@@ -227,7 +189,7 @@ export function useGenerationSession(): GenerationSessionApi {
         }
       }
     },
-    [backend, reloadOpenDocumentIfTouched, showToast],
+    [backend, showToast],
   );
 
   const start = useCallback(

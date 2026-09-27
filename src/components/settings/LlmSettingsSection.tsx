@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useBackend } from "../../api/context";
 import type { LlmProvider, LlmSettings, ModelInfo } from "../../api/types";
 import { toErrorMessage } from "../../lib/errorMessage";
 import { useUiStore } from "../../store/uiStore";
+import { type ConnectionTest, useConnectionTest } from "./useConnectionTest";
 
-const PROVIDERS: Record<LlmProvider, { title: string; description: string }> = {
+export const PROVIDERS: Record<LlmProvider, { title: string; description: string }> = {
   openai_compatible: {
     title: "OpenAI 互換 API",
     description:
@@ -26,67 +27,19 @@ interface LlmSettingsSectionProps {
 
 /** 設定ダイアログの LLM の欄。接続先の種類ごとに、必要な項目だけを見せる。 */
 export function LlmSettingsSection({ llm, onChange }: LlmSettingsSectionProps) {
-  const backend = useBackend();
-  const showToast = useUiStore((state) => state.showToast);
-  const [models, setModels] = useState<ModelInfo[]>([]);
-  const [isTestingConnection, setIsTestingConnection] = useState(false);
-  // 接続テストの途中で接続先を切り替えたら、前の接続先の結果を一覧に出さないための通し番号
-  const connectionTestId = useRef(0);
+  const connectionTest = useConnectionTest();
 
   function update(changes: Partial<LlmSettings>): void {
     onChange({ ...llm, ...changes });
   }
 
   function handleProviderChange(provider: LlmProvider): void {
-    connectionTestId.current += 1;
-    setModels([]);
-    setIsTestingConnection(false);
+    connectionTest.reset();
     update({ provider });
   }
 
-  async function handleTestConnection(): Promise<void> {
-    const testId = ++connectionTestId.current;
-    const isCurrentTest = () => testId === connectionTestId.current;
-    setIsTestingConnection(true);
-    try {
-      const list = await backend.listModels(llm);
-      if (!isCurrentTest()) {
-        return;
-      }
-      setModels(list);
-      showToast(
-        llm.provider === "claude_code"
-          ? "Claude Code を使えます（ログインしています）。"
-          : `接続できました。${list.length} 件のモデルが見つかりました。`,
-      );
-    } catch (error) {
-      if (isCurrentTest()) {
-        showToast(toErrorMessage(error, "接続できませんでした。"), "error");
-      }
-    } finally {
-      if (isCurrentTest()) {
-        setIsTestingConnection(false);
-      }
-    }
-  }
-
-  const connectionTestButton = (
-    <button
-      type="button"
-      className="app-button"
-      disabled={isTestingConnection}
-      onClick={() => void handleTestConnection()}
-    >
-      {isTestingConnection ? "確認しています…" : "接続テスト"}
-    </button>
-  );
-  const modelList = (
-    <datalist id={MODEL_LIST_ID}>
-      {models.map((model) => (
-        <option key={model.id} value={model.id} />
-      ))}
-    </datalist>
-  );
+  const connectionTestButton = <ConnectionTestButton connectionTest={connectionTest} llm={llm} />;
+  const modelList = <ModelList id={MODEL_LIST_ID} models={connectionTest.models} />;
 
   return (
     <section className="settings-dialog__section">
@@ -161,6 +114,42 @@ export function LlmSettingsSection({ llm, onChange }: LlmSettingsSectionProps) {
         </>
       )}
     </section>
+  );
+}
+
+interface ConnectionTestButtonProps {
+  connectionTest: ConnectionTest;
+  llm: LlmSettings;
+}
+
+/** `llm` で接続を試すボタン。 */
+export function ConnectionTestButton({ connectionTest, llm }: ConnectionTestButtonProps) {
+  return (
+    <button
+      type="button"
+      className="app-button"
+      disabled={connectionTest.isTesting}
+      onClick={() => void connectionTest.run(llm)}
+    >
+      {connectionTest.isTesting ? "確認しています…" : "接続テスト"}
+    </button>
+  );
+}
+
+interface ModelListProps {
+  /** モデル欄の `list` 属性に渡す id。 */
+  id: string;
+  models: ModelInfo[];
+}
+
+/** 接続テストで見つかったモデルを、モデル欄の候補にする。 */
+export function ModelList({ id, models }: ModelListProps) {
+  return (
+    <datalist id={id}>
+      {models.map((model) => (
+        <option key={model.id} value={model.id} />
+      ))}
+    </datalist>
   );
 }
 

@@ -41,7 +41,7 @@ pub fn write_file(
 
 /// 画面から渡された文字列をハッシュとして検証する。
 /// `ContentHash` 自身の検証（64 桁の 16 進小文字）をそのまま再利用する。
-fn parse_content_hash(raw: &str) -> Result<ContentHash, CommandError> {
+pub(crate) fn parse_content_hash(raw: &str) -> Result<ContentHash, CommandError> {
     serde_json::from_value(serde_json::Value::String(raw.to_owned())).map_err(|_| {
         CommandError::new(
             CommandErrorKind::InvalidInput,
@@ -67,6 +67,7 @@ mod tests {
             rating: Rating::General,
             target_length: 10_000,
             idea: "静かな夜の物語".to_owned(),
+            settings: None,
             extra: std::collections::BTreeMap::new(),
         }
     }

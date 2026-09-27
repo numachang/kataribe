@@ -105,6 +105,7 @@ mod tests {
             rating: Rating::General,
             target_length: 10_000,
             idea: "静かな夜の物語".to_owned(),
+            settings: None,
             extra: std::collections::BTreeMap::new(),
         };
         Project::create(dir.path(), &manifest).unwrap();

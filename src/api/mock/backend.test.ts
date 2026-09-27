@@ -75,6 +75,56 @@ describe("createMockBackend / listModels", () => {
   });
 });
 
+describe("createMockBackend / 作品ごとの設定", () => {
+  it("保存した作品の設定を読み直せ、kataribe.yaml にも書かれる", async () => {
+    const backend = createMockBackend({ delayMs: 0 });
+    await backend.openProject(SAMPLE_PROJECT_FOLDER);
+    const { hash } = await backend.loadProjectSettings();
+
+    const savedHash = await backend.saveProjectSettings(
+      { provider: "claude_code", claude_model: "haiku" },
+      hash,
+    );
+
+    const loaded = await backend.loadProjectSettings();
+    expect(loaded).toEqual({
+      settings: { provider: "claude_code", claude_model: "haiku" },
+      hash: savedHash,
+    });
+    expect((await backend.readFile("kataribe.yaml")).content).toContain("provider: claude_code");
+  });
+
+  it("読んだあとに kataribe.yaml が変わっていれば、conflict で失敗する", async () => {
+    const backend = createMockBackend({ delayMs: 0 });
+    await backend.openProject(SAMPLE_PROJECT_FOLDER);
+    const { hash: staleHash } = await backend.loadProjectSettings();
+    await backend.saveProjectSettings({ polish: true }, staleHash);
+
+    await expect(
+      backend.saveProjectSettings({ provider: "claude_code" }, staleHash),
+    ).rejects.toMatchObject({ kind: "conflict" });
+    expect((await backend.loadProjectSettings()).settings).toEqual({ polish: true });
+  });
+
+  it("llm を渡さないモデル一覧は、作品の設定の接続先を使う", async () => {
+    const backend = createMockBackend({ delayMs: 0 });
+    await backend.openProject(SAMPLE_PROJECT_FOLDER);
+    const { hash } = await backend.loadProjectSettings();
+    await backend.saveProjectSettings({ provider: "claude_code" }, hash);
+
+    const models = await backend.listModels();
+
+    expect(models.map((model) => model.id)).toEqual(["sonnet", "opus", "haiku"]);
+  });
+
+  it("作品を開いていなければ not_found で失敗する", async () => {
+    const backend = createMockBackend({ delayMs: 0 });
+    await backend.closeProject();
+
+    await expect(backend.loadProjectSettings()).rejects.toMatchObject({ kind: "not_found" });
+  });
+});
+
 describe("createMockBackend / 新規作成", () => {
   it("新しい作品は何も生成されていない状態で始まる", async () => {
     const backend = createMockBackend({ delayMs: 0, pickFolder: async () => "C:\\projects\\新作" });

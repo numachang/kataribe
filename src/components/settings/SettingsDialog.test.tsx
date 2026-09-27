@@ -1,9 +1,14 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { Backend } from "../../api/backend";
 import { createMockBackend } from "../../api/mock";
-import type { ModelInfo } from "../../api/types";
+import { SAMPLE_PROJECT_FOLDER } from "../../api/mock/sampleProject";
+import type { ModelInfo, ProjectSettings } from "../../api/types";
+import { documentSaveController } from "../../features/editor/documentSaveController";
+import { useEditorStore } from "../../store/editorStore";
 import { useSettingsStore } from "../../store/settingsStore";
+import { useWorkspaceStore } from "../../store/workspaceStore";
 import { renderWithBackend } from "../../test/renderWithBackend";
 import { resetAllStores } from "../../test/resetStores";
 import { wrapBackend } from "../../test/wrapBackend";
@@ -143,5 +148,254 @@ describe("設定の保存", () => {
     expect(await screen.findByText("API キー（設定済み）")).toBeInTheDocument();
     expect(screen.queryByDisplayValue("sk-test-12345")).not.toBeInTheDocument();
     expect(await backend.hasApiKey()).toBe(true);
+  });
+});
+
+/** 作品の設定を、読んだときのハッシュを使って保存しておく（ダイアログを開く前の状態を作る）。 */
+async function storeProjectSettings(backend: Backend, settings: ProjectSettings): Promise<void> {
+  const { hash } = await backend.loadProjectSettings();
+  await backend.saveProjectSettings(settings, hash);
+}
+
+async function storedProjectSettings(backend: Backend): Promise<ProjectSettings> {
+  return (await backend.loadProjectSettings()).settings;
+}
+
+/** サンプル作品を開いた状態で、設定ダイアログを表示する。 */
+async function renderWithOpenProject(backend: Backend = createMockBackend({ delayMs: 0 })) {
+  await useSettingsStore.getState().load(backend);
+  const overview = await backend.openProject(SAMPLE_PROJECT_FOLDER);
+  useWorkspaceStore.getState().openWorkspace(overview);
+  renderWithBackend(
+    <>
+      <ToastHost />
+      <SettingsDialog onClose={() => {}} />
+    </>,
+    backend,
+  );
+  return backend;
+}
+
+describe("作品ごとの設定", () => {
+  it("作品を開いていなければ、設定する範囲の切り替えは出ない", async () => {
+    const backend = createMockBackend({ delayMs: 0 });
+    await useSettingsStore.getState().load(backend);
+    renderWithBackend(<SettingsDialog onClose={() => {}} />, backend);
+
+    await screen.findByText("生成");
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  });
+
+  it("この作品だけ Claude Code に変えて保存でき、アプリ全体の設定は変わらない", async () => {
+    const user = userEvent.setup();
+    const backend = await renderWithOpenProject();
+
+    await user.click(await screen.findByRole("tab", { name: "この作品（月霧の館）" }));
+    await user.click(
+      await screen.findByRole("checkbox", { name: "接続先の種類をこの作品で変える" }),
+    );
+    await user.selectOptions(screen.getByRole("combobox", { name: "接続先の種類" }), "claude_code");
+    await user.click(
+      screen.getByRole("checkbox", { name: "モデル（Claude Code）をこの作品で変える" }),
+    );
+    const modelInput = screen.getByRole("combobox", { name: "モデル" });
+    await user.clear(modelInput);
+    await user.type(modelInput, "haiku");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(async () => {
+      expect(await storedProjectSettings(backend)).toEqual({
+        provider: "claude_code",
+        claude_model: "haiku",
+      });
+    });
+    const appSettings = await backend.loadSettings();
+    expect(appSettings.llm.provider).toBe("openai_compatible");
+    expect(appSettings.llm.claude_model).toBe("sonnet");
+  });
+
+  it("この作品で変えていない項目は、アプリ全体の値を見せて、変えられないようにする", async () => {
+    const user = userEvent.setup();
+    await renderWithOpenProject();
+
+    await user.click(await screen.findByRole("tab", { name: "この作品（月霧の館）" }));
+
+    const charsPerCall = await screen.findByRole("spinbutton", { name: "1 回あたりの文字数" });
+    expect(charsPerCall).toBeDisabled();
+    expect(charsPerCall).toHaveValue(1500);
+    expect(screen.getByText("アプリ全体の設定（1500）を使います。")).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("checkbox", { name: "1 回あたりの文字数をこの作品で変える" }),
+    );
+
+    expect(charsPerCall).toBeEnabled();
+    expect(screen.queryByText("アプリ全体の設定（1500）を使います。")).not.toBeInTheDocument();
+  });
+
+  it("チェックを外すと、その項目は作品の設定から消える", async () => {
+    const user = userEvent.setup();
+    const backend = createMockBackend({ delayMs: 0 });
+    await backend.openProject(SAMPLE_PROJECT_FOLDER);
+    await storeProjectSettings(backend, { polish: true, temperature: 0.3 });
+    await renderWithOpenProject(backend);
+
+    await user.click(await screen.findByRole("tab", { name: "この作品（月霧の館）" }));
+    await user.click(
+      await screen.findByRole("checkbox", { name: "temperatureをこの作品で変える" }),
+    );
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(async () => {
+      expect(await storedProjectSettings(backend)).toEqual({ polish: true });
+    });
+  });
+
+  it("アプリ全体の画面では、作品の設定が優先されることを知らせる", async () => {
+    const backend = createMockBackend({ delayMs: 0 });
+    await backend.openProject(SAMPLE_PROJECT_FOLDER);
+    await storeProjectSettings(backend, { provider: "claude_code", context_tokens: 100000 });
+    await renderWithOpenProject(backend);
+
+    expect(await screen.findByText(/作品ごとの設定が 2 項目あり/)).toBeInTheDocument();
+  });
+
+  it("作品の生成単位を変えると、工程の一覧を読み直す", async () => {
+    const user = userEvent.setup();
+    const inner = createMockBackend({ delayMs: 0 });
+    let pipelineCalls = 0;
+    const backend = wrapBackend(inner, {
+      pipeline: () => {
+        pipelineCalls += 1;
+        return inner.pipeline();
+      },
+    });
+    await renderWithOpenProject(backend);
+
+    await user.click(await screen.findByRole("tab", { name: "この作品（月霧の館）" }));
+    await user.click(await screen.findByRole("checkbox", { name: "生成単位をこの作品で変える" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "生成単位" }), "scene");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(pipelineCalls).toBe(1));
+    expect(await storedProjectSettings(backend)).toEqual({ draft_unit: "scene" });
+  });
+
+  it("作品の設定を触らずに保存したときは、kataribe.yaml を書き換えない", async () => {
+    const user = userEvent.setup();
+    const inner = createMockBackend({ delayMs: 0 });
+    await inner.openProject(SAMPLE_PROJECT_FOLDER);
+    // CLI などで範囲外の値が書かれていても、触っていなければそのまま残す
+    await storeProjectSettings(inner, { chars_per_call: 50 });
+    let projectSaves = 0;
+    const backend = wrapBackend(inner, {
+      saveProjectSettings: (settings, hash) => {
+        projectSaves += 1;
+        return inner.saveProjectSettings(settings, hash);
+      },
+    });
+    await renderWithOpenProject(backend);
+
+    await user.click(await screen.findByRole("checkbox", { name: "既定で縦書きにする" }));
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(await screen.findByText("設定を保存しました。")).toBeInTheDocument();
+    expect(projectSaves).toBe(0);
+    expect(await storedProjectSettings(inner)).toEqual({ chars_per_call: 50 });
+  });
+
+  it("作品の設定だけ保存に失敗したら、アプリ全体の設定は保存できたことと一緒に知らせる", async () => {
+    const user = userEvent.setup();
+    const backend = await renderWithOpenProject();
+
+    await user.click(await screen.findByRole("tab", { name: "この作品（月霧の館）" }));
+    await user.click(
+      await screen.findByRole("checkbox", { name: "推論モデルの思考を止めるをこの作品で変える" }),
+    );
+    // ダイアログを開いたあとに、外で kataribe.yaml が変わった
+    await storeProjectSettings(backend, { polish: true });
+    await user.click(screen.getByRole("tab", { name: "アプリ全体" }));
+    await user.click(screen.getByRole("checkbox", { name: "既定で縦書きにする" }));
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(
+      await screen.findByText(
+        /アプリ全体の設定は保存しましたが、作品の設定は保存できませんでした。.*開き直して/,
+      ),
+    ).toBeInTheDocument();
+    expect((await backend.loadSettings()).editor.vertical).toBe(false);
+    expect(await storedProjectSettings(backend)).toEqual({ polish: true });
+  });
+
+  it("作品情報をエディタで開いていれば、作品の設定を保存したあとに読み直す", async () => {
+    const user = userEvent.setup();
+    const backend = createMockBackend({ delayMs: 0 });
+    await backend.openProject(SAMPLE_PROJECT_FOLDER);
+    await renderWithOpenProject(backend);
+    const manifest = await backend.readFile("kataribe.yaml");
+    useWorkspaceStore.getState().openDocument("kataribe.yaml");
+    useEditorStore.getState().loadDocument("kataribe.yaml", manifest.content, manifest.hash);
+
+    await user.click(await screen.findByRole("tab", { name: "この作品（月霧の館）" }));
+    await user.click(await screen.findByRole("checkbox", { name: "生成単位をこの作品で変える" }));
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(useEditorStore.getState().content).toContain("draft_unit: beat");
+    });
+  });
+
+  it("タブを切り替えても、入力中の API キーは消えない", async () => {
+    const user = userEvent.setup();
+    await renderWithOpenProject();
+
+    await user.type(await screen.findByPlaceholderText("未設定"), "sk-typing");
+    await user.click(screen.getByRole("tab", { name: "この作品（月霧の館）" }));
+    await user.click(screen.getByRole("tab", { name: "アプリ全体" }));
+
+    expect(screen.getByPlaceholderText("未設定")).toHaveValue("sk-typing");
+  });
+
+  it("作品情報に保存前の編集があっても、その編集を保存したうえで作品の設定を保存できる", async () => {
+    const user = userEvent.setup();
+    const backend = createMockBackend({ delayMs: 0 });
+    await useSettingsStore.getState().load(backend);
+    useWorkspaceStore.getState().openWorkspace(await backend.openProject(SAMPLE_PROJECT_FOLDER));
+    const manifest = await backend.readFile("kataribe.yaml");
+    useWorkspaceStore.getState().openDocument("kataribe.yaml");
+    useEditorStore.getState().loadDocument("kataribe.yaml", manifest.content, manifest.hash);
+    // 入力したときと同じく、内容を変えて保存の予約をする（まだ保存されていない）
+    useEditorStore.getState().updateContent(`${manifest.content}# 手で足したメモ
+`);
+    documentSaveController.notifyChange(backend);
+    renderWithBackend(
+      <>
+        <ToastHost />
+        <SettingsDialog onClose={() => {}} />
+      </>,
+      backend,
+    );
+
+    await user.click(await screen.findByRole("tab", { name: "この作品（月霧の館）" }));
+    await user.click(await screen.findByRole("checkbox", { name: "生成単位をこの作品で変える" }));
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(await screen.findByText("設定を保存しました。")).toBeInTheDocument();
+    expect(await storedProjectSettings(backend)).toEqual({ draft_unit: "beat" });
+  });
+
+  it("作品の設定を読み込めなければ、「この作品」にその理由を出す", async () => {
+    const user = userEvent.setup();
+    const inner = createMockBackend({ delayMs: 0 });
+    const backend = wrapBackend(inner, {
+      loadProjectSettings: async () => {
+        throw new Error("kataribe.yaml の settings を読めません");
+      },
+    });
+    await renderWithOpenProject(backend);
+
+    await user.click(await screen.findByRole("tab", { name: "この作品（月霧の館）" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("kataribe.yaml の settings");
   });
 });
