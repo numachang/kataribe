@@ -118,6 +118,7 @@ jobs:
           $policy = 'HKCU:\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
           New-Item -Path $policy -Force | Out-Null
           New-ItemProperty -Path $policy -Name 'kataribe.exe' -Value '--remote-debugging-port=9333' -PropertyType String -Force | Out-Null
+          New-ItemProperty -Path $policy -Name '*' -Value '--remote-debugging-port=9333' -PropertyType String -Force | Out-Null
           '{}' | Out-File -Encoding utf8 "$env:RUNNER_TEMP\diag-settings.json"
           $app = Start-Process target\debug\kataribe.exe -ArgumentList "--settings=$env:RUNNER_TEMP\diag-settings.json" -PassThru
           Start-Sleep -Seconds 15
