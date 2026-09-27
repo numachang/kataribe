@@ -44,11 +44,6 @@
   font-weight: bold;
 }
 
-.settings-dialog__override input:disabled,
-.settings-dialog__override select:disabled {
-  color: var(--color-ink-faint);
-}
-
 .settings-dialog__error {
   margin: 0;
   color: var(--color-error);

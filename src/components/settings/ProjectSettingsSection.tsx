@@ -62,6 +62,7 @@ export function ProjectSettingsSection({ app, value, onChange }: ProjectSettings
           {(disabled) => (
             <input
               type="number"
+              className="app-input"
               aria-label={label}
               min={GENERATION_NUMBER_LIMITS[key].min}
               max={GENERATION_NUMBER_LIMITS[key].max}
@@ -124,6 +125,7 @@ export function ProjectSettingsSection({ app, value, onChange }: ProjectSettings
         >
           {(disabled) => (
             <select
+              className="app-input"
               aria-label="接続先の種類"
               disabled={disabled}
               value={effective.llm.provider}
@@ -147,6 +149,7 @@ export function ProjectSettingsSection({ app, value, onChange }: ProjectSettings
             <>
               <input
                 aria-label="モデル"
+                className="app-input"
                 list={MODEL_LIST_ID}
                 disabled={disabled}
                 value={effective.llm[modelKey]}
@@ -173,6 +176,7 @@ export function ProjectSettingsSection({ app, value, onChange }: ProjectSettings
         >
           {(disabled) => (
             <select
+              className="app-input"
               aria-label="生成単位"
               disabled={disabled}
               value={effective.generation.draft_unit}
