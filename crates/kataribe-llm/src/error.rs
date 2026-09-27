@@ -1,7 +1,7 @@
 /// 文字数の目安でエラー本文を切り詰める上限（ログ・画面表示が長くなりすぎないため）。
 const MAX_ERROR_BODY_CHARS: usize = 500;
 
-/// [`OpenAiCompatClient`](crate::OpenAiCompatClient) が返すエラー。
+/// LLM の呼び出し（[`OpenAiCompatClient`](crate::OpenAiCompatClient)・[`ClaudeCodeModel`](crate::ClaudeCodeModel)）が返すエラー。
 ///
 /// [`Display`](std::fmt::Display) の文言はそのまま利用者に見せられる日本語にしてある。
 /// API キーは決してここに含めない。
@@ -41,6 +41,10 @@ pub enum LlmError {
     /// 応答の形式が想定と違う（SSE の構文・JSON の形・ストリーム中のエラー通知など）。
     #[error("LLM サーバーの応答を解釈できません: {0}")]
     Protocol(String),
+
+    /// Claude Code（`claude -p`）で生成できなかった（コマンドが無い・未ログイン・利用上限など）。
+    #[error("Claude Code でエラーになりました: {0}")]
+    ClaudeCode(String),
 }
 
 impl LlmError {

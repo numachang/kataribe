@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use kataribe_engine::DraftUnit;
+use kataribe_engine::{DraftUnit, LlmProvider};
 use kataribe_project::Rating;
 
 use crate::stage::Stage;
@@ -26,13 +26,21 @@ pub struct GlobalOptions {
     #[arg(long, global = true, value_name = "PATH")]
     pub settings: Option<PathBuf>,
 
-    /// LLM サーバーのベース URL。
+    /// 生成に使う LLM の種類。
+    #[arg(long, global = true, value_enum)]
+    pub provider: Option<ProviderArg>,
+
+    /// LLM サーバーのベース URL（OpenAI 互換 API のとき）。
     #[arg(long, global = true, value_name = "URL")]
     pub base_url: Option<String>,
 
-    /// 使用するモデル名。
+    /// 使用するモデル名（Claude Code では sonnet・opus・haiku など）。選んでいる接続先のモデルを変える。
     #[arg(long, global = true, value_name = "ID")]
     pub model: Option<String>,
+
+    /// Claude Code の claude コマンド（PATH に無いときに実行ファイルの場所を指定する）。
+    #[arg(long, global = true, value_name = "PATH")]
+    pub claude_command: Option<String>,
 
     /// API キーを読む環境変数（未設定なら資格情報マネージャーのキーを使う）。
     #[arg(
@@ -90,7 +98,7 @@ pub enum Command {
     Quality(QualityArgs),
     /// 本文を章題付きの一つのテキストにまとめる。
     Export(ExportArgs),
-    /// LLM サーバーのモデル一覧を表示する。
+    /// 選べるモデルの一覧を表示する（接続の確認を兼ねる）。
     Models,
     /// API キーを資格情報マネージャーに保存・削除・確認する。
     ApiKey(ApiKeyArgs),
@@ -286,6 +294,24 @@ impl From<RatingArg> for Rating {
     }
 }
 
+/// [`kataribe_engine::LlmProvider`] の clap 版。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ProviderArg {
+    /// OpenAI 互換の API（LM Studio など）。
+    OpenaiCompatible,
+    /// Claude Code の claude -p（API キーの代わりに Claude Code のログインを使う）。
+    ClaudeCode,
+}
+
+impl From<ProviderArg> for LlmProvider {
+    fn from(value: ProviderArg) -> Self {
+        match value {
+            ProviderArg::OpenaiCompatible => LlmProvider::OpenaiCompatible,
+            ProviderArg::ClaudeCode => LlmProvider::ClaudeCode,
+        }
+    }
+}
+
 /// [`kataribe_engine::DraftUnit`] の clap 版。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum DraftUnitArg {
@@ -350,6 +376,17 @@ mod tests {
 
         let cli = parse(&["status", "--json", "folder", "--model", "gemma"]).unwrap();
         assert_eq!(cli.global.model.as_deref(), Some("gemma"));
+    }
+
+    #[test]
+    fn providers_use_kebab_case_spelling() {
+        let cli = parse(&["--provider", "claude-code", "models"]).unwrap();
+        assert_eq!(cli.global.provider, Some(ProviderArg::ClaudeCode));
+
+        let cli = parse(&["--provider", "openai-compatible", "models"]).unwrap();
+        assert_eq!(cli.global.provider, Some(ProviderArg::OpenaiCompatible));
+
+        assert!(parse(&["--provider", "claude", "models"]).is_err());
     }
 
     #[test]

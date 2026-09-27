@@ -61,7 +61,7 @@ pub async fn list_models(
     llm: Option<LlmSettings>,
 ) -> Result<Vec<ModelInfo>, CommandError> {
     let effective_llm = llm.unwrap_or_else(|| state.settings().llm);
-    let api_key = state.api_key_store().load().map_err(CommandError::from)?;
+    let api_key = engine_client::load_api_key(state.api_key_store(), &effective_llm)?;
     engine_client::list_models(&effective_llm, api_key).await
 }
 
@@ -181,7 +181,7 @@ pub async fn generate(
     let job = generation::Job::register(state.jobs(), &job_id)?;
     let project = state.require_project()?;
     let current_settings = state.settings();
-    let api_key = state.api_key_store().load().map_err(CommandError::from)?;
+    let api_key = engine_client::load_api_key(state.api_key_store(), &current_settings.llm)?;
     let engine =
         engine_client::build_engine(&current_settings.llm, &current_settings.generation, api_key)?;
     let cancel = job.cancel_token().clone();

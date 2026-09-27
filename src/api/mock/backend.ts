@@ -43,7 +43,13 @@ const MAX_RECENT_PROJECTS = 10;
 const DEFAULT_CHUNK_DELAY_MS = 30;
 
 const DEFAULT_SETTINGS: AppSettings = {
-  llm: { base_url: "http://localhost:1234/v1", model: "" },
+  llm: {
+    provider: "openai_compatible",
+    base_url: "http://localhost:1234/v1",
+    model: "",
+    claude_command: "claude",
+    claude_model: "sonnet",
+  },
   generation: {
     draft_unit: "beat",
     chars_per_call: 1500,
@@ -61,6 +67,12 @@ const MODEL_LIST: ModelInfo[] = [
   { id: "lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF", context_length: 8192 },
   { id: "lmstudio-community/Qwen2.5-14B-Instruct-GGUF", context_length: 32768 },
   { id: "lmstudio-community/Ministral-8B-Instruct-2410-GGUF", context_length: 32768 },
+];
+
+const CLAUDE_CODE_MODELS: ModelInfo[] = [
+  { id: "sonnet", context_length: null },
+  { id: "opus", context_length: null },
+  { id: "haiku", context_length: null },
 ];
 
 export interface MockBackendOptions {
@@ -140,7 +152,11 @@ class MockBackend implements Backend {
   }
 
   async listModels(llm?: LlmSettings): Promise<ModelInfo[]> {
-    if (llm && llm.base_url.trim().length === 0) {
+    const effective = llm ?? this.settings.llm;
+    if (effective.provider === "claude_code") {
+      return CLAUDE_CODE_MODELS;
+    }
+    if (effective.base_url.trim().length === 0) {
       throw new BackendError("invalid_input", "接続先 URL を入力してください。");
     }
     return MODEL_LIST;

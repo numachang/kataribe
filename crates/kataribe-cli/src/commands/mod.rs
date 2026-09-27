@@ -10,14 +10,16 @@ pub mod run;
 pub mod status;
 
 use std::fmt::Write as _;
+use std::sync::Arc;
 
 use anyhow::Context;
 use kataribe_engine::{ChangeSet, LlmSettings};
-use kataribe_llm::{ClientConfig, OpenAiCompatClient};
+use kataribe_llm::ChatModel;
 use kataribe_project::Project;
 
 use crate::ApplyGuard;
 use crate::output::Console;
+use crate::settings;
 
 /// コマンドの実行結果。中止されたかどうかで終了コードを決める。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,18 +53,22 @@ pub(crate) async fn apply_change_set(
     })
 }
 
-/// LLM サーバーへ接続するクライアントを組み立てる。`generate` / `run` / `models` で共有する。
-pub(crate) fn build_llm_client(
+/// 接続設定から生成に使う LLM を作る。`generate` / `run` で共有する。
+pub(crate) fn build_chat_model(
     llm: &LlmSettings,
-    api_key: Option<String>,
-) -> anyhow::Result<OpenAiCompatClient> {
-    let config = ClientConfig {
-        base_url: llm.base_url.clone(),
-        api_key,
-        model: llm.model.clone(),
-        ..ClientConfig::default()
-    };
-    OpenAiCompatClient::new(config).context("LLM クライアントを初期化できません")
+    api_key_env: &str,
+) -> anyhow::Result<Arc<dyn ChatModel>> {
+    let api_key = api_key_for(llm, api_key_env)?;
+    kataribe_engine::build_chat_model(llm, api_key).context("LLM クライアントを初期化できません")
+}
+
+/// API キーを使う接続先のときだけ API キーを探す（使わない接続先では資格情報マネージャーに触らない）。
+pub(crate) fn api_key_for(llm: &LlmSettings, api_key_env: &str) -> anyhow::Result<Option<String>> {
+    if llm.provider.uses_api_key() {
+        settings::resolve_api_key(api_key_env)
+    } else {
+        Ok(None)
+    }
 }
 
 /// 変更案を人が読める形にする。ファイルごとのパスと、書き込まれるはずの内容を並べる。

@@ -35,7 +35,7 @@ LLM と一緒に日本語の小説を書く Windows 向けエディタ。Tauri 2
 
 ```
 crates/kataribe-text     文字数・ルビ・表記整形・品質指標（依存なし）
-crates/kataribe-llm      OpenAI 互換 API クライアント（依存なし）
+crates/kataribe-llm      LLM クライアント（OpenAI 互換 API・Claude Code。依存なし）
 crates/kataribe-project  作品フォルダ・安全なファイル操作・設定資料モデル（依存なし）
 crates/kataribe-engine   プロンプト・文脈構築・生成工程（上の 3 つに依存）
 crates/kataribe-cli      ヘッドレス CLI（engine を使う）

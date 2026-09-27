@@ -4,7 +4,13 @@ import { createStubBackend } from "../test/fakeBackend";
 import { useSettingsStore } from "./settingsStore";
 
 const SAMPLE_SETTINGS: AppSettings = {
-  llm: { base_url: "http://localhost:1234/v1", model: "test-model" },
+  llm: {
+    provider: "openai_compatible",
+    base_url: "http://localhost:1234/v1",
+    model: "test-model",
+    claude_command: "claude",
+    claude_model: "sonnet",
+  },
   generation: {
     draft_unit: "scene",
     chars_per_call: 1500,

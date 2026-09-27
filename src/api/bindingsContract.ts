@@ -16,6 +16,7 @@ import type { GenerationEvent as GeneratedGenerationEvent } from "../bindings/Ge
 import type { GenerationSettings as GeneratedGenerationSettings } from "../bindings/GenerationSettings";
 import type { GenrePreset as GeneratedGenrePreset } from "../bindings/GenrePreset";
 import type { IssueKind as GeneratedIssueKind } from "../bindings/IssueKind";
+import type { LlmProvider as GeneratedLlmProvider } from "../bindings/LlmProvider";
 import type { LlmSettings as GeneratedLlmSettings } from "../bindings/LlmSettings";
 import type { Manifest as GeneratedManifest } from "../bindings/Manifest";
 import type { ModelInfo as GeneratedModelInfo } from "../bindings/ModelInfo";
@@ -63,6 +64,7 @@ export type BindingsContract = [
   Expect<Equal<Api.QualityMetrics, GeneratedQualityMetrics>>,
   Expect<Equal<Api.QualityReport, GeneratedQualityReport>>,
   Expect<Equal<Api.DraftUnit, GeneratedDraftUnit>>,
+  Expect<Equal<Api.LlmProvider, GeneratedLlmProvider>>,
   Expect<Equal<Api.LlmSettings, GeneratedLlmSettings>>,
   Expect<Equal<Api.GenerationSettings, GeneratedGenerationSettings>>,
   Expect<Equal<Api.FontStyle, GeneratedFontStyle>>,

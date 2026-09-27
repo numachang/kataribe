@@ -131,10 +131,19 @@ export interface QualityReport {
 
 export type DraftUnit = "chapter" | "scene" | "beat";
 
+/** 生成に使う LLM の種類。 */
+export type LlmProvider = "openai_compatible" | "claude_code";
+
 export interface LlmSettings {
-  /** 例: http://localhost:1234/v1 */
+  provider: LlmProvider;
+  /** OpenAI 互換 API のベース URL。例: http://localhost:1234/v1 */
   base_url: string;
+  /** OpenAI 互換 API のモデル。 */
   model: string;
+  /** Claude Code の claude コマンド（PATH に無ければ実行ファイルの場所）。 */
+  claude_command: string;
+  /** Claude Code のモデル（sonnet・opus・haiku など）。 */
+  claude_model: string;
 }
 
 export interface GenerationSettings {

@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { useBackend } from "../../api/context";
-import type { AppSettings, DraftUnit, FontStyle, ModelInfo } from "../../api/types";
+import type { AppSettings, DraftUnit, FontStyle } from "../../api/types";
 import { toErrorMessage } from "../../lib/errorMessage";
 import { useSettingsStore } from "../../store/settingsStore";
 import { useUiStore } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { Dialog } from "../Dialog";
+import { LlmSettingsSection } from "./LlmSettingsSection";
 import "./SettingsDialog.css";
 
 const DRAFT_UNIT_DESCRIPTIONS: Record<DraftUnit, string> = {
@@ -81,10 +82,6 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
   const storedSettings = useSettingsStore((state) => state.settings);
 
   const [form, setForm] = useState<AppSettings | null>(storedSettings);
-  const [models, setModels] = useState<ModelInfo[]>([]);
-  const [hasStoredApiKey, setHasStoredApiKey] = useState(false);
-  const [apiKeyInput, setApiKeyInput] = useState("");
-  const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -92,55 +89,6 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
       setForm(storedSettings);
     }
   }, [storedSettings, form]);
-
-  useEffect(() => {
-    backend
-      .hasApiKey()
-      .then(setHasStoredApiKey)
-      .catch((error: unknown) => {
-        showToast(toErrorMessage(error, "API キーの状態を確認できませんでした。"), "error");
-      });
-  }, [backend, showToast]);
-
-  async function handleTestConnection(): Promise<void> {
-    if (!form) {
-      return;
-    }
-    setIsTestingConnection(true);
-    try {
-      const list = await backend.listModels(form.llm);
-      setModels(list);
-      showToast(`接続できました。${list.length} 件のモデルが見つかりました。`);
-    } catch (error) {
-      showToast(toErrorMessage(error, "接続できませんでした。"), "error");
-    } finally {
-      setIsTestingConnection(false);
-    }
-  }
-
-  async function handleSetApiKey(): Promise<void> {
-    if (apiKeyInput.trim().length === 0) {
-      return;
-    }
-    try {
-      await backend.setApiKey(apiKeyInput.trim());
-      setApiKeyInput("");
-      setHasStoredApiKey(true);
-      showToast("API キーを保存しました。");
-    } catch (error) {
-      showToast(toErrorMessage(error, "API キーを保存できませんでした。"), "error");
-    }
-  }
-
-  async function handleClearApiKey(): Promise<void> {
-    try {
-      await backend.setApiKey(null);
-      setHasStoredApiKey(false);
-      showToast("API キーを削除しました。");
-    } catch (error) {
-      showToast(toErrorMessage(error, "API キーを削除できませんでした。"), "error");
-    }
-  }
 
   async function handleSave(): Promise<void> {
     if (!form) {
@@ -175,70 +123,11 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
   return (
     <Dialog title="設定" onClose={onClose} wide>
       <div className="settings-dialog">
-        <section className="settings-dialog__section">
-          <h3>LLM</h3>
-          <label className="app-field">
-            <span>接続先 URL</span>
-            <input
-              value={form.llm.base_url}
-              onChange={(event) =>
-                setForm({ ...form, llm: { ...form.llm, base_url: event.target.value } })
-              }
-              placeholder="http://localhost:1234/v1"
-            />
-          </label>
-          <label className="app-field">
-            <span>モデル</span>
-            <input
-              list="settings-dialog-models"
-              value={form.llm.model}
-              onChange={(event) =>
-                setForm({ ...form, llm: { ...form.llm, model: event.target.value } })
-              }
-            />
-            <datalist id="settings-dialog-models">
-              {models.map((model) => (
-                <option key={model.id} value={model.id} />
-              ))}
-            </datalist>
-          </label>
-          <button
-            type="button"
-            className="app-button"
-            disabled={isTestingConnection}
-            onClick={() => void handleTestConnection()}
-          >
-            {isTestingConnection ? "確認しています…" : "接続テスト"}
-          </button>
-
-          <label className="app-field">
-            <span>API キー{hasStoredApiKey && "（設定済み）"}</span>
-            <div className="settings-dialog__api-key-row">
-              <input
-                type="password"
-                value={apiKeyInput}
-                onChange={(event) => setApiKeyInput(event.target.value)}
-                placeholder={hasStoredApiKey ? "変更する場合のみ入力" : "未設定"}
-              />
-              <button type="button" className="app-button" onClick={() => void handleSetApiKey()}>
-                設定
-              </button>
-              {hasStoredApiKey && (
-                <button
-                  type="button"
-                  className="app-button"
-                  onClick={() => void handleClearApiKey()}
-                >
-                  削除
-                </button>
-              )}
-            </div>
-          </label>
-        </section>
+        <LlmSettingsSection llm={form.llm} onChange={(llm) => setForm({ ...form, llm })} />
 
         <section className="settings-dialog__section">
           <h3>生成</h3>
-          <div className="settings-dialog__draft-units">
+          <div className="settings-dialog__choices">
             {(Object.keys(DRAFT_UNIT_DESCRIPTIONS) as DraftUnit[]).map((unit) => (
               <label key={unit} className="settings-dialog__radio">
                 <input

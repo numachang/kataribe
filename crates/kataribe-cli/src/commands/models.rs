@@ -1,4 +1,4 @@
-//! `models` サブコマンド: LLM サーバーのモデル一覧を表示する。
+//! `models` サブコマンド: 選べるモデルの一覧を表示する。
 
 use anyhow::Context;
 
@@ -10,10 +10,8 @@ use super::Outcome;
 
 pub async fn run(global: &GlobalOptions, console: &dyn Console) -> anyhow::Result<Outcome> {
     let settings = settings::load_effective_settings(global)?;
-    let api_key = settings::resolve_api_key(&global.api_key_env)?;
-    let client = super::build_llm_client(&settings.llm, api_key)?;
-    let models = client
-        .list_models()
+    let api_key = super::api_key_for(&settings.llm, &global.api_key_env)?;
+    let models = kataribe_engine::list_models(&settings.llm, api_key)
         .await
         .context("モデル一覧を取得できません")?;
 
