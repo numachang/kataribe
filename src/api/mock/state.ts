@@ -1,4 +1,4 @@
-import type { Manifest } from "../types";
+import type { Manifest, ProjectSettings } from "../types";
 
 // 偽バックエンドがメモリ上に持つ「作品」の内部表現。
 // 本物の作品フォルダと違い、Markdown のテキストではなく構造化されたデータとして持ち、
@@ -43,6 +43,8 @@ export interface MockChapter {
 export interface ProjectState {
   folder: string;
   manifest: Manifest;
+  /** 作品ごとの設定（kataribe.yaml の settings）。 */
+  settings: ProjectSettings;
   concept: string | null;
   style: string | null;
   world: string | null;

@@ -18,8 +18,8 @@ pub fn run(
     global: &GlobalOptions,
     console: &dyn Console,
 ) -> anyhow::Result<Outcome> {
-    let settings = settings::load_effective_settings(global)?;
     let project = Project::open(&args.folder).context("作品フォルダを開けません")?;
+    let settings = settings::load_effective_settings(global, Some(&project))?;
     let steps =
         pipeline(&project, settings.generation.draft_unit).context("工程の一覧を取得できません")?;
     let overview = overview(&project).context("作品の一覧を取得できません")?;

@@ -137,6 +137,9 @@ async fn dispatch(
         Command::Quality(args) => commands::quality::run(args, console),
         Command::Export(args) => commands::export::run(args, console),
         Command::Models => commands::models::run(&cli.global, console).await,
+        Command::ProjectSettings(args) => {
+            commands::project_settings::run(args, &cli.global, console)
+        }
         Command::ApiKey(args) => commands::api_key::run(args, console, cancel),
     }
 }

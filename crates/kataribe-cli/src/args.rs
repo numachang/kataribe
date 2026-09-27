@@ -20,6 +20,8 @@ pub struct Cli {
 }
 
 /// 設定ファイルの値を上書きするグローバルオプション。
+// コマンドラインのフラグ（--polish・--no-polish・--quiet・--verbose）をそのまま表すため、bool が並ぶ
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Default, Args)]
 pub struct GlobalOptions {
     /// 設定ファイル（既定: GUI と同じ場所。明示したのに無ければエラー）。
@@ -71,6 +73,10 @@ pub struct GlobalOptions {
     #[arg(long, global = true)]
     pub polish: bool,
 
+    /// 推敲パスをかけない（設定ファイルや作品の設定で推敲すると決めていても止める）。
+    #[arg(long, global = true, conflicts_with = "polish")]
+    pub no_polish: bool,
+
     /// 品質チェックで重大な問題が見つかったときの再生成回数。
     #[arg(long, global = true, value_name = "N")]
     pub quality_retries: Option<u32>,
@@ -100,6 +106,8 @@ pub enum Command {
     Export(ExportArgs),
     /// 選べるモデルの一覧を表示する（接続の確認を兼ねる）。
     Models,
+    /// 作品ごとの設定（kataribe.yaml の settings）を表示する。--save で、指定したオプションを作品に保存する。
+    ProjectSettings(ProjectSettingsArgs),
     /// API キーを資格情報マネージャーに保存・削除・確認する。
     ApiKey(ApiKeyArgs),
 }
@@ -162,6 +170,18 @@ pub struct IdeaSource {
     /// 企画の種を書いたファイル。
     #[arg(long, value_name = "PATH")]
     pub idea_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct ProjectSettingsArgs {
+    /// 作品フォルダ。
+    #[arg(value_name = "FOLDER")]
+    pub folder: PathBuf,
+
+    /// グローバルオプションで指定した値（--provider・--model・--unit・--chars-per-call・
+    /// --context-tokens・--temperature・--polish・--no-polish・--quality-retries）を作品に保存する。
+    #[arg(long)]
+    pub save: bool,
 }
 
 #[derive(Debug, Args)]

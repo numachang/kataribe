@@ -21,6 +21,7 @@ export function createEmptyProjectState(folder: string, project: NewProject): Pr
   return {
     folder,
     manifest,
+    settings: {},
     concept: null,
     style: null,
     world: null,
@@ -34,6 +35,7 @@ export function createEmptyProjectState(folder: string, project: NewProject): Pr
 export function createSampleProjectState(folder: string): ProjectState {
   return {
     folder,
+    settings: {},
     manifest: {
       format: MANIFEST_FORMAT,
       title: "月霧の館",

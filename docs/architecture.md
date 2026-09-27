@@ -57,6 +57,10 @@ rating: general           # general（全年齢）| r15 | r18
 target_length: 30000      # 目標総文字数
 idea: |                   # 企画の種（最初に LLM へ渡す指示）
   嵐で孤立した岬の洋館で…
+settings:                 # 任意。作品ごとの設定（§4.6）。書いた項目だけ、アプリ全体の設定を上書きする
+  provider: claude_code
+  claude_model: haiku
+  context_tokens: 100000
 ```
 
 ### characters/<id>.md
@@ -196,7 +200,7 @@ pub async fn collect(stream, on_event) -> Result<Completion, LlmError>;   // 全
 | `frontmatter` | `Document<M> { meta, body }`、`parse`、`render` | YAML front matter の分解・合成（未知の項目を保持） |
 | `layout` | パス定数と `character_path(id)` などの関数 | §2 のフォルダ構成の唯一の定義 |
 | `model` | `Manifest`・`Rating`・`MarkdownDoc`・`Character`/`CharacterMeta`・`Chapter`/`ChapterMeta`・`ScenePlan`・`ChapterId`・`SceneId`・`CharacterId` | 各ファイルの型。`render()` でファイル内容を生成 |
-| `project` | `Project` | 作品の作成・読み込み・型付きの取得 |
+| `project` | `Project` | 作品の作成・読み込み・型付きの取得。`update_manifest` で作品情報（`kataribe.yaml`）を書き換える |
 
 - `ProjectStore::write_text(path, content, WriteOptions { condition, backup })`
   - `WriteCondition::{Any, Absent, Matches(ContentHash)}`。条件に合わなければ `Conflict` エラー（外部で変更された可能性）。
@@ -302,6 +306,32 @@ Gemma には前者だけ、Qwen には後者だけが効き、両方を指定す
 
 モデルの指定は接続先ごとに分けて持つ。接続先を切り替えても、もう一方のモデルの指定を失わない。
 
+### 4.6 作品ごとの設定
+
+`kataribe.yaml` の `settings` に、その作品だけの設定を書ける（`kataribe_engine::ProjectSettings`）。
+使う値は **アプリ全体の設定 ← 作品の設定 ← CLI の指定** の順に上書きして決め、最後に値を安全な範囲に収める。
+作品と一緒に Git で管理でき、どの設定で書いた作品かも残る。
+
+| 書ける項目 | 書けない項目（アプリ全体の設定だけ） |
+|---|---|
+| `provider`・`model`・`claude_model`・`draft_unit`・`chars_per_call`・`context_tokens`・`temperature`・`polish`・`quality_retries`・`disable_thinking` | `base_url`・`claude_command`（PC ごとに違いうる）、API キー、エディタの見た目、最近の作品 |
+
+- どの項目も省略でき、省略した項目はアプリ全体の設定を使う。空なら `settings` の項目ごと書かない。
+- この版が知らない項目は、保存し直しても残す（新しい版で足した設定を古い版で消さないため）。
+- 保存は `Project::update_manifest` で行い、作品情報と未知の項目は残す。次のときは競合にする。
+  - 画面で読んだとき（`ProjectSettings::load_with_hash` のハッシュ）から、保存までの間に `kataribe.yaml` が変わった。
+  - 読んでから書くまでの間に、外で変更された。
+- 保存するときは、Rust が数値の項目を使うときと同じ範囲に収める。画面は、作品の設定を何も変えていなければ
+  保存しない（手で書かれた値を、触っていないのに書き換えないため）。変えたときは、変えた項目の空欄・範囲外を
+  補正して送る。手で書かれた範囲外の値は、画面に「実際には N で使います」と添える。
+- 書き直すと、`kataribe.yaml` に手で書いたコメントや項目の順番は残らない。そのため、書き直す前の内容を毎回バックアップに残す。
+- 画面は、作品情報をエディタで開いていれば、保存の前にその編集を保存し、保存の後に読み直す
+  （古い内容が残ったまま自動保存が競合し、利用者が上書きで設定を消すのを防ぐ）。
+- 生成・工程の組み立て（生成単位）・接続テスト（`llm` を渡さないとき）は、作品を開いていれば重ねた後の設定を使う。
+  作品の設定は毎回ファイルから読むので、外で `kataribe.yaml` を直しても次の生成から反映される。
+- 画面の設定ダイアログは、作品を開いているときだけ「アプリ全体 / この作品」を切り替えられる。
+  「この作品」では、項目ごとの「この作品で変える」のチェックで上書きするかを選び、チェックの無い項目はアプリ全体の値を見せる。
+
 ## 5. アプリ（src-tauri）と画面（src）
 
 - Rust 側は engine を Tauri コマンドとして公開するだけの薄い層にする。
@@ -323,6 +353,7 @@ Tauri コマンド名と引数（JS 側の名前。Rust 側は snake_case で受
 | Backend のメソッド | コマンド | 引数 |
 |---|---|---|
 | loadSettings / saveSettings | `load_settings` / `save_settings` | — / `settings` |
+| loadProjectSettings / saveProjectSettings | `load_project_settings` / `save_project_settings` | — / `settings, expectedHash`（読んだときのハッシュ。変わっていれば `conflict`） |
 | setApiKey / hasApiKey | `set_api_key` / `has_api_key` | `apiKey` / — |
 | listModels / listGenres | `list_models` / `list_genres` | `llm`（省略可。保存前の接続先で試す）/ — |
 | createProject / openProject / closeProject | `create_project` / `open_project` / `close_project` | `folder, project` / `folder` / — |
@@ -350,7 +381,7 @@ Tauri コマンド名と引数（JS 側の名前。Rust 側は snake_case で受
 ## 6. ヘッドレス実行（kataribe-cli）
 
 GUI と同じ engine を使い、画面なしで作品を作る・生成する・検査する。GUI と同じ設定ファイルを読み、
-コマンドラインの指定で上書きできる。`main.rs` は薄くし、処理は `lib.rs` の `run` に置いてテストできるようにする。
+作品フォルダを受け取るサブコマンドではその作品の設定（§4.6）を重ね、コマンドラインの指定で上書きできる。`main.rs` は薄くし、処理は `lib.rs` の `run` に置いてテストできるようにする。
 
 ```
 kataribe-cli [グローバルオプション] <サブコマンド>
@@ -362,7 +393,7 @@ kataribe-cli [グローバルオプション] <サブコマンド>
   --model <ID>               選んでいる接続先のモデル（Claude Code なら sonnet / opus / haiku など）
   --api-key-env <VAR>        API キーを読む環境変数（既定 KATARIBE_API_KEY。未設定なら資格情報マネージャーのキーを使う）
   --unit <chapter|scene|beat>  --chars-per-call <N>  --context-tokens <N>
-  --temperature <T>  --polish  --quality-retries <N>
+  --temperature <T>  --polish | --no-polish  --quality-retries <N>
   -q, --quiet                生成中の本文を表示しない
 
 サブコマンド
@@ -385,6 +416,12 @@ kataribe-cli [グローバルオプション] <サブコマンド>
       本文を章題付きの一つのテキストにまとめる。--output は作品フォルダの外を指定すること
       （中を指すと拒否する）。既存ファイルへの上書きは --force を指定したときだけ許す
   models                              選べるモデルの一覧（接続の確認を兼ねる）
+  project-settings <FOLDER> [--save]  作品ごとの設定（§4.6）と、実際に使う設定を表示する。
+                                      --save で、グローバルオプションで指定した値（--provider・--model・
+                                      --unit・--chars-per-call・--context-tokens・--temperature・--polish・
+                                      --no-polish・--quality-retries）を作品に保存する（--model は保存後に使う
+                                      接続先のモデル。数値は使うときと同じ範囲に収める。保存できる項目を
+                                      指定しなければ何も変えない）
   api-key set | clear | status        API キーを資格情報マネージャーに保存・削除・確認
                                       （set は標準入力から読む。端末から直接入力すると
                                        画面にそのまま表示されるので、表示したくなければ

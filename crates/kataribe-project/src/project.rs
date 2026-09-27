@@ -12,7 +12,9 @@ use crate::model::{
     Chapter, ChapterId, Character, CharacterId, FORMAT_VERSION, Manifest, MarkdownDoc, SceneId,
 };
 use crate::path::RelPath;
-use crate::store::{BackupMode, DirEntryKind, ProjectStore, WriteCondition, WriteOptions};
+use crate::store::{
+    BackupMode, ContentHash, DirEntryKind, ProjectStore, WriteCondition, WriteOptions,
+};
 
 /// 作品フォルダそのもの。
 #[derive(Debug)]
@@ -104,10 +106,53 @@ impl Project {
 
     /// `kataribe.yaml` を読み込む。
     pub fn manifest(&self) -> Result<Manifest, ProjectError> {
+        Ok(self.manifest_with_hash()?.0)
+    }
+
+    /// `kataribe.yaml` を、読み込んだ時点の内容のハッシュと一緒に読み込む。
+    /// ハッシュは [`Self::update_manifest`] の `expected` に渡し、その間の外での変更を検出するのに使う。
+    pub fn manifest_with_hash(&self) -> Result<(Manifest, ContentHash), ProjectError> {
         let path = RelPath::new(layout::MANIFEST)?;
         let text_file = self.store.read_text(&path)?;
-        Manifest::parse(&text_file.content)
-            .map_err(|source| ProjectError::Frontmatter { path, source })
+        let manifest = Manifest::parse(&text_file.content)
+            .map_err(|source| ProjectError::Frontmatter { path, source })?;
+        Ok((manifest, text_file.hash))
+    }
+
+    /// `kataribe.yaml` を読み、`update` で書き換えて保存し、保存した内容と新しいハッシュを返す。
+    ///
+    /// 次のときは上書きせずに競合（[`ProjectError::Conflict`]）にする。
+    /// - `expected` を渡したのに、今の内容のハッシュがそれと違う（利用者が読んだあとに変わった）。
+    /// - 読んでから書くまでの間に、外で変更された。
+    ///
+    /// 書き直すと、手で書いたコメントや項目の順番は残らない（項目そのものは残る）。
+    /// そのため、書き直す前の内容は毎回バックアップに残す。
+    pub fn update_manifest<E: From<ProjectError>>(
+        &self,
+        expected: Option<&ContentHash>,
+        update: impl FnOnce(&mut Manifest) -> Result<(), E>,
+    ) -> Result<(Manifest, ContentHash), E> {
+        let path = RelPath::new(layout::MANIFEST).map_err(ProjectError::from)?;
+        let current = self.store.read_text(&path)?;
+        if expected.is_some_and(|expected| *expected != current.hash) {
+            return Err(ProjectError::Conflict { path }.into());
+        }
+        let yaml_error = |source| ProjectError::Frontmatter {
+            path: path.clone(),
+            source,
+        };
+        let mut manifest = Manifest::parse(&current.content).map_err(yaml_error)?;
+        update(&mut manifest)?;
+        let text = manifest.render().map_err(yaml_error)?;
+        let hash = self.store.write_text(
+            &path,
+            &text,
+            WriteOptions {
+                condition: WriteCondition::Matches(current.hash),
+                backup: BackupMode::Always,
+            },
+        )?;
+        Ok((manifest, hash))
     }
 
     /// front matter が任意の Markdown 文書を読み込む。
@@ -282,8 +327,103 @@ mod tests {
             rating: Rating::General,
             target_length: 30_000,
             idea: "嵐で孤立した岬の洋館で…".to_string(),
+            settings: None,
             extra: std::collections::BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn update_manifest_saves_the_change_and_keeps_other_fields() {
+        let dir = TempDir::new().unwrap();
+        let mut manifest = sample_manifest();
+        manifest
+            .extra
+            .insert("memo".to_string(), serde_json::json!("手で足した項目"));
+        let project = Project::create(dir.path(), &manifest).unwrap();
+
+        let (saved, hash) = project
+            .update_manifest(None, |manifest| {
+                manifest.settings = Some(serde_json::json!({ "provider": "claude_code" }));
+                Ok::<_, ProjectError>(())
+            })
+            .unwrap();
+
+        let path = RelPath::new(layout::MANIFEST).unwrap();
+        assert_eq!(project.store().read_text(&path).unwrap().hash, hash);
+
+        assert_eq!(project.manifest().unwrap(), saved);
+        assert_eq!(saved.title, manifest.title);
+        assert_eq!(saved.extra, manifest.extra);
+        assert_eq!(
+            saved.settings,
+            Some(serde_json::json!({ "provider": "claude_code" }))
+        );
+    }
+
+    #[test]
+    fn update_manifest_does_not_overwrite_an_outside_change() {
+        let dir = TempDir::new().unwrap();
+        let project = Project::create(dir.path(), &sample_manifest()).unwrap();
+        let manifest_path = dir.path().join(layout::MANIFEST);
+
+        let result = project.update_manifest(None, |manifest| {
+            // 読んでから書くまでの間に、外で書き換えられた
+            let mut changed = manifest.clone();
+            changed.title = "外で変えた題名".to_string();
+            fs::write(&manifest_path, changed.render().unwrap()).unwrap();
+            manifest.settings = Some(serde_json::json!({ "provider": "claude_code" }));
+            Ok::<_, ProjectError>(())
+        });
+
+        assert!(matches!(result, Err(ProjectError::Conflict { .. })));
+        assert_eq!(project.manifest().unwrap().title, "外で変えた題名");
+    }
+
+    #[test]
+    fn update_manifest_refuses_when_the_file_changed_since_the_caller_read_it() {
+        let dir = TempDir::new().unwrap();
+        let project = Project::create(dir.path(), &sample_manifest()).unwrap();
+        let path = RelPath::new(layout::MANIFEST).unwrap();
+        let read_by_caller = project.store().read_text(&path).unwrap().hash;
+        project
+            .update_manifest(None, |manifest| {
+                manifest.title = "別の画面で変えた題名".to_string();
+                Ok::<_, ProjectError>(())
+            })
+            .unwrap();
+
+        let result = project.update_manifest(Some(&read_by_caller), |manifest| {
+            manifest.settings = Some(serde_json::json!({ "polish": true }));
+            Ok::<_, ProjectError>(())
+        });
+
+        assert!(matches!(result, Err(ProjectError::Conflict { .. })));
+        assert_eq!(project.manifest().unwrap().settings, None);
+    }
+
+    #[test]
+    fn update_manifest_writes_nothing_when_the_update_fails() {
+        #[derive(Debug)]
+        enum UpdateError {
+            Project(#[allow(dead_code)] ProjectError),
+            Refused,
+        }
+        impl From<ProjectError> for UpdateError {
+            fn from(error: ProjectError) -> Self {
+                Self::Project(error)
+            }
+        }
+
+        let dir = TempDir::new().unwrap();
+        let project = Project::create(dir.path(), &sample_manifest()).unwrap();
+
+        let result = project.update_manifest(None, |manifest| {
+            manifest.title = "書かれないはずの題名".to_string();
+            Err(UpdateError::Refused)
+        });
+
+        assert!(matches!(result, Err(UpdateError::Refused)));
+        assert_eq!(project.manifest().unwrap().title, sample_manifest().title);
     }
 
     #[test]

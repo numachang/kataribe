@@ -25,6 +25,8 @@ import type { OverviewEntry as GeneratedOverviewEntry } from "../bindings/Overvi
 import type { OverviewSection as GeneratedOverviewSection } from "../bindings/OverviewSection";
 import type { PipelineStep as GeneratedPipelineStep } from "../bindings/PipelineStep";
 import type { ProjectOverview as GeneratedProjectOverview } from "../bindings/ProjectOverview";
+import type { ProjectSettings as GeneratedProjectSettings } from "../bindings/ProjectSettings";
+import type { ProjectSettingsFile as GeneratedProjectSettingsFile } from "../bindings/ProjectSettingsFile";
 import type { QualityIssue as GeneratedQualityIssue } from "../bindings/QualityIssue";
 import type { QualityMetrics as GeneratedQualityMetrics } from "../bindings/QualityMetrics";
 import type { QualityReport as GeneratedQualityReport } from "../bindings/QualityReport";
@@ -66,6 +68,8 @@ export type BindingsContract = [
   Expect<Equal<Api.DraftUnit, GeneratedDraftUnit>>,
   Expect<Equal<Api.LlmProvider, GeneratedLlmProvider>>,
   Expect<Equal<Api.LlmSettings, GeneratedLlmSettings>>,
+  Expect<Equal<Api.ProjectSettings, GeneratedProjectSettings>>,
+  Expect<Equal<Api.ProjectSettingsFile, GeneratedProjectSettingsFile>>,
   Expect<Equal<Api.GenerationSettings, GeneratedGenerationSettings>>,
   Expect<Equal<Api.FontStyle, GeneratedFontStyle>>,
   Expect<Equal<Api.EditorPreferences, GeneratedEditorPreferences>>,

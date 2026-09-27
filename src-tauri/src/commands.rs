@@ -9,7 +9,7 @@ use tauri::ipc::Channel;
 
 use kataribe_engine::{
     ChangeSet, GenerationEvent, GenrePreset, LlmSettings, NewProject, PipelineStep,
-    ProjectOverview, Task,
+    ProjectOverview, ProjectSettings, Task,
 };
 use kataribe_llm::ModelInfo;
 use kataribe_text::count::TextStats;
@@ -19,7 +19,7 @@ use kataribe_text::ruby::Segment;
 use crate::error::CommandError;
 use crate::settings::AppSettings;
 use crate::state::AppState;
-use crate::text_file::TextFile;
+use crate::text_file::{ProjectSettingsFile, TextFile};
 use crate::{engine_client, files, generation, projects};
 
 // ---- 設定 ----
@@ -35,6 +35,33 @@ pub async fn save_settings(
     settings: AppSettings,
 ) -> Result<(), CommandError> {
     state.save_settings(settings)
+}
+
+/// 開いている作品の設定（`kataribe.yaml` の `settings`）と、読んだ時点の `kataribe.yaml` のハッシュ。
+#[tauri::command]
+pub async fn load_project_settings(
+    state: State<'_, AppState>,
+) -> Result<ProjectSettingsFile, CommandError> {
+    let project = state.require_project()?;
+    let (settings, hash) = ProjectSettings::load_with_hash(&project)?;
+    Ok(ProjectSettingsFile {
+        settings,
+        hash: hash.to_string(),
+    })
+}
+
+/// 開いている作品の設定を保存し、保存した後の `kataribe.yaml` のハッシュを返す。
+/// `expected_hash`（読んだときのハッシュ）から `kataribe.yaml` が変わっていれば `conflict` で失敗する。
+#[tauri::command]
+pub async fn save_project_settings(
+    state: State<'_, AppState>,
+    settings: ProjectSettings,
+    expected_hash: String,
+) -> Result<String, CommandError> {
+    let project = state.require_project()?;
+    let expected = files::parse_content_hash(&expected_hash)?;
+    let hash = settings.save(&project, Some(&expected))?;
+    Ok(hash.to_string())
 }
 
 #[tauri::command]
@@ -54,13 +81,19 @@ pub async fn has_api_key(state: State<'_, AppState>) -> Result<bool, CommandErro
     Ok(key.is_some())
 }
 
-/// `llm` を渡すと、保存前の入力中の接続先で試す（接続テスト用）。API キーは保存済みのものを使う。
+/// `llm` を渡すと、保存前の入力中の接続先で試す（接続テスト用）。渡さなければ、開いている作品の設定を
+/// 重ねた接続先を使う。API キーは保存済みのものを使う。
 #[tauri::command]
 pub async fn list_models(
     state: State<'_, AppState>,
     llm: Option<LlmSettings>,
 ) -> Result<Vec<ModelInfo>, CommandError> {
-    let effective_llm = llm.unwrap_or_else(|| state.settings().llm);
+    let effective_llm = match llm {
+        Some(llm) => llm,
+        None => {
+            engine_client::effective_settings(&state.settings(), state.project().as_deref())?.llm
+        }
+    };
     let api_key = engine_client::load_api_key(state.api_key_store(), &effective_llm)?;
     engine_client::list_models(&effective_llm, api_key).await
 }
@@ -119,7 +152,9 @@ pub async fn overview(state: State<'_, AppState>) -> Result<ProjectOverview, Com
 #[tauri::command]
 pub async fn pipeline(state: State<'_, AppState>) -> Result<Vec<PipelineStep>, CommandError> {
     let project = state.require_project()?;
-    let unit = state.settings().generation.draft_unit;
+    let unit = engine_client::effective_settings(&state.settings(), Some(&project))?
+        .generation
+        .draft_unit;
     kataribe_engine::pipeline(&project, unit).map_err(CommandError::from)
 }
 
@@ -180,10 +215,9 @@ pub async fn generate(
     // 準備（API キーの読み込みなど）の間に届いた中止も受け付けるよう、最初に登録する
     let job = generation::Job::register(state.jobs(), &job_id)?;
     let project = state.require_project()?;
-    let current_settings = state.settings();
-    let api_key = engine_client::load_api_key(state.api_key_store(), &current_settings.llm)?;
-    let engine =
-        engine_client::build_engine(&current_settings.llm, &current_settings.generation, api_key)?;
+    let settings = engine_client::effective_settings(&state.settings(), Some(&project))?;
+    let api_key = engine_client::load_api_key(state.api_key_store(), &settings.llm)?;
+    let engine = engine_client::build_engine(&settings.llm, &settings.generation, api_key)?;
     let cancel = job.cancel_token().clone();
     let sink = move |event: GenerationEvent| {
         // 画面が再読み込みなどで無くなり、送れなくなった。結果を受け取る先が無いので生成を止める

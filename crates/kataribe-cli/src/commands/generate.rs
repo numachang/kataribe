@@ -19,12 +19,12 @@ pub async fn run(
     cancel: &CancellationToken,
     apply_guard: &ApplyGuard,
 ) -> anyhow::Result<Outcome> {
-    let settings = settings::load_effective_settings(global)?;
+    let project = Project::open(&args.folder).context("作品フォルダを開けません")?;
+    let settings = settings::load_effective_settings(global, Some(&project))?;
     let model = super::build_chat_model(&settings.llm, &global.api_key_env)?;
     let engine =
         Engine::new(model, settings.generation).context("執筆エンジンを初期化できません")?;
 
-    let project = Project::open(&args.folder).context("作品フォルダを開けません")?;
     let task = args.task.clone().into_task(args.instruction.clone());
 
     // --dry-run では、流れてくる生成そのものは見せず、最後に変更案だけをまとめて出す

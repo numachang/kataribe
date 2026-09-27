@@ -1,68 +1,45 @@
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
+import { BackendError } from "../../api/backend";
 import { useBackend } from "../../api/context";
-import type { AppSettings, DraftUnit, FontStyle } from "../../api/types";
+import type { AppSettings, DraftUnit, ProjectSettings } from "../../api/types";
+import { flushIfOpen, writeBesideEditor } from "../../features/editor/openDocumentSync";
 import { toErrorMessage } from "../../lib/errorMessage";
+import {
+  countProjectSettings,
+  isSameProjectSettings,
+  MANIFEST_PATH,
+  withProjectSetting,
+} from "../../lib/projectSettings";
 import { useSettingsStore } from "../../store/settingsStore";
 import { useUiStore } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { Dialog } from "../Dialog";
-import { LlmSettingsSection } from "./LlmSettingsSection";
+import { AppSettingsSections } from "./AppSettingsSections";
+import { ProjectSettingsSection } from "./ProjectSettingsSection";
+import {
+  GENERATION_NUMBER_KEYS,
+  sanitizeGenerationNumber,
+  sanitizeNumber,
+} from "./settingsNumbers";
 import "./SettingsDialog.css";
-
-const DRAFT_UNIT_DESCRIPTIONS: Record<DraftUnit, string> = {
-  chapter: "1 章をまるごと生成します。長い文脈に強い、大きなモデル向けです。",
-  scene:
-    "1 シーンずつ生成します。長いシーンは何回かに分けて書き継ぎます。中規模以上のモデル向けです。",
-  beat: "シーンをさらに細かい展開（ビート）に分けて、1 つずつ生成します（既定）。ローカルのモデルでも分量が安定し、設定から外れにくくなります。",
-};
-
-const FONT_STYLE_LABELS: Record<FontStyle, string> = { mincho: "明朝体", gothic: "ゴシック体" };
-
-/**
- * 数値入力欄の値を検証・補正する。
- * `<input type="number">` の `valueAsNumber` は、空欄や不正な入力のとき NaN になる
- * （`Number(el.value)` と違い、空欄が 0 になったりしない）。編集中はそのまま NaN を保持させ、
- * 保存の直前にだけ、この関数で下限に満たない・NaN な値を規定値に補正する。
- */
-function sanitizeNumber(value: number, min: number, fallback: number): number {
-  return Number.isFinite(value) && value >= min ? value : fallback;
-}
-
-const GENERATION_DEFAULTS = {
-  chars_per_call: 1500,
-  context_tokens: 16384,
-  temperature: 0.8,
-  quality_retries: 1,
-} as const;
 
 const EDITOR_DEFAULTS = {
   font_size: 17,
   line_height: 1.9,
 } as const;
 
-/** 保存の直前に、数値欄の空欄・不正な入力を規定値へ補正した設定を作る。 */
+const APP_PANEL_ID = "settings-dialog-app";
+const PROJECT_PANEL_ID = "settings-dialog-project";
+
+/** 保存の直前に、数値欄の空欄・不正な入力を補正した設定を作る。 */
 function sanitizeSettings(form: AppSettings): AppSettings {
+  const generation = { ...form.generation };
+  for (const key of GENERATION_NUMBER_KEYS) {
+    generation[key] = sanitizeGenerationNumber(key, generation[key]);
+  }
   return {
     ...form,
-    generation: {
-      ...form.generation,
-      chars_per_call: sanitizeNumber(
-        form.generation.chars_per_call,
-        100,
-        GENERATION_DEFAULTS.chars_per_call,
-      ),
-      context_tokens: sanitizeNumber(
-        form.generation.context_tokens,
-        512,
-        GENERATION_DEFAULTS.context_tokens,
-      ),
-      temperature: sanitizeNumber(form.generation.temperature, 0, GENERATION_DEFAULTS.temperature),
-      quality_retries: sanitizeNumber(
-        form.generation.quality_retries,
-        0,
-        GENERATION_DEFAULTS.quality_retries,
-      ),
-    },
+    generation,
     editor: {
       ...form.editor,
       font_size: sanitizeNumber(form.editor.font_size, 10, EDITOR_DEFAULTS.font_size),
@@ -71,17 +48,64 @@ function sanitizeSettings(form: AppSettings): AppSettings {
   };
 }
 
+/** 作品の設定の、読み込んだ値・編集中の値と、読み込んだときの kataribe.yaml のハッシュ。 */
+interface ProjectSettingsForm {
+  stored: ProjectSettings;
+  edited: ProjectSettings;
+  hash: string;
+}
+
+/**
+ * 保存する作品の設定。変わっていなければ null。
+ * 数値は利用者が変えた項目だけを補正する（手で書かれた値を、触っていないのに書き換えないため）。
+ */
+function projectSettingsToSave(form: ProjectSettingsForm): ProjectSettings | null {
+  let next = form.edited;
+  for (const key of GENERATION_NUMBER_KEYS) {
+    const value = next[key];
+    if (value !== undefined && value !== form.stored[key]) {
+      next = withProjectSetting(next, key, sanitizeGenerationNumber(key, value));
+    }
+  }
+  return isSameProjectSettings(next, form.stored) ? null : next;
+}
+
+/** 工程の組み立てに使う生成単位（作品の設定があれば、そちらが優先）。 */
+function effectiveDraftUnit(
+  app: AppSettings | null,
+  project: ProjectSettings | null,
+): DraftUnit | undefined {
+  return project?.draft_unit ?? app?.generation.draft_unit;
+}
+
+function projectSaveErrorMessage(error: unknown): string {
+  if (error instanceof BackendError && error.kind === "conflict") {
+    return "作品情報（kataribe.yaml）が、設定を開いたあとに変更されています。設定を開き直してから、もう一度変えてください。";
+  }
+  return toErrorMessage(error, "作品の設定を保存できませんでした。");
+}
+
+type Scope = "app" | "project";
+
 interface SettingsDialogProps {
   onClose: () => void;
 }
 
-/** 設定ダイアログ。LLM 接続・生成・エディタの見た目をまとめて変えられる。 */
+/**
+ * 設定ダイアログ。LLM 接続・生成・エディタの見た目をまとめて変えられる。
+ * 作品を開いているときは、その作品だけの設定（kataribe.yaml に保存）も変えられる。
+ */
 export function SettingsDialog({ onClose }: SettingsDialogProps) {
   const backend = useBackend();
   const showToast = useUiStore((state) => state.showToast);
   const storedSettings = useSettingsStore((state) => state.settings);
+  const projectTitle = useWorkspaceStore((state) => state.overview?.title ?? null);
+  const isProjectOpen = projectTitle !== null;
 
   const [form, setForm] = useState<AppSettings | null>(storedSettings);
+  const [scope, setScope] = useState<Scope>("app");
+  const [projectForm, setProjectForm] = useState<ProjectSettingsForm | null>(null);
+  const [projectLoadError, setProjectLoadError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -90,23 +114,97 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
     }
   }, [storedSettings, form]);
 
+  useEffect(() => {
+    if (!isProjectOpen) {
+      return;
+    }
+    let isCurrent = true;
+    // 作品情報をエディタで開いていれば、その編集を保存してから読む（ハッシュを最新の内容に合わせるため）
+    flushIfOpen(backend, MANIFEST_PATH)
+      .then(() => backend.loadProjectSettings())
+      .then(({ settings, hash }) => {
+        if (isCurrent) {
+          setProjectForm({ stored: settings, edited: settings, hash });
+        }
+      })
+      .catch((error: unknown) => {
+        if (isCurrent) {
+          setProjectLoadError(toErrorMessage(error, "作品の設定を読み込めませんでした。"));
+        }
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [backend, isProjectOpen]);
+
+  /** 生成単位が変わると工程の組み立てが変わりうるため、一覧を読み直す。失敗しても保存は済んでいる。 */
+  async function refreshPipelineIfDraftUnitChanged(
+    before: DraftUnit | undefined,
+    after: DraftUnit | undefined,
+  ): Promise<void> {
+    if (before === after || !useWorkspaceStore.getState().overview) {
+      return;
+    }
+    try {
+      await useWorkspaceStore.getState().refreshPipeline(backend);
+    } catch (error) {
+      showToast(toErrorMessage(error, "工程の一覧を読み直せませんでした。"), "error");
+    }
+  }
+
+  /** 作品の設定を保存する。保存できたら、保存した設定を返す。 */
+  async function saveProjectSettings(
+    current: ProjectSettingsForm,
+    settings: ProjectSettings,
+  ): Promise<ProjectSettings> {
+    const hash = await writeBesideEditor(backend, {
+      touches: (path) => path === MANIFEST_PATH,
+      write: () => backend.saveProjectSettings(settings, current.hash),
+      unsavedWorkMessage:
+        "エディタで開いている作品情報（kataribe.yaml）に保存できていない編集があるため、作品の設定を保存しませんでした。先にその編集を保存してください。",
+    });
+    setProjectForm({ stored: settings, edited: settings, hash });
+    return settings;
+  }
+
   async function handleSave(): Promise<void> {
     if (!form) {
       return;
     }
-    const draftUnitChanged = storedSettings?.generation.draft_unit !== form.generation.draft_unit;
     const sanitized = sanitizeSettings(form);
+    const projectToSave = projectForm && projectSettingsToSave(projectForm);
+    const draftUnitBefore = effectiveDraftUnit(storedSettings, projectForm?.stored ?? null);
     setIsSaving(true);
     try {
-      await useSettingsStore.getState().save(backend, sanitized);
-      showToast("設定を保存しました。");
-      if (draftUnitChanged && useWorkspaceStore.getState().overview) {
-        // 生成単位が変わると工程の組み立てが変わりうるため、一覧を読み直す。
-        await useWorkspaceStore.getState().refreshPipeline(backend);
+      try {
+        await useSettingsStore.getState().save(backend, sanitized);
+      } catch (error) {
+        showToast(toErrorMessage(error, "設定を保存できませんでした。"), "error");
+        return;
       }
+      let savedProject = projectForm?.stored ?? null;
+      if (projectForm && projectToSave) {
+        try {
+          savedProject = await saveProjectSettings(projectForm, projectToSave);
+        } catch (error) {
+          // アプリ全体の設定は保存できているので、そのぶんの反映はしてから、作品の設定の失敗を知らせる
+          await refreshPipelineIfDraftUnitChanged(
+            draftUnitBefore,
+            effectiveDraftUnit(sanitized, savedProject),
+          );
+          showToast(
+            `アプリ全体の設定は保存しましたが、作品の設定は保存できませんでした。${projectSaveErrorMessage(error)}`,
+            "error",
+          );
+          return;
+        }
+      }
+      await refreshPipelineIfDraftUnitChanged(
+        draftUnitBefore,
+        effectiveDraftUnit(sanitized, savedProject),
+      );
+      showToast("設定を保存しました。");
       onClose();
-    } catch (error) {
-      showToast(toErrorMessage(error, "設定を保存できませんでした。"), "error");
     } finally {
       setIsSaving(false);
     }
@@ -120,204 +218,61 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
     );
   }
 
+  const overriddenCount = projectForm ? countProjectSettings(projectForm.edited) : 0;
+
   return (
     <Dialog title="設定" onClose={onClose} wide>
       <div className="settings-dialog">
-        <LlmSettingsSection llm={form.llm} onChange={(llm) => setForm({ ...form, llm })} />
-
-        <section className="settings-dialog__section">
-          <h3>生成</h3>
-          <div className="settings-dialog__choices">
-            {(Object.keys(DRAFT_UNIT_DESCRIPTIONS) as DraftUnit[]).map((unit) => (
-              <label key={unit} className="settings-dialog__radio">
-                <input
-                  type="radio"
-                  name="draft-unit"
-                  checked={form.generation.draft_unit === unit}
-                  onChange={() =>
-                    setForm({ ...form, generation: { ...form.generation, draft_unit: unit } })
-                  }
-                />
-                <div>
-                  <span className="settings-dialog__radio-title">{unit}</span>
-                  <p className="settings-dialog__radio-description">
-                    {DRAFT_UNIT_DESCRIPTIONS[unit]}
-                  </p>
-                </div>
-              </label>
-            ))}
+        {isProjectOpen && (
+          <div className="settings-dialog__scopes" role="tablist" aria-label="設定する範囲">
+            <ScopeTab
+              panelId={APP_PANEL_ID}
+              selected={scope === "app"}
+              onSelect={() => setScope("app")}
+            >
+              アプリ全体
+            </ScopeTab>
+            <ScopeTab
+              panelId={PROJECT_PANEL_ID}
+              selected={scope === "project"}
+              onSelect={() => setScope("project")}
+            >
+              この作品（{projectTitle}）
+            </ScopeTab>
           </div>
+        )}
 
-          <div className="settings-dialog__row">
-            <label className="app-field">
-              <span>1 回あたりの文字数</span>
-              <input
-                type="number"
-                min={100}
-                value={form.generation.chars_per_call}
-                onChange={(event) =>
-                  setForm({
-                    ...form,
-                    generation: {
-                      ...form.generation,
-                      chars_per_call: event.target.valueAsNumber,
-                    },
-                  })
-                }
-              />
-            </label>
-            <label className="app-field">
-              <span>文脈の長さ（トークン）</span>
-              <input
-                type="number"
-                min={512}
-                value={form.generation.context_tokens}
-                onChange={(event) =>
-                  setForm({
-                    ...form,
-                    generation: {
-                      ...form.generation,
-                      context_tokens: event.target.valueAsNumber,
-                    },
-                  })
-                }
-              />
-            </label>
-          </div>
+        {/* 切り替えても入力中の値（API キーなど）が消えないよう、両方を描画したまま隠す */}
+        <div
+          id={APP_PANEL_ID}
+          role={isProjectOpen ? "tabpanel" : undefined}
+          className="settings-dialog__panel"
+          hidden={scope !== "app"}
+        >
+          {overriddenCount > 0 && (
+            <p className="settings-dialog__note">
+              開いている作品には作品ごとの設定が {overriddenCount}{" "}
+              項目あり、その作品ではそちらが優先されます。
+            </p>
+          )}
+          <AppSettingsSections form={form} onChange={setForm} />
+        </div>
 
-          <div className="settings-dialog__row">
-            <label className="app-field">
-              <span>temperature</span>
-              <input
-                type="number"
-                min={0}
-                max={2}
-                step={0.1}
-                value={form.generation.temperature}
-                onChange={(event) =>
-                  setForm({
-                    ...form,
-                    generation: { ...form.generation, temperature: event.target.valueAsNumber },
-                  })
-                }
-              />
-            </label>
-            <label className="app-field">
-              <span>品質チェックの再生成回数</span>
-              <input
-                type="number"
-                min={0}
-                max={5}
-                value={form.generation.quality_retries}
-                onChange={(event) =>
-                  setForm({
-                    ...form,
-                    generation: {
-                      ...form.generation,
-                      quality_retries: event.target.valueAsNumber,
-                    },
-                  })
-                }
-              />
-            </label>
-          </div>
-
-          <label className="settings-dialog__checkbox">
-            <input
-              type="checkbox"
-              checked={form.generation.polish}
-              onChange={(event) =>
-                setForm({
-                  ...form,
-                  generation: { ...form.generation, polish: event.target.checked },
-                })
-              }
+        {isProjectOpen && (
+          <div
+            id={PROJECT_PANEL_ID}
+            role="tabpanel"
+            className="settings-dialog__panel"
+            hidden={scope !== "project"}
+          >
+            <ProjectScope
+              app={form}
+              projectForm={projectForm}
+              loadError={projectLoadError}
+              onChange={(edited) => projectForm && setProjectForm({ ...projectForm, edited })}
             />
-            <span>本文を書いたあとに推敲パスをかける</span>
-          </label>
-
-          <label className="settings-dialog__checkbox">
-            <input
-              type="checkbox"
-              checked={form.generation.disable_thinking}
-              onChange={(event) =>
-                setForm({
-                  ...form,
-                  generation: { ...form.generation, disable_thinking: event.target.checked },
-                })
-              }
-            />
-            <span>
-              推論モデルの思考を止める（ローカル LLM 向け。クラウドの API でエラーになる場合は外す）
-            </span>
-          </label>
-        </section>
-
-        <section className="settings-dialog__section">
-          <h3>エディタ</h3>
-          <label className="settings-dialog__checkbox">
-            <input
-              type="checkbox"
-              checked={form.editor.vertical}
-              onChange={(event) =>
-                setForm({ ...form, editor: { ...form.editor, vertical: event.target.checked } })
-              }
-            />
-            <span>既定で縦書きにする</span>
-          </label>
-
-          <div className="settings-dialog__row">
-            <label className="app-field">
-              <span>書体</span>
-              <select
-                value={form.editor.font_style}
-                onChange={(event) =>
-                  setForm({
-                    ...form,
-                    editor: { ...form.editor, font_style: event.target.value as FontStyle },
-                  })
-                }
-              >
-                {(Object.keys(FONT_STYLE_LABELS) as FontStyle[]).map((style) => (
-                  <option key={style} value={style}>
-                    {FONT_STYLE_LABELS[style]}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="app-field">
-              <span>字の大きさ</span>
-              <input
-                type="number"
-                min={10}
-                max={32}
-                value={form.editor.font_size}
-                onChange={(event) =>
-                  setForm({
-                    ...form,
-                    editor: { ...form.editor, font_size: event.target.valueAsNumber },
-                  })
-                }
-              />
-            </label>
-            <label className="app-field">
-              <span>行間</span>
-              <input
-                type="number"
-                min={1}
-                max={3}
-                step={0.1}
-                value={form.editor.line_height}
-                onChange={(event) =>
-                  setForm({
-                    ...form,
-                    editor: { ...form.editor, line_height: event.target.valueAsNumber },
-                  })
-                }
-              />
-            </label>
           </div>
-        </section>
+        )}
 
         <div className="settings-dialog__actions">
           <button type="button" className="app-button" onClick={onClose}>
@@ -335,4 +290,48 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
       </div>
     </Dialog>
   );
+}
+
+interface ScopeTabProps {
+  panelId: string;
+  selected: boolean;
+  onSelect: () => void;
+  children: ReactNode;
+}
+
+function ScopeTab({ panelId, selected, onSelect, children }: ScopeTabProps) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={selected}
+      aria-controls={panelId}
+      className={`settings-dialog__scope${selected ? " settings-dialog__scope--selected" : ""}`}
+      onClick={onSelect}
+    >
+      {children}
+    </button>
+  );
+}
+
+interface ProjectScopeProps {
+  app: AppSettings;
+  projectForm: ProjectSettingsForm | null;
+  loadError: string | null;
+  onChange: (edited: ProjectSettings) => void;
+}
+
+/** 「この作品」を選んでいるときの中身。読み込みの途中や失敗も、ここで知らせる。 */
+function ProjectScope({ app, projectForm, loadError, onChange }: ProjectScopeProps) {
+  if (loadError) {
+    return (
+      <p className="settings-dialog__error" role="alert">
+        {loadError}
+      </p>
+    );
+  }
+  if (!projectForm) {
+    return <p>読み込んでいます…</p>;
+  }
+  return <ProjectSettingsSection app={app} value={projectForm.edited} onChange={onChange} />;
 }

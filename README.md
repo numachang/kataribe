@@ -64,6 +64,8 @@ Claude Code をインストールしてログインしておけば、
 1. 「新しい作品」で、題名・ジャンル・目標の文字数・企画の種（どんな話にしたいか）を入れ、保存先のフォルダを選ぶ。
 2. 「設定」で LLM の接続先を選ぶ。OpenAI 互換 API ならサーバーの URL とモデル（API キーが要るサーバーならキーも）、
    Claude Code ならモデルを選ぶ。
+   作品を開いているときは「この作品」で、その作品だけの設定（接続先・モデル・生成単位など）も変えられる
+   （作品フォルダの `kataribe.yaml` に保存される）。
 3. 右の「工程」タブで「次の工程を実行」を押すと、次に取りかかれる資料や本文を生成する。
    生成した内容は変更案として表示されるので、確かめてから適用する。「自動で進める」で続けて生成もできる。
 4. 左の目次から資料や本文を開いて、直接書き直す。入力が止まって 1 秒後、または Ctrl+S で保存される。
@@ -87,7 +89,7 @@ kataribe-cli quality my-novel
 kataribe-cli export my-novel --output my-novel.txt
 ```
 
-設定は GUI と同じファイル（`%APPDATA%\io.github.numachang.kataribe\settings.json`）を読み、コマンドラインの指定で上書きできる。
+設定は GUI と同じファイル（`%APPDATA%\io.github.numachang.kataribe\settings.json`）を読み、作品ごとの設定を重ね、コマンドラインの指定で上書きできる。
 API キーは環境変数 `KATARIBE_API_KEY`、無ければ資格情報マネージャー（`kataribe-cli api-key set` で保存）から読む
 （Claude Code のときは読まない）。`models` でモデルの一覧を出すと、接続できるかも確かめられる。
 1 つの工程だけを生成するときは `generate`（例: `generate my-novel draft:01/s02`）、適用せずに変更案だけ見るときは `--dry-run`。

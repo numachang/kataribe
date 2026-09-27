@@ -1,4 +1,5 @@
 import { hashText } from "../../lib/hash";
+import { applyProjectSettings } from "../../lib/projectSettings";
 import { analyzeQualityText } from "../../lib/quality";
 import { parseRubySegments } from "../../lib/ruby";
 import { computeTextStats } from "../../lib/textStats";
@@ -15,6 +16,8 @@ import type {
   NewProject,
   PipelineStep,
   ProjectOverview,
+  ProjectSettings,
+  ProjectSettingsFile,
   QualityReport,
   Segment,
   Task,
@@ -29,6 +32,7 @@ import {
 } from "./generation";
 import { GENRE_PRESETS } from "./genres";
 import { buildOverview } from "./overview";
+import { MANIFEST_PATH } from "./paths";
 import { buildPipeline } from "./pipeline";
 import { readMockFile } from "./render";
 import {
@@ -151,8 +155,30 @@ class MockBackend implements Backend {
     return this.storedApiKey;
   }
 
+  async loadProjectSettings(): Promise<ProjectSettingsFile> {
+    const project = this.requireProject();
+    return { settings: structuredClone(project.settings), hash: manifestHash(project) };
+  }
+
+  /** 本物と違い、数値を範囲に収めることや、この版が知らない項目を残すことはしない（画面のテスト用の簡略版）。 */
+  async saveProjectSettings(settings: ProjectSettings, expectedHash: string): Promise<string> {
+    const project = this.requireProject();
+    if (manifestHash(project) !== expectedHash) {
+      throw new BackendError("conflict", "kataribe.yaml が外部で変更されています。");
+    }
+    project.settings = structuredClone(settings);
+    return manifestHash(project);
+  }
+
+  /** 生成に使う設定。作品を開いていれば、アプリ全体の設定に作品の設定を重ねる。 */
+  private effectiveSettings() {
+    return this.project
+      ? applyProjectSettings(this.settings, this.project.settings)
+      : { llm: this.settings.llm, generation: this.settings.generation };
+  }
+
   async listModels(llm?: LlmSettings): Promise<ModelInfo[]> {
-    const effective = llm ?? this.settings.llm;
+    const effective = llm ?? this.effectiveSettings().llm;
     if (effective.provider === "claude_code") {
       return CLAUDE_CODE_MODELS;
     }
@@ -269,7 +295,7 @@ class MockBackend implements Backend {
       const changes = await runGeneration(
         project,
         task,
-        this.settings.generation,
+        this.effectiveSettings().generation,
         job,
         this.delayMs,
         onEvent,
@@ -319,4 +345,9 @@ class MockBackend implements Backend {
 /** メモリ上で完結する偽バックエンドを作る。画面の開発（`pnpm dev`）とテストで使う。 */
 export function createMockBackend(options: MockBackendOptions = {}): Backend {
   return new MockBackend(options);
+}
+
+/** 偽の作品の kataribe.yaml のハッシュ（作品の設定の競合検出に使う）。 */
+function manifestHash(project: ProjectState): string {
+  return hashText(readMockFile(project, MANIFEST_PATH) ?? "");
 }

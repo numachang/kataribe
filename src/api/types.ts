@@ -146,6 +146,31 @@ export interface LlmSettings {
   claude_model: string;
 }
 
+/**
+ * 作品ごとの設定（kataribe.yaml の settings）。書いた項目だけが入り、無い項目はアプリ全体の設定を使う。
+ * 接続先 URL・claude コマンドの場所・API キーは PC ごとの設定なので持たない。
+ */
+export interface ProjectSettings {
+  provider?: LlmProvider;
+  /** OpenAI 互換 API のモデル。 */
+  model?: string;
+  /** Claude Code のモデル。 */
+  claude_model?: string;
+  draft_unit?: DraftUnit;
+  chars_per_call?: number;
+  context_tokens?: number;
+  temperature?: number;
+  polish?: boolean;
+  quality_retries?: number;
+  disable_thinking?: boolean;
+}
+
+/** 画面が読み込んだ作品の設定。保存するときの競合の検出に、読んだ時点の kataribe.yaml のハッシュを使う。 */
+export interface ProjectSettingsFile {
+  settings: ProjectSettings;
+  hash: string;
+}
+
 export interface GenerationSettings {
   draft_unit: DraftUnit;
   /** 1 回の生成で書かせる目安の文字数。 */

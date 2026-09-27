@@ -4,6 +4,56 @@
   gap: 22px;
 }
 
+.settings-dialog__scopes {
+  display: flex;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.settings-dialog__scope {
+  padding: 8px 14px;
+  border: none;
+  background: none;
+  font-size: 13px;
+  color: var(--color-ink-soft);
+  border-bottom: 2px solid transparent;
+}
+
+.settings-dialog__scope--selected {
+  color: var(--color-ink);
+  border-bottom-color: var(--color-accent);
+  font-weight: bold;
+}
+
+.settings-dialog__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.settings-dialog__panel[hidden] {
+  display: none;
+}
+
+.settings-dialog__override {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-dialog__override-label {
+  font-weight: bold;
+}
+
+.settings-dialog__override input:disabled,
+.settings-dialog__override select:disabled {
+  color: var(--color-ink-faint);
+}
+
+.settings-dialog__error {
+  margin: 0;
+  color: var(--color-error);
+}
+
 .settings-dialog__section {
   display: flex;
   flex-direction: column;

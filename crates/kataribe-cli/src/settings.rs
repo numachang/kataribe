@@ -1,17 +1,27 @@
 //! 設定ファイルの読み込みと、グローバルオプションによる上書き・API キーの解決。
 
 use anyhow::Context;
-use kataribe_engine::{ApiKeyStore, EngineSettings, LlmProvider};
+use kataribe_engine::{ApiKeyStore, EngineSettings, LlmProvider, ProjectSettings};
+use kataribe_project::Project;
 
 use crate::args::GlobalOptions;
 
-/// 設定ファイルを読み、グローバルオプションで上書きし、値を安全な範囲に収める。
+/// 使う設定を決める。設定ファイル（アプリ全体の設定）に、`project` があればその作品の設定
+/// （`kataribe.yaml` の `settings`）を重ね、さらにグローバルオプションで上書きし、値を安全な範囲に収める。
 ///
 /// `--settings` で場所を明示したときは、そこにファイルが無ければエラーにする
 /// （別の場所を指定したつもりの誤りに気付けるように）。既定の場所（GUI と同じ）では、
 /// ファイルが無くても既定値から始める。
-pub fn load_effective_settings(global: &GlobalOptions) -> anyhow::Result<EngineSettings> {
+pub fn load_effective_settings(
+    global: &GlobalOptions,
+    project: Option<&Project>,
+) -> anyhow::Result<EngineSettings> {
     let mut settings = load_settings_from_location(global)?;
+    if let Some(project) = project {
+        settings = ProjectSettings::load(project)
+            .context("作品の設定を読み込めません")?
+            .apply(settings);
+    }
     apply_overrides(&mut settings, global);
     settings.generation = settings.generation.sanitized();
     Ok(settings)
@@ -66,6 +76,9 @@ fn apply_overrides(settings: &mut EngineSettings, global: &GlobalOptions) {
     }
     if global.polish {
         settings.generation.polish = true;
+    }
+    if global.no_polish {
+        settings.generation.polish = false;
     }
     if let Some(quality_retries) = global.quality_retries {
         settings.generation.quality_retries = quality_retries;
@@ -180,7 +193,7 @@ mod tests {
             ..GlobalOptions::default()
         };
 
-        let error = load_effective_settings(&global).unwrap_err();
+        let error = load_effective_settings(&global, None).unwrap_err();
 
         assert!(error.to_string().contains("見つかりません"));
     }
@@ -199,8 +212,79 @@ mod tests {
             ..GlobalOptions::default()
         };
 
-        let settings = load_effective_settings(&global).unwrap();
+        let settings = load_effective_settings(&global, None).unwrap();
 
         assert_eq!(settings.llm.model, "gemma");
+    }
+
+    #[test]
+    fn project_settings_come_between_the_settings_file_and_the_command_line() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("settings.json");
+        std::fs::write(
+            &path,
+            r#"{"llm":{"model":"app-model"},"generation":{"chars_per_call":900,"context_tokens":8192}}"#,
+        )
+        .unwrap();
+        let folder = temp_dir.path().join("novel");
+        let project = crate::test_support::new_test_project(&folder);
+        let mut stored = ProjectSettings::default();
+        stored.model = Some("project-model".to_owned());
+        stored.context_tokens = Some(100_000);
+        stored.save(&project, None).unwrap();
+        let global = GlobalOptions {
+            settings: Some(path),
+            context_tokens: Some(32_768),
+            ..GlobalOptions::default()
+        };
+
+        let settings = load_effective_settings(&global, Some(&project)).unwrap();
+
+        assert_eq!(settings.llm.model, "project-model");
+        assert_eq!(settings.generation.chars_per_call, 900);
+        assert_eq!(settings.generation.context_tokens, 32_768);
+    }
+
+    #[test]
+    fn no_polish_on_the_command_line_turns_off_the_polish_the_project_asks_for() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("settings.json");
+        std::fs::write(&path, "{}").unwrap();
+        let folder = temp_dir.path().join("novel");
+        let project = crate::test_support::new_test_project(&folder);
+        let mut stored = ProjectSettings::default();
+        stored.polish = Some(true);
+        stored.save(&project, None).unwrap();
+        let global = GlobalOptions {
+            settings: Some(path),
+            no_polish: true,
+            ..GlobalOptions::default()
+        };
+
+        let settings = load_effective_settings(&global, Some(&project)).unwrap();
+
+        assert!(!settings.generation.polish);
+    }
+
+    #[test]
+    fn model_on_the_command_line_goes_to_the_provider_chosen_by_the_project() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("settings.json");
+        std::fs::write(&path, "{}").unwrap();
+        let folder = temp_dir.path().join("novel");
+        let project = crate::test_support::new_test_project(&folder);
+        let mut stored = ProjectSettings::default();
+        stored.provider = Some(LlmProvider::ClaudeCode);
+        stored.save(&project, None).unwrap();
+        let global = GlobalOptions {
+            settings: Some(path),
+            model: Some("opus".to_owned()),
+            ..GlobalOptions::default()
+        };
+
+        let settings = load_effective_settings(&global, Some(&project)).unwrap();
+
+        assert_eq!(settings.llm.claude_model, "opus");
+        assert_eq!(settings.llm.model, EngineSettings::default().llm.model);
     }
 }

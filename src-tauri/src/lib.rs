@@ -34,6 +34,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::load_settings,
             commands::save_settings,
+            commands::load_project_settings,
+            commands::save_project_settings,
             commands::set_api_key,
             commands::has_api_key,
             commands::list_models,

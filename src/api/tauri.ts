@@ -12,6 +12,8 @@ import type {
   NewProject,
   PipelineStep,
   ProjectOverview,
+  ProjectSettings,
+  ProjectSettingsFile,
   QualityReport,
   Segment,
   Task,
@@ -58,6 +60,14 @@ export class TauriBackend implements Backend {
 
   async saveSettings(settings: AppSettings): Promise<void> {
     await invokeCommand<void>("save_settings", { settings });
+  }
+
+  async loadProjectSettings(): Promise<ProjectSettingsFile> {
+    return invokeCommand<ProjectSettingsFile>("load_project_settings");
+  }
+
+  async saveProjectSettings(settings: ProjectSettings, expectedHash: string): Promise<string> {
+    return invokeCommand<string>("save_project_settings", { settings, expectedHash });
   }
 
   async setApiKey(apiKey: string | null): Promise<void> {

@@ -9,7 +9,7 @@ use crate::settings;
 use super::Outcome;
 
 pub async fn run(global: &GlobalOptions, console: &dyn Console) -> anyhow::Result<Outcome> {
-    let settings = settings::load_effective_settings(global)?;
+    let settings = settings::load_effective_settings(global, None)?;
     let api_key = super::api_key_for(&settings.llm, &global.api_key_env)?;
     let models = kataribe_engine::list_models(&settings.llm, api_key)
         .await

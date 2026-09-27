@@ -5,6 +5,7 @@ pub mod export;
 pub mod generate;
 pub mod models;
 pub mod new;
+pub mod project_settings;
 pub mod quality;
 pub mod run;
 pub mod status;

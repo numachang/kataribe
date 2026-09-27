@@ -51,6 +51,11 @@ pub struct Manifest {
     pub target_length: u32,
     /// 企画の種。最初に LLM へ渡す指示。
     pub idea: String,
+    /// 作品ごとの設定（LLM・生成のしかた）。形は執筆エンジン（kataribe-engine）が決めるので、
+    /// ここでは解釈せずにそのまま持つ。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub settings: Option<serde_json::Value>,
     /// 利用者が追加した未知の項目。書き戻すときも保持する。
     #[serde(flatten)]
     #[cfg_attr(feature = "ts", ts(skip))]
@@ -826,11 +831,25 @@ mod tests {
             rating: Rating::General,
             target_length: 30_000,
             idea: "嵐で孤立した岬の洋館で…".to_string(),
+            settings: Some(
+                serde_json::json!({ "provider": "claude_code", "context_tokens": 100_000 }),
+            ),
             extra,
         };
         let rendered = manifest.render().unwrap();
         let parsed = Manifest::parse(&rendered).unwrap();
         assert_eq!(parsed, manifest);
+    }
+
+    #[test]
+    fn a_manifest_without_settings_does_not_write_the_settings_key() {
+        let text =
+            "format: 1\ntitle: t\ngenre: general\nrating: general\ntarget_length: 1000\nidea: i\n";
+
+        let manifest = Manifest::parse(text).unwrap();
+
+        assert_eq!(manifest.settings, None);
+        assert!(!manifest.render().unwrap().contains("settings"));
     }
 
     #[test]

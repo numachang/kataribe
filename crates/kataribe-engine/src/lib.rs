@@ -15,6 +15,7 @@ mod llm_client;
 mod new_project;
 mod overview;
 mod pipeline;
+mod project_settings;
 mod prompt;
 mod secrets;
 mod settings;
@@ -32,6 +33,7 @@ pub use overview::{
     EntryKind, OverviewEntry, OverviewSection, ProjectOverview, SectionKind, overview,
 };
 pub use pipeline::{PipelineStep, StepState, pipeline};
+pub use project_settings::ProjectSettings;
 pub use secrets::ApiKeyStore;
 pub use settings::{
     DraftUnit, EngineSettings, GenerationSettings, LlmProvider, LlmSettings, default_settings_path,
