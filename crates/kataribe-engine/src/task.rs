@@ -20,7 +20,7 @@ pub enum Task {
     ScenePlan {
         chapter: ChapterId,
     },
-    /// 本文。生成単位が `chapter` のときは、このシーンから章の終わりまでをまとめて書く。
+    /// 本文。生成単位が `chapter` のときは、このシーンから、次に本文のあるシーンの手前までをまとめて書く。
     Draft {
         chapter: ChapterId,
         scene: SceneId,

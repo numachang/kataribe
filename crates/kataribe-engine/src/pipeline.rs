@@ -182,7 +182,8 @@ fn written_scenes(project: &Project, chapter: &Chapter) -> Result<Vec<bool>> {
         .collect()
 }
 
-/// 章単位: まだ書いていない最初のシーンから章の終わりまでを 1 つの工程にする。
+/// 章単位: まだ書いていない最初のシーンを 1 つの工程にする。
+/// その工程は、次に本文のあるシーンの手前までをまとめて書く。
 fn chapter_step(
     chapter: &Chapter,
     written: &[bool],

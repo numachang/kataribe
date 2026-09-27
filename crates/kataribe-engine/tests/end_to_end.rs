@@ -671,3 +671,47 @@ fn chapter_target_is_shown_only_when_every_scene_has_one() {
         ]
     );
 }
+
+#[tokio::test]
+async fn chapter_unit_writes_every_unwritten_scene_up_to_the_next_written_one() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path());
+    write(&project, "style.md", STYLE);
+    write(
+        &project,
+        "plot/chapters/01.md",
+        "---\ntitle: 雨の匂い\nscenes:\n  - id: s01\n    title: 洋館への道\n    summary: 着く。\n    target_chars: 1000\n  - id: s02\n    title: 閉ざされた書斎\n    summary: 死体が見つかる。\n    target_chars: 1000\n  - id: s03\n    title: 夜明け\n    summary: 嵐がやむ。\n    target_chars: 1000\n---\n洋館を訪れる。\n",
+    );
+    write(
+        &project,
+        "manuscript/01/s03.txt",
+        "　作家が手で書いた夜明けの場面。\n",
+    );
+    let model = Arc::new(ScriptedChatModel::new([Script::reply([
+        "雨が降っていた。\n\n◇\n\n書斎は静かだった。\n",
+    ])]));
+    let engine = Engine::new(model.clone(), settings(DraftUnit::Chapter)).unwrap();
+    let chapter = ChapterId::from_number(1);
+
+    run(
+        &engine,
+        &project,
+        &Task::Draft {
+            chapter,
+            scene: "s01".parse().unwrap(),
+        },
+    )
+    .await;
+
+    let scene_text = |scene: &str| {
+        project
+            .scene_text(&chapter, &scene.parse().unwrap())
+            .unwrap()
+            .unwrap()
+    };
+    assert_eq!(scene_text("s01"), "　雨が降っていた。\n");
+    assert_eq!(scene_text("s02"), "　書斎は静かだった。\n");
+    assert_eq!(scene_text("s03"), "　作家が手で書いた夜明けの場面。\n");
+    let prompt = &model.requests()[0].messages[1].content;
+    assert!(prompt.contains("シーン 1 からシーン 2 まで"), "{prompt}");
+}

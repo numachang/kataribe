@@ -277,38 +277,21 @@ impl ProjectStore {
     ///
     /// UTF-8 として読み、先頭の BOM を除き、改行を LF に正規化する。
     pub fn read_text_opt(&self, path: &RelPath) -> Result<Option<TextFile>, ProjectError> {
-        let resolved = self.resolve(path)?;
-        let bytes = match fs::read(&resolved) {
-            Ok(bytes) => bytes,
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(source) => {
-                return Err(ProjectError::Io {
-                    path: path.clone(),
-                    source,
-                });
-            }
-        };
-        let text = String::from_utf8(bytes)
-            .map_err(|_| ProjectError::InvalidUtf8 { path: path.clone() })?;
-        let normalized = normalize_text(&text);
-        let hash = ContentHash::of(normalized.as_bytes());
-        Ok(Some(TextFile {
-            content: normalized,
-            hash,
-        }))
+        self.read_bytes_opt(path)?
+            .map(|bytes| decode_text(path, &bytes))
+            .transpose()
     }
 
-    /// `condition` が現在の内容と合っているかどうかだけを確かめる。
-    ///
-    /// 複数ファイルへの変更をまとめて適用する前に、先にすべての競合を確かめたい場合に使う。
-    /// `write_text` も内部でこの判定を使う。
-    pub fn check_condition(
-        &self,
-        path: &RelPath,
-        condition: &WriteCondition,
-    ) -> Result<(), ProjectError> {
-        let current = self.read_text_opt(path)?;
-        check_condition_against(current.as_ref(), path, condition)
+    /// ファイルの中身をそのまま読む。存在しなければ `Ok(None)`。
+    fn read_bytes_opt(&self, path: &RelPath) -> Result<Option<Vec<u8>>, ProjectError> {
+        match fs::read(self.resolve(path)?) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(source) => Err(ProjectError::Io {
+                path: path.clone(),
+                source,
+            }),
+        }
     }
 
     /// テキストファイルを書き込む。
@@ -360,15 +343,19 @@ impl ProjectStore {
 
     /// 1 ファイル分の書き込みの準備。条件に合わなければ `Conflict`。
     fn plan_write<'a>(&self, write: &PendingWrite<'a>) -> Result<PlannedWrite<'a>, ProjectError> {
-        let current = self.read_text_opt(write.path)?;
-        check_condition_against(current.as_ref(), write.path, &write.condition)?;
+        let previous = self
+            .read_bytes_opt(write.path)?
+            .map(|bytes| decode_text(write.path, &bytes).map(|text| PreviousFile { text, bytes }))
+            .transpose()?;
+        let current = previous.as_ref().map(|file| &file.text);
+        check_condition_against(current, write.path, &write.condition)?;
         let content = normalize_text(write.content);
         Ok(PlannedWrite {
             path: write.path,
             resolved: self.resolve(write.path)?,
             hash: ContentHash::of(content.as_bytes()),
             content,
-            current,
+            previous,
         })
     }
 
@@ -388,7 +375,7 @@ impl ProjectStore {
                 stage_temp_file(&plan.resolved, plan.path, plan.content.as_bytes())
             })
             .collect::<Result<Vec<_>, _>>()?;
-        for plan in changed.iter().filter(|plan| plan.current.is_some()) {
+        for plan in changed.iter().filter(|plan| plan.previous.is_some()) {
             self.maybe_backup(plan.path, backup)?;
         }
         let mut replaced: Vec<&PlannedWrite<'_>> = Vec::with_capacity(changed.len());
@@ -679,24 +666,31 @@ fn backup_dir_of(path: &RelPath) -> Result<RelPath, ProjectError> {
 struct PlannedWrite<'a> {
     path: &'a RelPath,
     resolved: PathBuf,
-    /// 書き込む前の内容。新規なら `None`（途中で失敗したときに元へ戻すのに使う）。
-    current: Option<TextFile>,
+    /// 書き込む前のファイル。新規なら `None`（途中で失敗したときに元へ戻すのに使う）。
+    previous: Option<PreviousFile>,
     /// 正規化した、書き込む内容。
     content: String,
     hash: ContentHash,
 }
 
+/// 書き込む前のファイル。
+struct PreviousFile {
+    text: TextFile,
+    /// 元のバイト列（BOM や CRLF も含めて、そのまま元に戻すため）。
+    bytes: Vec<u8>,
+}
+
 impl PlannedWrite<'_> {
     fn changes_file(&self) -> bool {
-        self.current
+        self.previous
             .as_ref()
-            .is_none_or(|current| current.content != self.content)
+            .is_none_or(|previous| previous.text.content != self.content)
     }
 
     /// 置き換える前の状態に戻す。
     fn restore(&self) -> Result<(), ProjectError> {
-        match &self.current {
-            Some(previous) => atomic_write(&self.resolved, self.path, previous.content.as_bytes()),
+        match &self.previous {
+            Some(previous) => atomic_write(&self.resolved, self.path, &previous.bytes),
             None => fs::remove_file(&self.resolved).map_err(|source| ProjectError::Io {
                 path: self.path.clone(),
                 source,
@@ -823,6 +817,15 @@ fn is_transient_lock_error(error: &std::io::Error) -> bool {
     // Windows: ERROR_ACCESS_DENIED(5) / ERROR_SHARING_VIOLATION(32) / ERROR_LOCK_VIOLATION(33).
     // ウイルス対策ソフトや検索インデクサが一時的にファイルを開いている場合に起こる。
     matches!(error.raw_os_error(), Some(5 | 32 | 33))
+}
+
+/// ファイルの中身を UTF-8 のテキストとして読み、正規化する。
+fn decode_text(path: &RelPath, bytes: &[u8]) -> Result<TextFile, ProjectError> {
+    let text =
+        std::str::from_utf8(bytes).map_err(|_| ProjectError::InvalidUtf8 { path: path.clone() })?;
+    let content = normalize_text(text);
+    let hash = ContentHash::of(content.as_bytes());
+    Ok(TextFile { content, hash })
 }
 
 /// BOM を除き、CRLF・CR を LF に正規化する。
@@ -1155,36 +1158,6 @@ mod tests {
             },
         );
         assert!(matches!(result, Err(ProjectError::Conflict { .. })));
-    }
-
-    #[test]
-    fn check_condition_matches_write_text_behavior() {
-        let dir = TempDir::new().unwrap();
-        let store = ProjectStore::open(dir.path()).unwrap();
-        let path = rel("concept.md");
-
-        assert!(
-            store
-                .check_condition(&path, &WriteCondition::Absent)
-                .is_ok()
-        );
-        assert!(matches!(
-            store.check_condition(&path, &WriteCondition::Matches(ContentHash("0".repeat(64)))),
-            Err(ProjectError::Conflict { .. })
-        ));
-
-        let hash = store
-            .write_text(&path, "内容", WriteOptions::default())
-            .unwrap();
-        assert!(matches!(
-            store.check_condition(&path, &WriteCondition::Absent),
-            Err(ProjectError::Conflict { .. })
-        ));
-        assert!(
-            store
-                .check_condition(&path, &WriteCondition::Matches(hash))
-                .is_ok()
-        );
     }
 
     #[test]
@@ -1562,8 +1535,10 @@ mod tests {
 
         let dir = TempDir::new().unwrap();
         let store = ProjectStore::open(dir.path()).unwrap();
-        write(&store, "manuscript/01/s01.txt", "元の一");
         write(&store, "manuscript/01/s02.txt", "元の二");
+        // メモ帳などで保存された、BOM と CRLF のあるファイル
+        let first_bytes = "\u{feff}元の一\r\n二行目\r\n".as_bytes();
+        fs::write(dir.path().join("manuscript/01/s01.txt"), first_bytes).unwrap();
         let (first, second, added) = (
             rel("manuscript/01/s01.txt"),
             rel("manuscript/01/s02.txt"),
@@ -1597,7 +1572,10 @@ mod tests {
         );
 
         assert!(matches!(result, Err(ProjectError::Io { path, .. }) if path == second));
-        assert_eq!(read(&store, "manuscript/01/s01.txt").unwrap(), "元の一");
+        assert_eq!(
+            fs::read(dir.path().join("manuscript/01/s01.txt")).unwrap(),
+            first_bytes
+        );
         assert_eq!(read(&store, "manuscript/01/s02.txt").unwrap(), "元の二");
         assert_eq!(read(&store, "manuscript/01/s00.txt"), None);
         let leftovers: Vec<_> = fs::read_dir(dir.path().join("manuscript/01"))
@@ -1609,6 +1587,48 @@ mod tests {
             2,
             "一時ファイルが残っている: {leftovers:?}"
         );
+    }
+
+    /// 同じ内容を前提にした書き込みが同時に来ても、通るのは 1 つだけ（残りは競合）。
+    /// 排他が無いと、どれも同じハッシュで条件を通り、後から書いたものが先の変更を黙って消す。
+    #[test]
+    fn concurrent_writes_on_the_same_base_let_only_one_through() {
+        const WRITERS: usize = 8;
+        let dir = TempDir::new().unwrap();
+        let store = ProjectStore::open(dir.path()).unwrap();
+        let base = write(&store, "concept.md", "元の企画");
+        let concept = rel("concept.md");
+        let barrier = std::sync::Barrier::new(WRITERS);
+
+        let results: Vec<Result<ContentHash, ProjectError>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..WRITERS)
+                .map(|writer| {
+                    let (store, concept, base, barrier) = (&store, &concept, &base, &barrier);
+                    scope.spawn(move || {
+                        barrier.wait();
+                        store.write_text(
+                            concept,
+                            &format!("書き手 {writer} の企画"),
+                            WriteOptions {
+                                condition: WriteCondition::Matches(base.clone()),
+                                backup: BackupMode::Never,
+                            },
+                        )
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect()
+        });
+
+        let succeeded = results.iter().filter(|result| result.is_ok()).count();
+        let conflicted = results
+            .iter()
+            .filter(|result| matches!(result, Err(ProjectError::Conflict { .. })))
+            .count();
+        assert_eq!((succeeded, conflicted), (1, WRITERS - 1));
     }
 
     #[test]
