@@ -773,3 +773,35 @@ async fn nothing_is_named_when_no_phrase_is_overused() {
     let prompt = &model.requests()[0].messages[1].content;
     assert!(!prompt.contains("繰り返し使っている表現"), "{prompt}");
 }
+
+#[tokio::test]
+async fn a_cast_with_romanized_names_is_generated_again() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path());
+    write(&project, "concept.md", CONCEPT);
+    write(&project, "world/overview.md", WORLD);
+    let romanized = r#"{"characters": [
+  {"id": "kirishima-rin", "name": "霧島 凛", "reading": "きりしま りん", "role": "主人公", "summary": "盲目の少女探偵。"},
+  {"id": "tanaka-shukichi", "name": "田中 Shukichi", "reading": "たなか しゅうきち", "role": "執事", "summary": "館の執事。"}
+]}"#;
+    let model = Arc::new(ScriptedChatModel::new([
+        Script::reply([romanized]),
+        Script::reply([CAST]),
+    ]));
+    let settings = GenerationSettings {
+        quality_retries: 1,
+        ..settings(DraftUnit::Beat)
+    };
+    let engine = Engine::new(model.clone(), settings).unwrap();
+
+    run(&engine, &project, &Task::Cast).await;
+
+    let names: Vec<String> = project
+        .characters()
+        .unwrap()
+        .into_iter()
+        .map(|character| character.meta.name)
+        .collect();
+    assert_eq!(names, vec!["霧島 凛", "佐藤 健二"]);
+    assert_eq!(model.requests().len(), 2);
+}
