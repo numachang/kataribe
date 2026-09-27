@@ -10,8 +10,9 @@ import "./SettingsDialog.css";
 
 const DRAFT_UNIT_DESCRIPTIONS: Record<DraftUnit, string> = {
   chapter: "1 章をまるごと生成します。長い文脈に強い、大きなモデル向けです。",
-  scene: "1 シーンずつ生成します（既定）。中規模のモデルに向いています。",
-  beat: "シーンをさらに細かい展開（ビート）に分けて、1 つずつ生成します。小さなモデルでも設定から外れにくくなります。",
+  scene:
+    "1 シーンずつ生成します。長いシーンは何回かに分けて書き継ぎます。中規模以上のモデル向けです。",
+  beat: "シーンをさらに細かい展開（ビート）に分けて、1 つずつ生成します（既定）。ローカルのモデルでも分量が安定し、設定から外れにくくなります。",
 };
 
 const FONT_STYLE_LABELS: Record<FontStyle, string> = { mincho: "明朝体", gothic: "ゴシック体" };

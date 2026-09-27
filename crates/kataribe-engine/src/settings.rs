@@ -14,9 +14,10 @@ pub enum DraftUnit {
     /// 章の残りのシーンを 1 回でまとめて書く。
     Chapter,
     /// 1 シーンずつ書く。長いシーンは複数回に分けて書き継ぐ。
-    #[default]
     Scene,
-    /// シーンを展開（ビート）に分け、1 ビートずつ書く。
+    /// シーンを展開（ビート）に分け、1 ビートずつ書く。ローカル LLM で書き比べて最も安定したので既定にする
+    /// （分量が目標どおりに収まり、書き継ぎで前の段落を繰り返しにくい）。
+    #[default]
     Beat,
 }
 
@@ -61,7 +62,7 @@ pub struct GenerationSettings {
 impl Default for GenerationSettings {
     fn default() -> Self {
         Self {
-            draft_unit: DraftUnit::Scene,
+            draft_unit: DraftUnit::Beat,
             chars_per_call: 1500,
             context_tokens: 16_384,
             temperature: 0.8,
@@ -175,7 +176,7 @@ mod tests {
         let loaded: EngineSettings = load_settings(&path).unwrap();
 
         assert_eq!(loaded.generation.chars_per_call, 900);
-        assert_eq!(loaded.generation.draft_unit, DraftUnit::Scene);
+        assert_eq!(loaded.generation.draft_unit, DraftUnit::Beat);
         assert_eq!(loaded.llm, LlmSettings::default());
     }
 

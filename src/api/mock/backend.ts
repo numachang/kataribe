@@ -45,7 +45,7 @@ const DEFAULT_CHUNK_DELAY_MS = 30;
 const DEFAULT_SETTINGS: AppSettings = {
   llm: { base_url: "http://localhost:1234/v1", model: "" },
   generation: {
-    draft_unit: "scene",
+    draft_unit: "beat",
     chars_per_call: 1500,
     context_tokens: 16384,
     temperature: 0.8,
