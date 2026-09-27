@@ -1,10 +1,10 @@
-// 本物のアプリ（WebView2 + Rust のバックエンド）を tauri-driver で操作する E2E テスト。
+// 本物のアプリ（WebView2 + Rust のバックエンド）を WebDriver で操作する E2E テスト。
 // 実行方法は README の「E2E テスト」を参照。
 
-import type { ChildProcess } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { By, Key, until, type WebDriver, type WebElement } from "selenium-webdriver";
+import { type AppSession, launchApp } from "./support/appSession";
 import {
   createFixture,
   type Fixture,
@@ -13,27 +13,23 @@ import {
   SCENE_PATH,
   SCENE_TITLE,
 } from "./support/fixture";
-import { launchApp, startTauriDriver } from "./support/tauriDriver";
 
 const UI_TIMEOUT_MS = 10_000;
 const SAVE_TIMEOUT_MS = 5_000;
 const ARTIFACTS_FOLDER = "e2e/artifacts";
 
 let fixture: Fixture;
-let tauriDriver: ChildProcess;
+let session: AppSession;
 let app: WebDriver;
 
 beforeAll(async () => {
   fixture = await createFixture();
-  tauriDriver = await startTauriDriver();
-  // msedgedriver は引数を Chromium のスイッチとして扱い、値だけの引数に「--」を付けて並べ替えるので、
-  // 「--settings <PATH>」ではなく 1 つの引数「--settings=<PATH>」で渡す
-  app = await launchApp([`--settings=${fixture.settingsPath}`]);
+  session = await launchApp(["--settings", fixture.settingsPath]);
+  app = session.app;
 });
 
 afterAll(async () => {
-  await app?.quit();
-  tauriDriver?.kill();
+  await session?.close();
   if (fixture) {
     await rm(fixture.root, { recursive: true, force: true });
   }

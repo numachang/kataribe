@@ -282,10 +282,14 @@ Tauri コマンド名と引数（JS 側の名前。Rust 側は snake_case で受
 
 ### 5.2 E2E テスト
 
-本物のアプリ（WebView2 と Rust のバックエンド）を tauri-driver（WebDriver）で操作する。`e2e/` に置き、`pnpm e2e` で動かす。
-一時フォルダに作品と設定ファイルを作り、`--settings=<PATH>` を付けて起動するので、利用者の設定や作品には触れない。
-msedgedriver は引数を Chromium のスイッチとして扱い、値だけの引数に `--` を付けて並べ替えるため、
-アプリへの引数は必ず `--name=value` の 1 つの引数で渡す。
+本物のアプリ（WebView2 と Rust のバックエンド）を WebDriver（msedgedriver）で操作する。`e2e/` に置き、`pnpm e2e` で動かす。
+一時フォルダに作品と設定ファイルを作り、`--settings <PATH>` を付けて起動するので、利用者の設定や作品には触れない。
+
+- アプリはテストが自分で起動し、WebView2 のデバッグ用ポートを開かせてから、msedgedriver をそのポートに接続させる
+  （`debuggerAddress`）。msedgedriver にアプリを起動させる方式（tauri-driver）は、ポートなどの指定を環境変数で渡すが、
+  管理者として動く CI では WebView2 がその環境変数（`WEBVIEW2_*`）を無視するため使わない。
+- ポートは、手元では環境変数 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`、CI ではコンピューター単位のポリシー
+  （`HKLM\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments`）で渡す。
 
 ## 6. ヘッドレス実行（kataribe-cli）
 

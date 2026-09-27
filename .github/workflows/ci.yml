@@ -77,6 +77,8 @@ jobs:
     name: E2E（本物のアプリを WebView2 で操作）
     needs: [rust, frontend]
     runs-on: windows-latest
+    env:
+      KATARIBE_E2E_DEBUG_PORT: "9222"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -89,8 +91,6 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: tauri-driver を入れる
-        run: cargo install tauri-driver --locked
       # msedgedriver は、アプリが使う WebView2 ランタイムと同じ版でないと接続できない
       - name: WebView2 と同じ版の msedgedriver を用意する
         shell: pwsh
@@ -110,24 +110,14 @@ jobs:
           "KATARIBE_E2E_MSEDGEDRIVER=$dir\msedgedriver.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: 画面を埋め込んだアプリを作る
         run: pnpm tauri build --debug --no-bundle
-      - name: 診断（一時的）WebView2 のポリシーで引数を渡せるか見る
+      # CI はアプリを管理者として動かすため、WebView2 が環境変数（WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS）を
+      # 無視する。代わりにコンピューター単位のポリシーで、E2E が接続するデバッグ用ポートを開かせる
+      - name: WebView2 のデバッグ用ポートをポリシーで開く
         shell: pwsh
         run: |
-          $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
-          "管理者として動いているか: $($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))"
           $policy = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
           New-Item -Path $policy -Force | Out-Null
-          New-ItemProperty -Path $policy -Name 'kataribe.exe' -Value '--remote-debugging-port=9333' -PropertyType String -Force | Out-Null
-          New-ItemProperty -Path $policy -Name '*' -Value '--remote-debugging-port=9333' -PropertyType String -Force | Out-Null
-          '{}' | Out-File -Encoding utf8 "$env:RUNNER_TEMP\diag-settings.json"
-          $app = Start-Process target\debug\kataribe.exe -ArgumentList "--settings=$env:RUNNER_TEMP\diag-settings.json" -PassThru
-          Start-Sleep -Seconds 15
-          Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" |
-            Where-Object { $_.CommandLine -like '*webview-exe-name=kataribe.exe*' -and $_.CommandLine -notlike '*--type=*' } |
-            Select-Object -ExpandProperty CommandLine
-          try { (Invoke-WebRequest http://127.0.0.1:9333/json/version -UseBasicParsing -TimeoutSec 5).Content } catch { "devtools: $_" }
-          Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
-          Remove-Item -Path $policy -Recurse -Force
+          New-ItemProperty -Path $policy -Name 'kataribe.exe' -Value "--remote-debugging-port=$env:KATARIBE_E2E_DEBUG_PORT" -PropertyType String -Force | Out-Null
       - run: pnpm e2e
       - name: テスト中に撮った画面を残す
         if: always()

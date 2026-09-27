@@ -111,17 +111,18 @@ my-novel/
 
 ### E2E テスト
 
-本物のアプリ（WebView2 と Rust のバックエンド）を [tauri-driver](https://v2.tauri.app/develop/tests/webdriver/) で操作する。
-一時フォルダに作品と設定ファイルを作って起動するので、自分の設定や作品には触れない。
+本物のアプリ（WebView2 と Rust のバックエンド）を WebDriver（msedgedriver）で操作する。
+一時フォルダに作品と設定ファイルを作ってアプリを起動し、WebView2 のデバッグ用ポートに msedgedriver を接続させる。
+自分の設定や作品には触れない。
 
-1. `cargo install tauri-driver --locked`
-2. インストール済みの WebView2 と同じ版の [Microsoft Edge WebDriver](https://developer.microsoft.com/microsoft-edge/tools/webdriver/)（`msedgedriver.exe`）を用意する。
+1. インストール済みの WebView2 と同じ版の [Microsoft Edge WebDriver](https://developer.microsoft.com/microsoft-edge/tools/webdriver/)（`msedgedriver.exe`）を用意する。
    WebView2 の版は、レジストリの `HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}` の `pv` で分かる。
-3. 画面を埋め込んだアプリを作る: `pnpm tauri build --debug --no-bundle`
-4. `pnpm e2e`（msedgedriver が PATH に無ければ、環境変数 `KATARIBE_E2E_MSEDGEDRIVER` に場所を指定する）
+2. 画面を埋め込んだアプリを作る: `pnpm tauri build --debug --no-bundle`
+3. `pnpm e2e`（msedgedriver が PATH に無ければ、環境変数 `KATARIBE_E2E_MSEDGEDRIVER` に場所を指定する）
 
 テスト中に撮った画面は `e2e/artifacts/` に保存される。
 CI（GitHub Actions）でも、ランナーの WebView2 と同じ版の msedgedriver を取得して同じテストを動かす。
+CI はアプリを管理者として動かすため WebView2 が環境変数を無視するので、デバッグ用ポートはポリシーで開く。
 
 ## ライセンス
 
