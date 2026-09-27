@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
-import type { GenerationEvent } from "../types";
+import type { GenerationEvent, LlmSettings } from "../types";
 import { createMockBackend } from "./backend";
 import { SAMPLE_PROJECT_FOLDER } from "./sampleProject";
+
+function llmSettings(changes: Partial<LlmSettings>): LlmSettings {
+  return {
+    provider: "openai_compatible",
+    base_url: "http://localhost:1234/v1",
+    model: "",
+    claude_command: "claude",
+    claude_model: "sonnet",
+    ...changes,
+  };
+}
 
 describe("createMockBackend / サンプル作品", () => {
   it("サンプル作品を開くと目次と工程が一貫している", async () => {
@@ -46,15 +57,21 @@ describe("createMockBackend / listModels", () => {
 
   it("llm を渡すと、保存前の入力中の接続先を使って試せる", async () => {
     const backend = createMockBackend({ delayMs: 0 });
-    const models = await backend.listModels({ base_url: "http://localhost:9999/v1", model: "" });
+    const models = await backend.listModels(llmSettings({ base_url: "http://localhost:9999/v1" }));
     expect(models.length).toBeGreaterThan(0);
   });
 
   it("llm の接続先が空だと invalid_input で失敗する", async () => {
     const backend = createMockBackend({ delayMs: 0 });
-    await expect(backend.listModels({ base_url: "", model: "" })).rejects.toMatchObject({
+    await expect(backend.listModels(llmSettings({ base_url: "" }))).rejects.toMatchObject({
       kind: "invalid_input",
     });
+  });
+
+  it("Claude Code では接続先 URL が空でも、モデルの別名を返す", async () => {
+    const backend = createMockBackend({ delayMs: 0 });
+    const models = await backend.listModels(llmSettings({ provider: "claude_code", base_url: "" }));
+    expect(models.map((model) => model.id)).toEqual(["sonnet", "opus", "haiku"]);
   });
 });
 

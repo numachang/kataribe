@@ -21,20 +21,55 @@ pub enum DraftUnit {
     Beat,
 }
 
-/// LLM サーバーへの接続設定。API キーは OS の資格情報ストアに別に保存する。
+/// 生成に使う LLM の種類。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+pub enum LlmProvider {
+    /// OpenAI 互換の API（LM Studio・Ollama・OpenRouter・OpenAI など）。
+    #[default]
+    OpenaiCompatible,
+    /// Claude Code の `claude -p`。API キーの代わりに、Claude Code のログインで生成する。
+    ClaudeCode,
+}
+
+impl LlmProvider {
+    /// API キーを使う接続先か。使わない接続先では、資格情報ストアを読まない。
+    #[must_use]
+    pub fn uses_api_key(self) -> bool {
+        match self {
+            Self::OpenaiCompatible => true,
+            Self::ClaudeCode => false,
+        }
+    }
+}
+
+/// LLM への接続設定。API キーは OS の資格情報ストアに別に保存する。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct LlmSettings {
+    pub provider: LlmProvider,
+    /// OpenAI 互換 API のベース URL。
     pub base_url: String,
+    /// OpenAI 互換 API のモデル。
     pub model: String,
+    /// Claude Code の `claude` コマンド（PATH に無ければ実行ファイルの場所）。空なら `claude`。
+    pub claude_command: String,
+    /// Claude Code のモデル（`sonnet`・`opus`・`haiku` など）。空なら `sonnet`。
+    ///
+    /// 接続先を切り替えても、それぞれのモデルの指定を失わないよう `model` と分けている。
+    pub claude_model: String,
 }
 
 impl Default for LlmSettings {
     fn default() -> Self {
         Self {
+            provider: LlmProvider::default(),
             base_url: "http://localhost:1234/v1".to_owned(),
             model: String::new(),
+            claude_command: "claude".to_owned(),
+            claude_model: "sonnet".to_owned(),
         }
     }
 }
@@ -141,6 +176,12 @@ fn settings_error(path: &Path, reason: &dyn std::fmt::Display) -> EngineError {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn only_openai_compatible_apis_use_an_api_key() {
+        assert!(LlmProvider::OpenaiCompatible.uses_api_key());
+        assert!(!LlmProvider::ClaudeCode.uses_api_key());
+    }
 
     #[test]
     fn missing_file_yields_defaults() {

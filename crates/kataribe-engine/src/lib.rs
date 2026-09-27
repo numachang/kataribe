@@ -11,6 +11,7 @@ mod error;
 mod events;
 mod excerpt;
 mod genre;
+mod llm_client;
 mod new_project;
 mod overview;
 mod pipeline;
@@ -25,6 +26,7 @@ pub use engine::Engine;
 pub use error::{EngineError, Result};
 pub use events::{EventSink, GenerationEvent, IgnoreEvents, NoticeLevel};
 pub use genre::{GenreCatalog, GenrePreset};
+pub use llm_client::{build_chat_model, list_models};
 pub use new_project::{NewProject, create_project};
 pub use overview::{
     EntryKind, OverviewEntry, OverviewSection, ProjectOverview, SectionKind, overview,
@@ -32,7 +34,7 @@ pub use overview::{
 pub use pipeline::{PipelineStep, StepState, pipeline};
 pub use secrets::ApiKeyStore;
 pub use settings::{
-    DraftUnit, EngineSettings, GenerationSettings, LlmSettings, default_settings_path,
+    DraftUnit, EngineSettings, GenerationSettings, LlmProvider, LlmSettings, default_settings_path,
     load_settings, save_settings,
 };
 pub use task::Task;

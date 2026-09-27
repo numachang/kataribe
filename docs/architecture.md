@@ -8,6 +8,7 @@
   人が直接編集するか、LLM に指示して書き直させる。
 - 本文は **ローカル LLM でも精度が落ちない単位** に分けて生成する。単位と 1 回あたりの分量は設定で変えられる。
 - GUI と CLI（ヘッドレス）は同じ執筆エンジン（`kataribe-engine`）を使う。GUI でできる生成はすべて CLI でもできる。
+- LLM は OpenAI 互換 API（ローカル LLM・クラウド）のほか、Claude Code（`claude -p`）でも動かせる（§4.5）。
 
 ## 2. 作品フォルダの形式（format: 1）
 
@@ -122,13 +123,17 @@ kataribe-project ─┘          │
 
 ### 3.2 kataribe-llm
 
-OpenAI 互換 Chat Completions API（LM Studio / Ollama / KoboldCpp / OpenRouter / OpenAI など）への
-ストリーミングクライアント。
+LLM を呼ぶ層。OpenAI 互換 Chat Completions API（LM Studio / Ollama / KoboldCpp / OpenRouter / OpenAI など）への
+ストリーミングクライアントと、Claude Code の `claude -p` を使うモデル（§3.2.1）を持つ。
 
 ```rust
 pub struct ClientConfig { base_url, api_key: Option<String>, model, connect_timeout, idle_timeout, max_retries }
 pub struct OpenAiCompatClient;               // new(ClientConfig) -> Result<Self, LlmError>
 impl OpenAiCompatClient { async fn list_models(&self) -> Result<Vec<ModelInfo>, LlmError> }
+
+pub struct ClaudeCodeConfig { program, model, idle_timeout }  // 既定は "claude"・"sonnet"・5 分
+pub struct ClaudeCodeModel;                  // new(ClaudeCodeConfig)
+impl ClaudeCodeModel { async fn list_models(&self) -> Result<Vec<ModelInfo>, LlmError> }
 
 pub trait ChatModel: Send + Sync + Debug {
     fn stream_chat(&self, request: ChatRequest) -> ChatStream;
@@ -147,6 +152,38 @@ pub async fn collect(stream, on_event) -> Result<Completion, LlmError>;   // 全
 - 応答ヘッダーを待つ間と、ストリームの次のチャンクを待つ間の両方に `idle_timeout` を適用する。
 - ストリームを drop すると HTTP 接続も閉じる（＝キャンセル）。
 - `testing` feature で、台本どおりに応答し受け取ったリクエストを記録する `ScriptedChatModel` を提供する。
+
+#### 3.2.1 Claude Code（`claude -p`）
+
+- 呼び出しごとに、空の作業フォルダ（一時フォルダの下の `kataribe-claude`）で次のように起動する。ツール・MCP サーバー・
+  利用者やプロジェクトの設定を読み込ませず、会話の履歴も残さない（小説の文章を書かせるだけで、ファイルを読み書きさせないため）。
+  作業フォルダは `claude` が動いている間は消せない（Windows）ので、呼び出しごとに作って消さずに使い回す。
+
+  ```
+  claude -p --output-format stream-json --verbose --include-partial-messages --no-session-persistence
+         --tools "" --strict-mcp-config --setting-sources "" --model <モデル>
+         --system-prompt-file <一時フォルダ内のファイル> [--json-schema <スキーマ>]
+  ```
+
+- `system` のメッセージはシステムプロンプトのファイル（Claude Code 既定のシステムプロンプトを置き換える）、
+  `user` のメッセージは標準入力で渡す。`assistant` のメッセージ（思考を止めるための書き出しの指定）は渡す手段がないので使わない。
+  temperature などのサンプリング・`max_tokens`・`extra` も同じ理由で使わない。
+- 出力の `text_delta` を `Content`、`thinking_delta` を `Reasoning` にし、最後の `result` 行で `Finished`
+  （`stop_reason` と使用トークン数。入力にはプロンプトキャッシュの分も足す）にする。
+- 差分をつなげたものは `result` 行の全文と突き合わせる。差分が届かなければ全文を本文にし、食い違えば
+  （途中でやり直されたなど）重複や欠けのある本文を原稿に入れないようエラーにする（実測では常に一致する）。
+- 次の場合はエラーにする。`is_error` の結果、または `subtype` が `error` で始まる結果（説明は `result` → `errors` →
+  `subtype` の順に探す）。`result` 行を出さずに終わったとき（エラー出力と終了コードを添える）。`idle_timeout` の間なにも出力がないとき。
+- JSON Schema を指定したときは、前置きの文章を捨て、`result` 行の `structured_output` だけを本文にする。
+  スキーマからは `$schema` を外して渡す（Claude Code の検証器は draft 2020-12 を名乗るスキーマを拒むため）。
+- `--bare` は使わない。付けるとログイン（OAuth）を読まなくなり、API キーが必須になる。
+- ストリームを drop するとプロセスも止める（中止）。`claude.cmd`（npm 版）を指定したときに止まるのは間の `cmd.exe` で、
+  その下の `claude` は出力先が閉じたことで数秒のうちに自分で終わる（実測 6 秒以内）。
+  正常に終わったときは、`claude` が自分で終わるのを裏で待ち（10 秒まで。過ぎたら止める）、利用者は待たせない。
+  待っている間にアプリや CLI が終わるときは、待たずに止める（結果はもう受け取っているので失うものはない）。
+- GUI から起動してもコンソールの窓を出さない（`CREATE_NO_WINDOW`）。
+- `list_models` は `claude auth status --json` でログインしているかを確かめ（利用枠を使わない）、モデルの別名
+  （`sonnet` / `opus` / `haiku`）を返す。GUI の接続テストと CLI の `models` がこれを使う。
 
 ### 3.3 kataribe-project
 
@@ -227,7 +264,7 @@ Gemma には前者だけ、Qwen には後者だけが効き、両方を指定す
 
 `）を置く
 
-クラウドの API ではこれがエラーになりうるので、その場合は設定で切る。
+クラウドの API ではこれがエラーになりうるので、その場合は設定で切る。Claude Code ではどちらも使われない（§3.2.1）。
 
 ### 4.3 文脈の組み立て
 
@@ -252,6 +289,18 @@ Gemma には前者だけ、Qwen には後者だけが効き、両方を指定す
 - プロンプトはコードに埋め込まず、`crates/kataribe-engine/prompts/*.j2`（minijinja）に置く。
 - ジャンル・年齢区分ごとの書き方の指針は `crates/kataribe-engine/presets/genres.yaml` に置く。
 - 年齢区分 `r18` でも、性的な場面の登場人物は全員成人として描く規則をプロンプトに必ず含める。
+
+### 4.5 LLM の接続先
+
+設定の `LlmSettings.provider` で切り替える。GUI と CLI は、同じ `kataribe_engine::build_chat_model` / `list_models` で
+設定から LLM を作る。
+
+| `provider` | 使う項目 | API キー |
+|---|---|---|
+| `openai_compatible`（既定） | `base_url`・`model` | 資格情報マネージャー（要るサーバーだけ） |
+| `claude_code` | `claude_command`（既定 `claude`）・`claude_model`（既定 `sonnet`） | 使わない（資格情報マネージャーも読まない） |
+
+モデルの指定は接続先ごとに分けて持つ。接続先を切り替えても、もう一方のモデルの指定を失わない。
 
 ## 5. アプリ（src-tauri）と画面（src）
 
@@ -308,7 +357,9 @@ kataribe-cli [グローバルオプション] <サブコマンド>
 
 グローバルオプション（設定ファイルの値を上書き）
   --settings <PATH>          設定ファイル（既定: GUI と同じ場所。明示したのに無ければエラー）
-  --base-url <URL>  --model <ID>
+  --provider <openai-compatible|claude-code>
+  --base-url <URL>  --claude-command <PATH>
+  --model <ID>               選んでいる接続先のモデル（Claude Code なら sonnet / opus / haiku など）
   --api-key-env <VAR>        API キーを読む環境変数（既定 KATARIBE_API_KEY。未設定なら資格情報マネージャーのキーを使う）
   --unit <chapter|scene|beat>  --chars-per-call <N>  --context-tokens <N>
   --temperature <T>  --polish  --quality-retries <N>
@@ -333,7 +384,7 @@ kataribe-cli [グローバルオプション] <サブコマンド>
   export <FOLDER> [--output <FILE>] [--force]
       本文を章題付きの一つのテキストにまとめる。--output は作品フォルダの外を指定すること
       （中を指すと拒否する）。既存ファイルへの上書きは --force を指定したときだけ許す
-  models                              LLM サーバーのモデル一覧
+  models                              選べるモデルの一覧（接続の確認を兼ねる）
   api-key set | clear | status        API キーを資格情報マネージャーに保存・削除・確認
                                       （set は標準入力から読む。端末から直接入力すると
                                        画面にそのまま表示されるので、表示したくなければ
@@ -341,6 +392,7 @@ kataribe-cli [グローバルオプション] <サブコマンド>
 ```
 
 - API キーは `--api-key-env` の環境変数 → 資格情報マネージャー（GUI と共有、`kataribe_engine::ApiKeyStore`）の順に探す。
+  Claude Code のときは API キーを使わないので探さない。
 
 - 生成中の本文は標準出力、進捗・注意・エラーは標準エラー出力に出す。工程が切り替わるときは
   標準出力側にも区切りの空行を入れる。`--dry-run` のときは生成そのものを流さず、最後に

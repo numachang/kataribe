@@ -1,13 +1,11 @@
 //! `run` サブコマンド: 取りかかれる工程(ready)を順に生成・適用し続ける。
 
-use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Context;
 use kataribe_engine::{
     ChangeSet, Engine, EngineError, GenerationEvent, PipelineStep, StepState, pipeline,
 };
-use kataribe_llm::ChatModel;
 use kataribe_project::Project;
 use tokio_util::sync::CancellationToken;
 
@@ -28,9 +26,7 @@ pub async fn run(
 ) -> anyhow::Result<Outcome> {
     let settings = settings::load_effective_settings(global)?;
     let unit = settings.generation.draft_unit;
-    let api_key = settings::resolve_api_key(&global.api_key_env)?;
-    let client = super::build_llm_client(&settings.llm, api_key)?;
-    let model: Arc<dyn ChatModel> = Arc::new(client);
+    let model = super::build_chat_model(&settings.llm, &global.api_key_env)?;
     let engine =
         Engine::new(model, settings.generation).context("執筆エンジンを初期化できません")?;
 

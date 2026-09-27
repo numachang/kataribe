@@ -1,10 +1,7 @@
 //! `generate` サブコマンド: 1 つの工程を生成する。
 
-use std::sync::Arc;
-
 use anyhow::Context;
 use kataribe_engine::{ChangeSet, Engine, EngineError, GenerationEvent};
-use kataribe_llm::ChatModel;
 use kataribe_project::Project;
 use tokio_util::sync::CancellationToken;
 
@@ -23,9 +20,7 @@ pub async fn run(
     apply_guard: &ApplyGuard,
 ) -> anyhow::Result<Outcome> {
     let settings = settings::load_effective_settings(global)?;
-    let api_key = settings::resolve_api_key(&global.api_key_env)?;
-    let client = super::build_llm_client(&settings.llm, api_key)?;
-    let model: Arc<dyn ChatModel> = Arc::new(client);
+    let model = super::build_chat_model(&settings.llm, &global.api_key_env)?;
     let engine =
         Engine::new(model, settings.generation).context("執筆エンジンを初期化できません")?;
 

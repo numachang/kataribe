@@ -1,7 +1,7 @@
 //! 設定ファイルの読み込みと、グローバルオプションによる上書き・API キーの解決。
 
 use anyhow::Context;
-use kataribe_engine::{ApiKeyStore, EngineSettings};
+use kataribe_engine::{ApiKeyStore, EngineSettings, LlmProvider};
 
 use crate::args::GlobalOptions;
 
@@ -35,11 +35,22 @@ fn load_settings_from_location(global: &GlobalOptions) -> anyhow::Result<EngineS
 
 /// グローバルオプションで指定された値だけ、設定ファイルの値を上書きする。
 fn apply_overrides(settings: &mut EngineSettings, global: &GlobalOptions) {
+    if let Some(provider) = global.provider {
+        settings.llm.provider = provider.into();
+    }
     if let Some(base_url) = &global.base_url {
         settings.llm.base_url.clone_from(base_url);
     }
     if let Some(model) = &global.model {
-        settings.llm.model.clone_from(model);
+        // 接続先を切り替えた（--provider）あとの接続先のモデルを変える
+        let target = match settings.llm.provider {
+            LlmProvider::OpenaiCompatible => &mut settings.llm.model,
+            LlmProvider::ClaudeCode => &mut settings.llm.claude_model,
+        };
+        target.clone_from(model);
+    }
+    if let Some(claude_command) = &global.claude_command {
+        settings.llm.claude_command.clone_from(claude_command);
     }
     if let Some(unit) = global.unit {
         settings.generation.draft_unit = unit.into();
@@ -91,6 +102,22 @@ mod tests {
         let mut settings = EngineSettings::default();
         apply_overrides(&mut settings, global);
         settings
+    }
+
+    #[test]
+    fn claude_code_overrides_set_its_command_and_model_only() {
+        let global = GlobalOptions {
+            provider: Some(crate::args::ProviderArg::ClaudeCode),
+            model: Some("opus".to_owned()),
+            claude_command: Some("C:/tools/claude.exe".to_owned()),
+            ..GlobalOptions::default()
+        };
+        let settings = overridden(&global);
+
+        assert_eq!(settings.llm.provider, LlmProvider::ClaudeCode);
+        assert_eq!(settings.llm.claude_model, "opus");
+        assert_eq!(settings.llm.claude_command, "C:/tools/claude.exe");
+        assert_eq!(settings.llm.model, EngineSettings::default().llm.model);
     }
 
     #[test]
