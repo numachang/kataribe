@@ -41,7 +41,8 @@ VRAM 12GB の環境で実際に短編ミステリを書かせて比べた結果�
 
 ## インストール
 
-リリースはまだ無い。ソースからインストーラを作る（「開発」を参照）。
+リリースはまだ無い。main の CI（GitHub Actions）が作るインストーラ（成果物 `kataribe-installer`）を使うか、
+ソースからインストーラを作る（「開発」を参照）。CI の「Run workflow」から手動で作ることもできる。
 `pnpm tauri build` で `target/release/bundle/nsis/kataribe_<版>_x64-setup.exe` ができる。ユーザー単位でインストールされ、管理者権限はいらない。
 
 ## 使い方
