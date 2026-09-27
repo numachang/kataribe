@@ -73,6 +73,8 @@ kataribe-cli export my-novel --output my-novel.txt
 設定は GUI と同じファイル（`%APPDATA%\io.github.numachang.kataribe\settings.json`）を読み、コマンドラインの指定で上書きできる。
 API キーは環境変数 `KATARIBE_API_KEY`、無ければ資格情報マネージャー（`kataribe-cli api-key set` で保存）から読む。
 1 つの工程だけを生成するときは `generate`（例: `generate my-novel draft:01/s02`）、適用せずに変更案だけ見るときは `--dry-run`。
+`export` は作品フォルダの外にだけ書き出し、既にあるファイルは `--force` を付けたときだけ上書きする。
+`new --length` を省略すると目標は 30,000 字になる。
 ジャンルの一覧は [presets/genres.yaml](crates/kataribe-engine/presets/genres.yaml) にある。
 
 ## 作品フォルダ
