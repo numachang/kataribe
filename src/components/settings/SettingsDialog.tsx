@@ -4,6 +4,7 @@ import type { AppSettings, DraftUnit, FontStyle, ModelInfo } from "../../api/typ
 import { toErrorMessage } from "../../lib/errorMessage";
 import { useSettingsStore } from "../../store/settingsStore";
 import { useUiStore } from "../../store/uiStore";
+import { useWorkspaceStore } from "../../store/workspaceStore";
 import { Dialog } from "../Dialog";
 import "./SettingsDialog.css";
 
@@ -14,6 +15,59 @@ const DRAFT_UNIT_DESCRIPTIONS: Record<DraftUnit, string> = {
 };
 
 const FONT_STYLE_LABELS: Record<FontStyle, string> = { mincho: "明朝体", gothic: "ゴシック体" };
+
+/**
+ * 数値入力欄の値を検証・補正する。
+ * `<input type="number">` の `valueAsNumber` は、空欄や不正な入力のとき NaN になる
+ * （`Number(el.value)` と違い、空欄が 0 になったりしない）。編集中はそのまま NaN を保持させ、
+ * 保存の直前にだけ、この関数で下限に満たない・NaN な値を規定値に補正する。
+ */
+function sanitizeNumber(value: number, min: number, fallback: number): number {
+  return Number.isFinite(value) && value >= min ? value : fallback;
+}
+
+const GENERATION_DEFAULTS = {
+  chars_per_call: 1500,
+  context_tokens: 16384,
+  temperature: 0.8,
+  quality_retries: 1,
+} as const;
+
+const EDITOR_DEFAULTS = {
+  font_size: 17,
+  line_height: 1.9,
+} as const;
+
+/** 保存の直前に、数値欄の空欄・不正な入力を規定値へ補正した設定を作る。 */
+function sanitizeSettings(form: AppSettings): AppSettings {
+  return {
+    ...form,
+    generation: {
+      ...form.generation,
+      chars_per_call: sanitizeNumber(
+        form.generation.chars_per_call,
+        100,
+        GENERATION_DEFAULTS.chars_per_call,
+      ),
+      context_tokens: sanitizeNumber(
+        form.generation.context_tokens,
+        512,
+        GENERATION_DEFAULTS.context_tokens,
+      ),
+      temperature: sanitizeNumber(form.generation.temperature, 0, GENERATION_DEFAULTS.temperature),
+      quality_retries: sanitizeNumber(
+        form.generation.quality_retries,
+        0,
+        GENERATION_DEFAULTS.quality_retries,
+      ),
+    },
+    editor: {
+      ...form.editor,
+      font_size: sanitizeNumber(form.editor.font_size, 10, EDITOR_DEFAULTS.font_size),
+      line_height: sanitizeNumber(form.editor.line_height, 1, EDITOR_DEFAULTS.line_height),
+    },
+  };
+}
 
 interface SettingsDialogProps {
   onClose: () => void;
@@ -39,8 +93,13 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
   }, [storedSettings, form]);
 
   useEffect(() => {
-    void backend.hasApiKey().then(setHasStoredApiKey);
-  }, [backend]);
+    backend
+      .hasApiKey()
+      .then(setHasStoredApiKey)
+      .catch((error: unknown) => {
+        showToast(toErrorMessage(error, "API キーの状態を確認できませんでした。"), "error");
+      });
+  }, [backend, showToast]);
 
   async function handleTestConnection(): Promise<void> {
     if (!form) {
@@ -62,26 +121,40 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
     if (apiKeyInput.trim().length === 0) {
       return;
     }
-    await backend.setApiKey(apiKeyInput.trim());
-    setApiKeyInput("");
-    setHasStoredApiKey(true);
-    showToast("API キーを保存しました。");
+    try {
+      await backend.setApiKey(apiKeyInput.trim());
+      setApiKeyInput("");
+      setHasStoredApiKey(true);
+      showToast("API キーを保存しました。");
+    } catch (error) {
+      showToast(toErrorMessage(error, "API キーを保存できませんでした。"), "error");
+    }
   }
 
   async function handleClearApiKey(): Promise<void> {
-    await backend.setApiKey(null);
-    setHasStoredApiKey(false);
-    showToast("API キーを削除しました。");
+    try {
+      await backend.setApiKey(null);
+      setHasStoredApiKey(false);
+      showToast("API キーを削除しました。");
+    } catch (error) {
+      showToast(toErrorMessage(error, "API キーを削除できませんでした。"), "error");
+    }
   }
 
   async function handleSave(): Promise<void> {
     if (!form) {
       return;
     }
+    const draftUnitChanged = storedSettings?.generation.draft_unit !== form.generation.draft_unit;
+    const sanitized = sanitizeSettings(form);
     setIsSaving(true);
     try {
-      await useSettingsStore.getState().save(backend, form);
+      await useSettingsStore.getState().save(backend, sanitized);
       showToast("設定を保存しました。");
+      if (draftUnitChanged && useWorkspaceStore.getState().overview) {
+        // 生成単位が変わると工程の組み立てが変わりうるため、一覧を読み直す。
+        await useWorkspaceStore.getState().refreshPipeline(backend);
+      }
       onClose();
     } catch (error) {
       showToast(toErrorMessage(error, "設定を保存できませんでした。"), "error");
@@ -195,7 +268,10 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 onChange={(event) =>
                   setForm({
                     ...form,
-                    generation: { ...form.generation, chars_per_call: Number(event.target.value) },
+                    generation: {
+                      ...form.generation,
+                      chars_per_call: event.target.valueAsNumber,
+                    },
                   })
                 }
               />
@@ -209,7 +285,10 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 onChange={(event) =>
                   setForm({
                     ...form,
-                    generation: { ...form.generation, context_tokens: Number(event.target.value) },
+                    generation: {
+                      ...form.generation,
+                      context_tokens: event.target.valueAsNumber,
+                    },
                   })
                 }
               />
@@ -228,7 +307,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 onChange={(event) =>
                   setForm({
                     ...form,
-                    generation: { ...form.generation, temperature: Number(event.target.value) },
+                    generation: { ...form.generation, temperature: event.target.valueAsNumber },
                   })
                 }
               />
@@ -243,7 +322,10 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 onChange={(event) =>
                   setForm({
                     ...form,
-                    generation: { ...form.generation, quality_retries: Number(event.target.value) },
+                    generation: {
+                      ...form.generation,
+                      quality_retries: event.target.valueAsNumber,
+                    },
                   })
                 }
               />
@@ -323,7 +405,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 onChange={(event) =>
                   setForm({
                     ...form,
-                    editor: { ...form.editor, font_size: Number(event.target.value) },
+                    editor: { ...form.editor, font_size: event.target.valueAsNumber },
                   })
                 }
               />
@@ -339,7 +421,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 onChange={(event) =>
                   setForm({
                     ...form,
-                    editor: { ...form.editor, line_height: Number(event.target.value) },
+                    editor: { ...form.editor, line_height: event.target.valueAsNumber },
                   })
                 }
               />

@@ -58,6 +58,6 @@ impl Engine {
             &self.structured_output,
         );
         let stage = Stage::new(project, &self.genres, &self.prompts, caller, &self.settings)?;
-        stages::run(&stage, task).await
+        Ok(stages::run(&stage, task).await?.made_for(project))
     }
 }

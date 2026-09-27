@@ -1,4 +1,4 @@
-import { act, fireEvent, screen } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Backend } from "../../api/backend";
@@ -131,6 +131,76 @@ describe("競合ダイアログ", () => {
 
     expect(await screen.findByText("保存済み")).toBeInTheDocument();
     expect(getConceptTextarea().value).toBe("外部で書き換えられた内容");
+  });
+});
+
+describe("作品を閉じる・アンマウント時の保存", () => {
+  it("直前の編集（1 秒以内）も保存してから作品を閉じる", async () => {
+    const user = userEvent.setup();
+    const backend = createMockBackend({ delayMs: 0 });
+    await openSampleProject(backend);
+    renderWithBackend(<WorkspaceScreen />, backend);
+
+    await user.click(await screen.findByRole("button", { name: /^企画/ }));
+    await screen.findByRole("textbox", { name: "concept.md" });
+
+    // 自動保存のタイマー（1 秒）が発火する前に、すぐ「作品を閉じる」を押す。
+    fireEvent.change(getConceptTextarea(), { target: { value: "閉じる直前の編集" } });
+    await user.click(screen.getByRole("button", { name: "作品を閉じる" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "作品を閉じる" })).not.toBeInTheDocument();
+    });
+    // 作品を閉じたあとも、保存自体はディスク（偽バックエンドの内部状態）に残っている。
+    await backend.openProject(SAMPLE_PROJECT_FOLDER);
+    const saved = await backend.readFile("concept.md");
+    expect(saved.content).toBe("閉じる直前の編集");
+  });
+});
+
+describe("未生成の文書を選んだとき", () => {
+  it("エディタは前の文書を表示し続けず、専用の空の状態を出す", async () => {
+    const user = userEvent.setup();
+    const backend = createMockBackend({ delayMs: 0 });
+    await openSampleProject(backend);
+    renderWithBackend(<WorkspaceScreen />, backend);
+
+    await user.click(await screen.findByRole("button", { name: /^企画/ }));
+    await screen.findByRole("textbox", { name: "concept.md" });
+
+    // 「消えた甥」はサンプル作品内でまだ本文が生成されていないシーン（exists: false）。
+    await user.click(await screen.findByRole("button", { name: /消えた甥/ }));
+
+    expect(await screen.findByText("この文書はまだ生成されていません。")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "concept.md" })).not.toBeInTheDocument();
+  });
+});
+
+describe("競合ダイアログを閉じる", () => {
+  it("どちらも選ばずに閉じられる（詰まない）", async () => {
+    const user = userEvent.setup();
+    const backend = createMockBackend({ delayMs: 0 });
+    await openSampleProject(backend);
+    renderWithBackend(<WorkspaceScreen />, backend);
+
+    await user.click(await screen.findByRole("button", { name: /^企画/ }));
+    await screen.findByRole("textbox", { name: "concept.md" });
+
+    const original = await backend.readFile("concept.md");
+    await backend.writeFile("concept.md", "外部で書き換えられた内容", original.hash);
+
+    vi.useFakeTimers();
+    fireEvent.change(getConceptTextarea(), { target: { value: "画面上での編集内容" } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    vi.useRealTimers();
+
+    expect(await screen.findByText("外部で変更されています")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "閉じる" }));
+
+    expect(screen.queryByText("外部で変更されています")).not.toBeInTheDocument();
   });
 });
 

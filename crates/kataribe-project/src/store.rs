@@ -8,7 +8,7 @@ use std::fmt;
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use jiff::Timestamp;
@@ -119,6 +119,17 @@ pub struct WriteOptions {
     pub backup: BackupMode,
 }
 
+/// [`ProjectStore::write_all`] でまとめて書くファイルの 1 つ。
+#[derive(Debug, Clone)]
+pub struct PendingWrite<'a> {
+    /// 書き込み先。
+    pub path: &'a RelPath,
+    /// 書き込む内容。
+    pub content: &'a str,
+    /// 書き込みを許す条件。
+    pub condition: WriteCondition,
+}
+
 /// バックアップの間引き方針。
 #[derive(Debug, Clone, Copy)]
 pub struct BackupPolicy {
@@ -208,6 +219,9 @@ pub struct ProjectStore {
     canonical_root: PathBuf,
     backup_policy: BackupPolicy,
     clock: Arc<dyn Clock>,
+    /// 「条件の確認から置き換えまで」をこのプロセス内で排他する。自動保存と変更案の適用が
+    /// 同時に同じファイルへ来ても、両方が同じ内容を前提に通って片方の変更が消えないようにする。
+    write_lock: Mutex<()>,
 }
 
 impl ProjectStore {
@@ -236,6 +250,7 @@ impl ProjectStore {
             canonical_root,
             backup_policy: options.backup_policy,
             clock: options.clock,
+            write_lock: Mutex::new(()),
         })
     }
 
@@ -243,6 +258,13 @@ impl ProjectStore {
     #[must_use]
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// ルートを正規化した絶対パス。書き方の違う同じフォルダ（大文字小文字・区切り文字）を
+    /// 同じ作品として見分けるのに使う。
+    #[must_use]
+    pub fn canonical_root(&self) -> &Path {
+        &self.canonical_root
     }
 
     /// テキストファイルを読み込む。存在しなければエラー。
@@ -300,32 +322,83 @@ impl ProjectStore {
         content: &str,
         options: WriteOptions,
     ) -> Result<ContentHash, ProjectError> {
-        let WriteOptions { condition, backup } = options;
-        let current = self.read_text_opt(path)?;
-        check_condition_against(current.as_ref(), path, &condition)?;
+        let _guard = self.lock_writes();
+        let plan = self.plan_write(&PendingWrite {
+            path,
+            content,
+            condition: options.condition,
+        })?;
+        self.write_planned(std::slice::from_ref(&plan), options.backup)?;
+        Ok(plan.hash)
+    }
 
-        let normalized_new = normalize_text(content);
-        if let Some(current) = &current
-            && current.content == normalized_new
-        {
-            return Ok(current.hash.clone());
+    /// 複数のファイルを、すべて書くか、何も書かないかのどちらかで書き込む。
+    ///
+    /// 先にすべての条件を確かめ（一つでも合わなければ `Conflict`）、全ファイルを一時ファイルに
+    /// 書いてから順に置き換える。置き換えの途中で失敗したら、置き換え済みのファイルを元の内容に
+    /// 戻す（新規だったファイルは消す）。戻せなかったファイルがあれば `PartialWrite` を返す。
+    /// 戻り値は `writes` と同じ順の、書き込み後の内容のハッシュ。
+    pub fn write_all(
+        &self,
+        writes: &[PendingWrite<'_>],
+        backup: BackupMode,
+    ) -> Result<Vec<ContentHash>, ProjectError> {
+        let _guard = self.lock_writes();
+        let plans = writes
+            .iter()
+            .map(|write| self.plan_write(write))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.write_planned(&plans, backup)?;
+        Ok(plans.into_iter().map(|plan| plan.hash).collect())
+    }
+
+    fn lock_writes(&self) -> MutexGuard<'_, ()> {
+        self.write_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// 1 ファイル分の書き込みの準備。条件に合わなければ `Conflict`。
+    fn plan_write<'a>(&self, write: &PendingWrite<'a>) -> Result<PlannedWrite<'a>, ProjectError> {
+        let current = self.read_text_opt(write.path)?;
+        check_condition_against(current.as_ref(), write.path, &write.condition)?;
+        let content = normalize_text(write.content);
+        Ok(PlannedWrite {
+            path: write.path,
+            resolved: self.resolve(write.path)?,
+            hash: ContentHash::of(content.as_bytes()),
+            content,
+            current,
+        })
+    }
+
+    /// 内容の変わるファイルだけを、一時ファイル → バックアップ → 置き換えの順に書く。
+    /// 一時ファイルやバックアップの段階で失敗しても、作品のファイルはまだ何も変わっていない。
+    fn write_planned(
+        &self,
+        plans: &[PlannedWrite<'_>],
+        backup: BackupMode,
+    ) -> Result<(), ProjectError> {
+        let changed: Vec<&PlannedWrite<'_>> =
+            plans.iter().filter(|plan| plan.changes_file()).collect();
+        let staged = changed
+            .iter()
+            .map(|plan| {
+                create_parent_dir(&plan.resolved, plan.path)?;
+                stage_temp_file(&plan.resolved, plan.path, plan.content.as_bytes())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for plan in changed.iter().filter(|plan| plan.current.is_some()) {
+            self.maybe_backup(plan.path, backup)?;
         }
-
-        if current.is_some() {
-            self.maybe_backup(path, backup)?;
+        let mut replaced: Vec<&PlannedWrite<'_>> = Vec::with_capacity(changed.len());
+        for (plan, temp) in changed.iter().zip(staged) {
+            if let Err(error) = persist_temp_file(temp, &plan.resolved, plan.path) {
+                return Err(roll_back(&replaced, error));
+            }
+            replaced.push(plan);
         }
-
-        let resolved = self.resolve(path)?;
-        if let Some(parent) = resolved.parent() {
-            fs::create_dir_all(parent).map_err(|source| ProjectError::Io {
-                path: path.clone(),
-                source,
-            })?;
-        }
-
-        let new_hash = ContentHash::of(normalized_new.as_bytes());
-        atomic_write(&resolved, path, normalized_new.as_bytes())?;
-        Ok(new_hash)
+        Ok(())
     }
 
     /// パスが存在するかどうか。フォルダ外に解決される場合は `false` を返す。
@@ -602,25 +675,93 @@ fn backup_dir_of(path: &RelPath) -> Result<RelPath, ProjectError> {
     ))?)
 }
 
-fn atomic_write(target: &Path, path: &RelPath, bytes: &[u8]) -> Result<(), ProjectError> {
+/// 書き込みの準備ができた 1 ファイル分。
+struct PlannedWrite<'a> {
+    path: &'a RelPath,
+    resolved: PathBuf,
+    /// 書き込む前の内容。新規なら `None`（途中で失敗したときに元へ戻すのに使う）。
+    current: Option<TextFile>,
+    /// 正規化した、書き込む内容。
+    content: String,
+    hash: ContentHash,
+}
+
+impl PlannedWrite<'_> {
+    fn changes_file(&self) -> bool {
+        self.current
+            .as_ref()
+            .is_none_or(|current| current.content != self.content)
+    }
+
+    /// 置き換える前の状態に戻す。
+    fn restore(&self) -> Result<(), ProjectError> {
+        match &self.current {
+            Some(previous) => atomic_write(&self.resolved, self.path, previous.content.as_bytes()),
+            None => fs::remove_file(&self.resolved).map_err(|source| ProjectError::Io {
+                path: self.path.clone(),
+                source,
+            }),
+        }
+    }
+}
+
+/// まとめて書く途中で失敗したとき、置き換え済みのファイルを元に戻し、返すエラーを決める。
+fn roll_back(replaced: &[&PlannedWrite<'_>], error: ProjectError) -> ProjectError {
+    let not_restored: Vec<RelPath> = replaced
+        .iter()
+        .rev()
+        .filter(|plan| plan.restore().is_err())
+        .map(|plan| plan.path.clone())
+        .collect();
+    if not_restored.is_empty() {
+        error
+    } else {
+        ProjectError::PartialWrite {
+            not_restored,
+            source: Box::new(error),
+        }
+    }
+}
+
+fn create_parent_dir(target: &Path, path: &RelPath) -> Result<(), ProjectError> {
     let Some(parent) = target.parent() else {
         return Err(ProjectError::PathEscapesRoot { path: path.clone() });
     };
-    let mut temp = NamedTempFile::new_in(parent).map_err(|source| ProjectError::Io {
+    fs::create_dir_all(parent).map_err(|source| ProjectError::Io {
         path: path.clone(),
         source,
-    })?;
-    temp.write_all(bytes).map_err(|source| ProjectError::Io {
-        path: path.clone(),
-        source,
-    })?;
-    temp.as_file()
-        .sync_all()
-        .map_err(|source| ProjectError::Io {
-            path: path.clone(),
-            source,
-        })?;
+    })
+}
 
+fn atomic_write(target: &Path, path: &RelPath, bytes: &[u8]) -> Result<(), ProjectError> {
+    persist_temp_file(stage_temp_file(target, path, bytes)?, target, path)
+}
+
+/// `target` と同じフォルダの一時ファイルに `bytes` を書き、ディスクへ確実に書き出す。
+fn stage_temp_file(
+    target: &Path,
+    path: &RelPath,
+    bytes: &[u8],
+) -> Result<NamedTempFile, ProjectError> {
+    let Some(parent) = target.parent() else {
+        return Err(ProjectError::PathEscapesRoot { path: path.clone() });
+    };
+    let io_error = |source| ProjectError::Io {
+        path: path.clone(),
+        source,
+    };
+    let mut temp = NamedTempFile::new_in(parent).map_err(io_error)?;
+    temp.write_all(bytes).map_err(io_error)?;
+    temp.as_file().sync_all().map_err(io_error)?;
+    Ok(temp)
+}
+
+/// 一時ファイルで `target` を置き換える。一時的なロックは短く再試行する。
+fn persist_temp_file(
+    temp: NamedTempFile,
+    target: &Path,
+    path: &RelPath,
+) -> Result<(), ProjectError> {
     retry_transient(temp, |temp| {
         temp.persist(target).map_err(|err| (err.file, err.error))
     })
@@ -1330,5 +1471,160 @@ mod tests {
             write_result,
             Err(ProjectError::PathEscapesRoot { .. })
         ));
+    }
+    fn write(store: &ProjectStore, path: &str, content: &str) -> ContentHash {
+        store
+            .write_text(&rel(path), content, WriteOptions::default())
+            .unwrap()
+    }
+
+    fn read(store: &ProjectStore, path: &str) -> Option<String> {
+        store
+            .read_text_opt(&rel(path))
+            .unwrap()
+            .map(|file| file.content)
+    }
+
+    #[test]
+    fn write_all_writes_every_file_and_returns_hashes_in_order() {
+        let dir = TempDir::new().unwrap();
+        let store = ProjectStore::open(dir.path()).unwrap();
+        let old_hash = write(&store, "plot/chapters/01.md", "旧");
+        let (first, second) = (rel("plot/chapters/01.md"), rel("plot/chapters/02.md"));
+
+        let hashes = store
+            .write_all(
+                &[
+                    PendingWrite {
+                        path: &first,
+                        content: "新しい 1 章",
+                        condition: WriteCondition::Matches(old_hash),
+                    },
+                    PendingWrite {
+                        path: &second,
+                        content: "新しい 2 章",
+                        condition: WriteCondition::Absent,
+                    },
+                ],
+                BackupMode::Always,
+            )
+            .unwrap();
+
+        assert_eq!(read(&store, "plot/chapters/01.md").unwrap(), "新しい 1 章");
+        assert_eq!(read(&store, "plot/chapters/02.md").unwrap(), "新しい 2 章");
+        assert_eq!(hashes[0], store.read_text(&first).unwrap().hash);
+        assert_eq!(hashes[1], store.read_text(&second).unwrap().hash);
+        assert_eq!(store.backups(&first).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn write_all_writes_nothing_when_any_file_conflicts() {
+        let dir = TempDir::new().unwrap();
+        let store = ProjectStore::open(dir.path()).unwrap();
+        write(&store, "concept.md", "企画");
+        write(&store, "style.md", "文体");
+        let (concept, style) = (rel("concept.md"), rel("style.md"));
+
+        let result = store.write_all(
+            &[
+                PendingWrite {
+                    path: &concept,
+                    content: "新しい企画",
+                    condition: WriteCondition::Any,
+                },
+                PendingWrite {
+                    path: &style,
+                    content: "新しい文体",
+                    condition: WriteCondition::Absent,
+                },
+            ],
+            BackupMode::Always,
+        );
+
+        assert!(matches!(result, Err(ProjectError::Conflict { path }) if path == style));
+        assert_eq!(read(&store, "concept.md").unwrap(), "企画");
+        assert_eq!(read(&store, "style.md").unwrap(), "文体");
+        assert!(store.backups(&concept).unwrap().is_empty());
+    }
+
+    /// 置き換えの途中でロックに当たって失敗したら、置き換え済みのファイルを元に戻す。
+    /// 2 つ目のファイルを「削除・改名を許さない」共有モードで開いておき、実際に置き換えを失敗させる。
+    #[cfg(windows)]
+    #[test]
+    fn write_all_restores_replaced_files_when_a_later_replacement_fails() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        const FILE_SHARE_READ: u32 = 0x1;
+
+        let dir = TempDir::new().unwrap();
+        let store = ProjectStore::open(dir.path()).unwrap();
+        write(&store, "manuscript/01/s01.txt", "元の一");
+        write(&store, "manuscript/01/s02.txt", "元の二");
+        let (first, second, added) = (
+            rel("manuscript/01/s01.txt"),
+            rel("manuscript/01/s02.txt"),
+            rel("manuscript/01/s00.txt"),
+        );
+        let _lock = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(dir.path().join("manuscript/01/s02.txt"))
+            .unwrap();
+
+        let result = store.write_all(
+            &[
+                PendingWrite {
+                    path: &added,
+                    content: "新しいシーン",
+                    condition: WriteCondition::Absent,
+                },
+                PendingWrite {
+                    path: &first,
+                    content: "新しい一",
+                    condition: WriteCondition::Any,
+                },
+                PendingWrite {
+                    path: &second,
+                    content: "新しい二",
+                    condition: WriteCondition::Any,
+                },
+            ],
+            BackupMode::Never,
+        );
+
+        assert!(matches!(result, Err(ProjectError::Io { path, .. }) if path == second));
+        assert_eq!(read(&store, "manuscript/01/s01.txt").unwrap(), "元の一");
+        assert_eq!(read(&store, "manuscript/01/s02.txt").unwrap(), "元の二");
+        assert_eq!(read(&store, "manuscript/01/s00.txt"), None);
+        let leftovers: Vec<_> = fs::read_dir(dir.path().join("manuscript/01"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(
+            leftovers.len(),
+            2,
+            "一時ファイルが残っている: {leftovers:?}"
+        );
+    }
+
+    #[test]
+    fn write_all_skips_files_whose_content_is_unchanged() {
+        let dir = TempDir::new().unwrap();
+        let store = ProjectStore::open(dir.path()).unwrap();
+        let hash = write(&store, "concept.md", "同じ内容");
+        let concept = rel("concept.md");
+
+        let hashes = store
+            .write_all(
+                &[PendingWrite {
+                    path: &concept,
+                    content: "同じ内容",
+                    condition: WriteCondition::Matches(hash.clone()),
+                }],
+                BackupMode::Always,
+            )
+            .unwrap();
+
+        assert_eq!(hashes, vec![hash]);
+        assert!(store.backups(&concept).unwrap().is_empty());
     }
 }

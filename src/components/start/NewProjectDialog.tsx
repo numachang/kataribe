@@ -37,17 +37,24 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
 
   useEffect(() => {
     let cancelled = false;
-    void backend.listGenres().then((list) => {
-      if (cancelled) {
-        return;
-      }
-      setGenres(list);
-      setGenre((current) => current || (list[0]?.id ?? ""));
-    });
+    backend
+      .listGenres()
+      .then((list) => {
+        if (cancelled) {
+          return;
+        }
+        setGenres(list);
+        setGenre((current) => current || (list[0]?.id ?? ""));
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          showToast(toErrorMessage(error, "ジャンルの一覧を読み込めませんでした。"), "error");
+        }
+      });
     return () => {
       cancelled = true;
     };
-  }, [backend]);
+  }, [backend, showToast]);
 
   async function handlePickFolder(): Promise<void> {
     const picked = await backend.pickFolder();

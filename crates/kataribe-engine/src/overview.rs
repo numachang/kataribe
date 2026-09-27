@@ -267,15 +267,26 @@ fn manuscript_section(project: &Project, chapters: &[ChapterEntry]) -> Result<Ov
             let path = layout::scene_text_path(&parsed.id, &scene.id);
             let label = format!("{}. {}", index + 1, scene.title);
             let mut item = file_entry(project, path.as_str(), &label, EntryKind::Scene)?;
-            item.target_chars = scene.target_chars;
+            item.target_chars = scene.target_chars.filter(|&target| target > 0);
             heading.chars += item.chars;
-            heading.target_chars =
-                Some(heading.target_chars.unwrap_or(0) + scene.target_chars.unwrap_or(0));
             heading.children.push(item);
         }
+        heading.target_chars = chapter_target(&heading.children);
         entries.push(heading);
     }
     Ok(section(SectionKind::Manuscript, "本文", entries))
+}
+
+/// 章の目標文字数。すべてのシーンに目標があるときだけ合計する
+/// （一部のシーンだけの合計を、章全体の目標のように見せないため）。
+fn chapter_target(scenes: &[OverviewEntry]) -> Option<u32> {
+    if scenes.is_empty() {
+        return None;
+    }
+    scenes
+        .iter()
+        .map(|scene| scene.target_chars)
+        .sum::<Option<u32>>()
 }
 
 /// フォルダ直下の Markdown ファイル（名前順）。フォルダが無ければ空。

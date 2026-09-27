@@ -51,7 +51,7 @@ export function renderCharacterFile(character: MockCharacter): string {
 }
 
 function renderSceneFrontMatterLines(scene: MockScene): string[] {
-  return [
+  const lines = [
     `  - id: ${scene.id}`,
     `    title: ${scene.title}`,
     `    summary: ${scene.summary}`,
@@ -59,8 +59,12 @@ function renderSceneFrontMatterLines(scene: MockScene): string[] {
     `    characters: [${scene.characters.join(", ")}]`,
     `    place: ${scene.place}`,
     `    time: ${scene.time}`,
-    `    target_chars: ${scene.targetChars}`,
   ];
+  // 目標のないシーンは target_chars 自体を書かない（読み込み時は null に復元される）。
+  if (scene.targetChars !== null) {
+    lines.push(`    target_chars: ${scene.targetChars}`);
+  }
+  return lines;
 }
 
 export function renderChapterFile(chapter: MockChapter): string {

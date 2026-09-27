@@ -76,7 +76,7 @@ function parseSceneBlocks(lines: string[]): MockScene[] {
         characters: current.characters ?? [],
         place: current.place ?? "",
         time: current.time ?? "",
-        targetChars: current.targetChars ?? 0,
+        targetChars: current.targetChars ?? null,
         beats: null,
         draft: null,
       });
@@ -104,7 +104,10 @@ function parseSceneBlocks(lines: string[]): MockScene[] {
     else if (key === "place") current.place = value;
     else if (key === "time") current.time = value;
     else if (key === "characters") current.characters = parseCharacterList(value);
-    else if (key === "target_chars") current.targetChars = Number(value);
+    else if (key === "target_chars") {
+      const parsed = Number(value);
+      current.targetChars = Number.isFinite(parsed) ? parsed : null;
+    }
   }
   flush();
   return scenes;

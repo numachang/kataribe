@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useBackend } from "../../api/context";
 import type { ProjectOverview } from "../../api/types";
 import { toErrorMessage } from "../../lib/errorMessage";
@@ -28,9 +28,22 @@ export function StartScreen() {
   const [isNewProjectOpen, setNewProjectOpen] = useState(false);
   const [isOpening, setIsOpening] = useState(false);
 
+  // 開始画面に戻ってくるたび（作品を閉じた直後を含む）に設定を読み直す。
+  // 作品を開く・作ると「最近の作品」がバックエンド側で更新されるため、ここで反映する。
+  useEffect(() => {
+    void useSettingsStore.getState().load(backend);
+  }, [backend]);
+
   function enterWorkspace(overview: ProjectOverview): void {
     useWorkspaceStore.getState().openWorkspace(overview);
-    void useWorkspaceStore.getState().refreshPipeline(backend);
+    void useWorkspaceStore
+      .getState()
+      .refreshPipeline(backend)
+      .catch((error: unknown) => {
+        showToast(toErrorMessage(error, "工程の一覧を読み込めませんでした。"), "error");
+      });
+    // 「最近の作品」に今開いた作品が反映された状態を、次に開始画面へ戻ったときのために持っておく。
+    void useSettingsStore.getState().load(backend);
   }
 
   async function openFolder(folder: string): Promise<void> {

@@ -170,6 +170,29 @@ describe("createMockBackend / 生成", () => {
     expect(pipeline.find((step) => step.task.kind === "concept")).toMatchObject({ state: "done" });
   });
 
+  it("別の作品を開き直したあとは、前の作品の変更案を適用できない", async () => {
+    const backend = createMockBackend({ delayMs: 0 });
+    const newProject = {
+      title: "無題の物語",
+      author: null,
+      genre: "fantasy",
+      genre_note: null,
+      rating: "general" as const,
+      target_length: 20000,
+      idea: "旅する少女の話",
+    };
+    await backend.createProject("C:\\projects\\一作目", newProject);
+    const changeSet = await backend.generate("job-1", { kind: "concept" }, () => {});
+    expect(changeSet.project_root).toBe("C:\\projects\\一作目");
+
+    await backend.createProject("C:\\projects\\二作目", newProject);
+
+    await expect(backend.applyChangeSet(changeSet)).rejects.toMatchObject({
+      kind: "invalid_input",
+    });
+    await expect(backend.readFile("concept.md")).rejects.toMatchObject({ kind: "not_found" });
+  });
+
   it("生成を中止すると cancelled エラーになる", async () => {
     const backend = createMockBackend({ delayMs: 20 });
     await backend.openProject(SAMPLE_PROJECT_FOLDER);

@@ -114,14 +114,18 @@ pub(super) async fn by_beat(stage: &Stage<'_>, material: &DraftMaterial<'_>) -> 
     Ok(changes)
 }
 
-/// このシーンから章の終わりまでを 1 回で書かせ、区切り行でシーンごとに分ける。
+/// このシーンから、次に本文のあるシーンの手前までを 1 回で書かせ、区切り行でシーンごとに分ける。
 /// 区切りの数がシーンの数と合わない出力は、どこが何のシーンか分からないので書き込まない。
 pub(super) async fn by_chapter(
     stage: &Stage<'_>,
     material: &DraftMaterial<'_>,
 ) -> Result<ChangeSet> {
     let (story, position) = (material.story, material.position);
-    let positions = story.rest_of_chapter(position);
+    let positions: Vec<Position> = material
+        .scenes
+        .clone()
+        .map(|scene| Position { scene, ..position })
+        .collect();
     let bases = positions
         .iter()
         .map(|&scene| scene_snapshot(stage, story, scene))

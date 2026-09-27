@@ -24,7 +24,8 @@ export interface MockScene {
   characters: string[];
   place: string;
   time: string;
-  targetChars: number;
+  /** 目安の文字数。null なら目標を定めていないシーン。 */
+  targetChars: number | null;
   /** ビート単位の生成に使う展開の一覧。null ならビート分割していない。 */
   beats: string[] | null;
   /** 本文。null ならまだ生成していない。 */

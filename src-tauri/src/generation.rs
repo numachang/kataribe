@@ -12,41 +12,59 @@ use crate::error::{CommandError, CommandErrorKind};
 /// 実行中のジョブの登録簿。ジョブ ID → そのジョブのキャンセルトークン。
 pub type JobRegistry = Mutex<HashMap<String, CancellationToken>>;
 
-/// ジョブ ID の重複を確かめてから登録し、キャンセルトークンを返す。
-fn register(jobs: &JobRegistry, job_id: &str) -> Result<CancellationToken, CommandError> {
-    let mut jobs = jobs.lock().unwrap_or_else(PoisonError::into_inner);
-    if jobs.contains_key(job_id) {
-        return Err(CommandError::new(
-            CommandErrorKind::InvalidInput,
-            "同じ ID の生成が既に実行中です。",
-        ));
+/// 登録簿に載った生成ジョブ。drop すると登録を外す（成功・失敗・中止・途中のエラーのどれで終わっても）。
+pub struct Job<'a> {
+    jobs: &'a JobRegistry,
+    id: String,
+    cancel: CancellationToken,
+}
+
+impl<'a> Job<'a> {
+    /// ジョブ ID の重複を確かめてから登録する。
+    pub fn register(jobs: &'a JobRegistry, id: &str) -> Result<Self, CommandError> {
+        let mut registered = jobs.lock().unwrap_or_else(PoisonError::into_inner);
+        if registered.contains_key(id) {
+            return Err(CommandError::new(
+                CommandErrorKind::InvalidInput,
+                "同じ ID の生成が既に実行中です。",
+            ));
+        }
+        let cancel = CancellationToken::new();
+        registered.insert(id.to_owned(), cancel.clone());
+        Ok(Self {
+            jobs,
+            id: id.to_owned(),
+            cancel,
+        })
     }
-    let token = CancellationToken::new();
-    jobs.insert(job_id.to_owned(), token.clone());
-    Ok(token)
+
+    /// このジョブのキャンセルトークン。
+    pub fn cancel_token(&self) -> &CancellationToken {
+        &self.cancel
+    }
+
+    /// タスクを実行し、変更案を返す。途中経過は `events` に流す。
+    pub async fn run(
+        &self,
+        engine: &Engine,
+        project: &Project,
+        task: &Task,
+        events: &dyn EventSink,
+    ) -> Result<ChangeSet, CommandError> {
+        engine
+            .generate(project, task, events, &self.cancel)
+            .await
+            .map_err(CommandError::from)
+    }
 }
 
-fn unregister(jobs: &JobRegistry, job_id: &str) {
-    jobs.lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .remove(job_id);
-}
-
-/// タスクを実行し、変更案を返す。途中経過は `events` に流す。
-///
-/// 成功・失敗・中止のいずれで終わっても、ジョブの登録を外す。
-pub async fn generate(
-    jobs: &JobRegistry,
-    engine: &Engine,
-    project: &Project,
-    job_id: &str,
-    task: &Task,
-    events: &dyn EventSink,
-) -> Result<ChangeSet, CommandError> {
-    let cancel = register(jobs, job_id)?;
-    let result = engine.generate(project, task, events, &cancel).await;
-    unregister(jobs, job_id);
-    result.map_err(CommandError::from)
+impl Drop for Job<'_> {
+    fn drop(&mut self) {
+        self.jobs
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&self.id);
+    }
 }
 
 /// 実行中のジョブを中止する。そのジョブが（既に終わっているなどで）見つからなければ何もしない。
@@ -56,6 +74,13 @@ pub fn cancel(jobs: &JobRegistry, job_id: &str) {
         .unwrap_or_else(PoisonError::into_inner)
         .get(job_id)
     {
+        token.cancel();
+    }
+}
+
+/// 実行中のジョブをすべて中止する（作品を閉じる・開き直すとき）。
+pub fn cancel_all(jobs: &JobRegistry) {
+    for token in jobs.lock().unwrap_or_else(PoisonError::into_inner).values() {
         token.cancel();
     }
 }
@@ -90,103 +115,93 @@ mod tests {
         Engine::new(Arc::new(model), GenerationSettings::default()).unwrap()
     }
 
+    fn new_registry() -> JobRegistry {
+        Mutex::new(HashMap::new())
+    }
+
     #[tokio::test]
-    async fn generate_runs_the_task_and_clears_the_job_on_success() {
+    async fn job_runs_the_task_and_leaves_the_registry_when_dropped() {
         let dir = TempDir::new().unwrap();
         let project = sample_project(&dir);
         let engine = engine_with(ScriptedChatModel::new([Script::reply([
             "夜の底で、遠くの灯りが揺れていた。",
         ])]));
-        let jobs: JobRegistry = Mutex::new(HashMap::new());
+        let jobs = new_registry();
 
-        let result = generate(
-            &jobs,
-            &engine,
-            &project,
-            "job-1",
-            &Task::Concept,
-            &IgnoreEvents,
-        )
-        .await;
+        let job = Job::register(&jobs, "job-1").unwrap();
+        let result = job
+            .run(&engine, &project, &Task::Concept, &IgnoreEvents)
+            .await;
+        assert!(jobs.lock().unwrap().contains_key("job-1"));
+        drop(job);
 
         assert!(result.is_ok(), "{result:?}");
         assert!(jobs.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
-    async fn generate_maps_a_failed_task_to_a_command_error_and_still_clears_the_job() {
+    async fn failed_task_becomes_a_command_error() {
         let dir = TempDir::new().unwrap();
         let project = sample_project(&dir);
         // 台本を用意しないため、モデルはエラーで応答する。
         let engine = engine_with(ScriptedChatModel::new([]));
-        let jobs: JobRegistry = Mutex::new(HashMap::new());
+        let jobs = new_registry();
 
-        let error = generate(
-            &jobs,
-            &engine,
-            &project,
-            "job-1",
-            &Task::Concept,
-            &IgnoreEvents,
-        )
-        .await
-        .unwrap_err();
+        let job = Job::register(&jobs, "job-1").unwrap();
+        let error = job
+            .run(&engine, &project, &Task::Concept, &IgnoreEvents)
+            .await
+            .unwrap_err();
 
         assert_eq!(error.kind, CommandErrorKind::Llm);
-        assert!(jobs.lock().unwrap().is_empty());
     }
 
-    #[tokio::test]
-    async fn generate_rejects_a_duplicate_job_id_without_touching_the_existing_entry() {
-        let dir = TempDir::new().unwrap();
-        let project = sample_project(&dir);
-        let engine = engine_with(ScriptedChatModel::new([]));
-        let jobs: JobRegistry = Mutex::new(HashMap::new());
-        let existing_token = register(&jobs, "job-1").unwrap();
+    #[test]
+    fn duplicate_job_id_is_rejected_without_touching_the_existing_job() {
+        let jobs = new_registry();
+        let existing = Job::register(&jobs, "job-1").unwrap();
 
-        let error = generate(
-            &jobs,
-            &engine,
-            &project,
-            "job-1",
-            &Task::Concept,
-            &IgnoreEvents,
-        )
-        .await
-        .unwrap_err();
+        let error = Job::register(&jobs, "job-1").err().unwrap();
 
         assert_eq!(error.kind, CommandErrorKind::InvalidInput);
         assert!(jobs.lock().unwrap().contains_key("job-1"));
-        assert!(!existing_token.is_cancelled());
+        assert!(!existing.cancel_token().is_cancelled());
     }
 
     #[tokio::test]
-    async fn cancel_stops_the_matching_job_and_generate_reports_it_as_cancelled() {
+    async fn job_cancelled_before_it_runs_reports_cancelled() {
         let dir = TempDir::new().unwrap();
         let project = sample_project(&dir);
         let engine = engine_with(ScriptedChatModel::new([Script::reply(["本文"])]));
-        let jobs: JobRegistry = Mutex::new(HashMap::new());
+        let jobs = new_registry();
 
-        let token = register(&jobs, "job-1").unwrap();
+        // 準備中（API キーの読み込みなど）に中止が届いた場合
+        let job = Job::register(&jobs, "job-1").unwrap();
         cancel(&jobs, "job-1");
-        assert!(token.is_cancelled());
+        let error = job
+            .run(&engine, &project, &Task::Concept, &IgnoreEvents)
+            .await
+            .unwrap_err();
 
-        let result = engine
-            .generate(&project, &Task::Concept, &IgnoreEvents, &token)
-            .await;
-        unregister(&jobs, "job-1");
-
-        assert!(matches!(
-            result,
-            Err(kataribe_engine::EngineError::Cancelled)
-        ));
-        assert!(jobs.lock().unwrap().is_empty());
+        assert_eq!(error.kind, CommandErrorKind::Cancelled);
     }
 
     #[test]
     fn cancel_on_an_unknown_job_id_does_nothing() {
-        let jobs: JobRegistry = Mutex::new(HashMap::new());
+        let jobs = new_registry();
         cancel(&jobs, "no-such-job");
         assert!(jobs.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn cancel_all_stops_every_running_job() {
+        let jobs = new_registry();
+        let first = Job::register(&jobs, "job-1").unwrap();
+        let second = Job::register(&jobs, "job-2").unwrap();
+
+        cancel_all(&jobs);
+
+        assert!(first.cancel_token().is_cancelled());
+        assert!(second.cancel_token().is_cancelled());
     }
 }

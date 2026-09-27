@@ -224,4 +224,6 @@ export interface FileChange {
 export interface ChangeSet {
   summary: string;
   files: FileChange[];
+  /** この変更案を作った作品フォルダ。別の作品を開き直したあとに適用すると拒否される。 */
+  project_root: string;
 }

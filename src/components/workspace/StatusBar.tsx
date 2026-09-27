@@ -32,10 +32,19 @@ export function StatusBar({ text, targetChars, status, errorMessage }: StatusBar
   const [stats, setStats] = useState<TextStats | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     const timer = setTimeout(() => {
-      void backend.textStats(text).then(setStats);
+      void backend.textStats(text).then((result) => {
+        // 応答が届く前に text が変わっていたら（別の文書に切り替わったなど）、古い結果は無視する。
+        if (!cancelled) {
+          setStats(result);
+        }
+      });
     }, STATS_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [backend, text]);
 
   const progress = stats && targetChars ? Math.round((stats.chars / targetChars) * 100) : null;

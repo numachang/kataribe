@@ -101,10 +101,31 @@ pub enum ProjectError {
         supported: u32,
     },
 
+    /// 複数のファイルをまとめて書く途中で失敗し、書き終えたファイルの一部を元に戻せなかった。
+    #[error(
+        "書き込みの途中で失敗し、{} を元に戻せませんでした（.kataribe/backups から戻せます）。原因: {source}",
+        join_paths(not_restored)
+    )]
+    PartialWrite {
+        /// 新しい内容のまま残ったファイル。
+        not_restored: Vec<RelPath>,
+        /// 途中で起きた失敗。
+        #[source]
+        source: Box<ProjectError>,
+    },
+
     /// 作品を新規作成しようとしたフォルダが空ではなかった。
     #[error("{} が空ではないため、作品を作成できません", root.display())]
     DirectoryNotEmpty {
         /// 作成先のフォルダ。
         root: PathBuf,
     },
+}
+
+fn join_paths(paths: &[RelPath]) -> String {
+    paths
+        .iter()
+        .map(RelPath::as_str)
+        .collect::<Vec<_>>()
+        .join("、")
 }

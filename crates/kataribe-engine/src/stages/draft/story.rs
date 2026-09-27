@@ -1,5 +1,7 @@
 //! 本文を書くときに参照する、作品全体の構成と現在位置。
 
+use std::ops::Range;
+
 use kataribe_project::{
     Chapter, ChapterId, Character, Manifest, Project, SceneId, ScenePlan, layout,
 };
@@ -80,11 +82,26 @@ impl Story {
         })
     }
 
-    /// 同じ章の、このシーンから章の終わりまでの位置。
-    pub fn rest_of_chapter(&self, position: Position) -> Vec<Position> {
-        (position.scene..self.chapter(position).meta.scenes.len())
-            .map(|scene| Position { scene, ..position })
-            .collect()
+    /// 章単位で書くシーンの範囲（章の中の添字）。このシーンから、次に本文のあるシーンの手前まで。
+    /// 作家が手で書いた後ろのシーンを、LLM の文章で置き換えないようにする。
+    pub fn unwritten_run(&self, project: &Project, position: Position) -> Result<Range<usize>> {
+        let scene_count = self.chapter(position).meta.scenes.len();
+        let mut end = position.scene + 1;
+        while end < scene_count
+            && self
+                .text(
+                    project,
+                    Position {
+                        scene: end,
+                        ..position
+                    },
+                )?
+                .trim()
+                .is_empty()
+        {
+            end += 1;
+        }
+        Ok(position.scene..end)
     }
 
     /// 前のシーンの本文。無ければ空文字列。

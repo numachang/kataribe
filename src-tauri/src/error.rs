@@ -96,6 +96,7 @@ fn project_error_kind(error: &ProjectError) -> CommandErrorKind {
         }
         ProjectError::InvalidUtf8 { .. }
         | ProjectError::Io { .. }
+        | ProjectError::PartialWrite { .. }
         | ProjectError::RootNotOpenable { .. } => CommandErrorKind::Io,
     }
 }

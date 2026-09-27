@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useBackend } from "../../../api/context";
 import type { QualityReport } from "../../../api/types";
+import { isManuscriptFile } from "../../../lib/manuscript";
 import { findOverviewEntry } from "../../../lib/overviewTree";
 import { useEditorStore } from "../../../store/editorStore";
 import { useWorkspaceStore } from "../../../store/workspaceStore";
@@ -19,27 +20,44 @@ export function QualityTab() {
   const backend = useBackend();
   const overview = useWorkspaceStore((state) => state.overview);
   const currentPath = useWorkspaceStore((state) => state.currentPath);
+  const editorPath = useEditorStore((state) => state.path);
   const content = useEditorStore((state) => state.content);
   const [report, setReport] = useState<QualityReport | null>(null);
 
   const entry = findOverviewEntry(overview, currentPath);
   const targetChars = entry?.target_chars ?? null;
+  const isManuscript = isManuscriptFile(currentPath);
+  // エディタの読み込みが currentPath に追いついているか。ずれている間は前の文書の内容で
+  // 解析してしまわないよう、読み込み中の表示にする。
+  const isCurrentDocumentLoaded = editorPath === currentPath;
 
   useEffect(() => {
-    if (currentPath === null) {
+    if (currentPath === null || !isManuscript || !isCurrentDocumentLoaded) {
       setReport(null);
       return;
     }
+    let cancelled = false;
     const timer = setTimeout(() => {
-      void backend.analyzeQuality(content, targetChars).then(setReport);
+      void backend.analyzeQuality(content, targetChars).then((result) => {
+        // 応答が届く前に文書が切り替わっていたら、古い結果は無視する。
+        if (!cancelled) {
+          setReport(result);
+        }
+      });
     }, ANALYZE_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [backend, content, currentPath, targetChars]);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [backend, content, currentPath, isCurrentDocumentLoaded, isManuscript, targetChars]);
 
   if (currentPath === null) {
     return <p className="quality-tab__empty">左の目次から文書を選んでください。</p>;
   }
-  if (!report) {
+  if (!isManuscript) {
+    return <p className="quality-tab__empty">本文（.txt）を開いているときだけ確認できます。</p>;
+  }
+  if (!isCurrentDocumentLoaded || !report) {
     return <p className="quality-tab__empty">解析しています…</p>;
   }
 

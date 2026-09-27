@@ -16,7 +16,8 @@ export function Dialog({ title, onClose, children, wide = false }: DialogProps) 
       return;
     }
     function handleKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
+      // IME の変換中に確定させるための Escape まで拾って閉じてしまわないようにする。
+      if (event.key === "Escape" && !event.isComposing) {
         onClose?.();
       }
     }

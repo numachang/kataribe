@@ -2,6 +2,10 @@ import { toGraphemes } from "../../lib/graphemes";
 import { hashText } from "../../lib/hash";
 import { BackendError } from "../backend";
 import type { ChangeSet, FileChange, GenerationEvent, GenerationSettings, Task } from "../types";
+
+/** 生成した変更案のうち、作品フォルダ（`project_root`）を付ける前のもの。 */
+export type GeneratedChanges = Omit<ChangeSet, "project_root">;
+
 import {
   generateCastDrafts,
   generateCharacterDetail,
@@ -177,7 +181,7 @@ async function generateConcept(
   job: GenerationJob,
   delayMs: number,
   onEvent: (event: GenerationEvent) => void,
-): Promise<ChangeSet> {
+): Promise<GeneratedChanges> {
   const text = generateConceptText(state.manifest);
   const plan: StepPlan = {
     label: "企画を生成しています",
@@ -197,7 +201,7 @@ async function generateStyle(
   job: GenerationJob,
   delayMs: number,
   onEvent: (event: GenerationEvent) => void,
-): Promise<ChangeSet> {
+): Promise<GeneratedChanges> {
   const text = generateStyleText(state.manifest);
   const plan: StepPlan = {
     label: "文体を生成しています",
@@ -217,7 +221,7 @@ async function generateWorld(
   job: GenerationJob,
   delayMs: number,
   onEvent: (event: GenerationEvent) => void,
-): Promise<ChangeSet> {
+): Promise<GeneratedChanges> {
   const text = generateWorldText(state.manifest);
   const plan: StepPlan = {
     label: "世界観を生成しています",
@@ -237,7 +241,7 @@ async function generateCast(
   job: GenerationJob,
   delayMs: number,
   onEvent: (event: GenerationEvent) => void,
-): Promise<ChangeSet> {
+): Promise<GeneratedChanges> {
   const drafts = generateCastDrafts();
   const preview = drafts
     .map((draft, index) => `${index + 1}. ${draft.name}（${draft.role}）―― ${draft.summary}`)
@@ -265,7 +269,7 @@ async function generateCharacter(
   job: GenerationJob,
   delayMs: number,
   onEvent: (event: GenerationEvent) => void,
-): Promise<ChangeSet> {
+): Promise<GeneratedChanges> {
   const character = findCharacter(state, id);
   if (!character) {
     throw notFound(`登場人物「${id}」が見つかりません。`);
@@ -291,7 +295,7 @@ async function generateSynopsis(
   job: GenerationJob,
   delayMs: number,
   onEvent: (event: GenerationEvent) => void,
-): Promise<ChangeSet> {
+): Promise<GeneratedChanges> {
   const text = generateSynopsisText(state.manifest, state.characters ?? []);
   const plan: StepPlan = {
     label: "あらすじを生成しています",
@@ -311,7 +315,7 @@ async function generateOutline(
   job: GenerationJob,
   delayMs: number,
   onEvent: (event: GenerationEvent) => void,
-): Promise<ChangeSet> {
+): Promise<GeneratedChanges> {
   const chapters = generateOutlineChapters();
   const preview = chapters.map((chapter) => `${chapter.title}\n${chapter.storyline}`).join("\n\n");
   const plan: StepPlan = {
@@ -333,7 +337,7 @@ async function generateScenePlanTask(
   job: GenerationJob,
   delayMs: number,
   onEvent: (event: GenerationEvent) => void,
-): Promise<ChangeSet> {
+): Promise<GeneratedChanges> {
   const chapter = requireChapter(state, chapterId);
   const scenes = generateScenePlan(chapter);
   const preview = scenes
@@ -363,7 +367,7 @@ async function generateDraft(
   job: GenerationJob,
   delayMs: number,
   onEvent: (event: GenerationEvent) => void,
-): Promise<ChangeSet> {
+): Promise<GeneratedChanges> {
   const chapter = requireChapter(state, chapterId);
   const scene = requireScene(state, chapterId, sceneId);
 
@@ -381,7 +385,7 @@ async function generateDraft(
             reasoning: ["場面の空気を確認しています"],
             chunks: chunkText(generateDraftFullText(scene)),
             notices:
-              scene.targetChars > settings.chars_per_call
+              scene.targetChars !== null && scene.targetChars > settings.chars_per_call
                 ? [
                     {
                       level: "info" as const,
@@ -405,7 +409,7 @@ async function generateRevision(
   job: GenerationJob,
   delayMs: number,
   onEvent: (event: GenerationEvent) => void,
-): Promise<ChangeSet> {
+): Promise<GeneratedChanges> {
   const original = readMockFile(state, path);
   if (original === null) {
     throw notFound(`「${path}」はまだ生成されていないため、書き直せません。`);
@@ -432,7 +436,7 @@ export async function runGeneration(
   job: GenerationJob,
   delayMs: number,
   onEvent: (event: GenerationEvent) => void,
-): Promise<ChangeSet> {
+): Promise<GeneratedChanges> {
   switch (task.kind) {
     case "concept":
       return generateConcept(state, job, delayMs, onEvent);

@@ -592,7 +592,8 @@ fn collect_length_issues(
     target_chars: Option<usize>,
     issues: &mut Vec<QualityIssue>,
 ) {
-    let Some(target_chars) = target_chars else {
+    // 目標 0 は「目標なし」として扱う（手で書いた設定の 0 で、すべての本文が長すぎる扱いにならないように）
+    let Some(target_chars) = target_chars.filter(|&target| target > 0) else {
         return;
     };
     let chars_f = chars as f64;
@@ -858,6 +859,22 @@ mod tests {
                 .issues
                 .iter()
                 .any(|issue| issue.kind == IssueKind::TooLong)
+        );
+    }
+
+    #[test]
+    fn zero_target_chars_means_no_length_issues() {
+        let report = analyze(
+            "　雨が降っていた。",
+            &QualityOptions {
+                target_chars: Some(0),
+            },
+        );
+        assert!(
+            !report
+                .issues
+                .iter()
+                .any(|issue| matches!(issue.kind, IssueKind::TooShort | IssueKind::TooLong))
         );
     }
 

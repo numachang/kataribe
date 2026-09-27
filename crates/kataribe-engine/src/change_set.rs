@@ -1,11 +1,11 @@
 //! 生成結果の変更案。利用者が確認してから作品フォルダに適用する。
 
 use kataribe_project::{
-    BackupMode, ContentHash, Project, RelPath, TextFile, WriteCondition, WriteOptions,
+    BackupMode, ContentHash, PendingWrite, Project, RelPath, TextFile, WriteCondition,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::error::Result;
+use crate::error::{EngineError, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
@@ -23,6 +23,9 @@ pub struct FileChange {
 pub struct ChangeSet {
     pub summary: String,
     pub files: Vec<FileChange>,
+    /// この変更案を作った作品フォルダ（正規化した絶対パス）。生成中に別の作品へ開き直したとき、
+    /// 前の作品の変更案を書き込まないよう、適用時に照合する。
+    pub project_root: String,
 }
 
 impl ChangeSet {
@@ -30,6 +33,16 @@ impl ChangeSet {
         Self {
             summary: summary.into(),
             files: Vec::new(),
+            project_root: String::new(),
+        }
+    }
+
+    /// この変更案を `project` のものとして印を付ける。
+    #[must_use]
+    pub fn made_for(self, project: &Project) -> Self {
+        Self {
+            project_root: project_identity(project),
+            ..self
         }
     }
 
@@ -57,25 +70,31 @@ impl ChangeSet {
 
     /// 変更案を作品フォルダに書き込む。
     ///
-    /// 先にすべてのファイルの競合を確かめ、一つでも競合していれば何も書かない。
-    /// LLM による置き換えなので、上書きするファイルは必ずバックアップする。
+    /// 別の作品の変更案なら何も書かない。すべてのファイルを書くか、何も書かないかのどちらかで、
+    /// 一つでも競合していれば何も書かない。LLM による置き換えなので、上書きするファイルは必ずバックアップする。
     pub fn apply(&self, project: &Project) -> Result<()> {
-        let store = project.store();
-        for change in &self.files {
-            store.check_condition(&change.path, &change.write_condition())?;
+        if self.project_root != project_identity(project) {
+            return Err(EngineError::InvalidInput(format!(
+                "この変更案は別の作品（{}）のものなので、今開いている作品には適用できません。",
+                self.project_root
+            )));
         }
-        for change in &self.files {
-            store.write_text(
-                &change.path,
-                &change.content,
-                WriteOptions {
-                    condition: change.write_condition(),
-                    backup: BackupMode::Always,
-                },
-            )?;
-        }
+        let writes: Vec<PendingWrite<'_>> = self
+            .files
+            .iter()
+            .map(|change| PendingWrite {
+                path: &change.path,
+                content: &change.content,
+                condition: change.write_condition(),
+            })
+            .collect();
+        project.store().write_all(&writes, BackupMode::Always)?;
         Ok(())
     }
+}
+
+fn project_identity(project: &Project) -> String {
+    project.store().canonical_root().display().to_string()
 }
 
 impl FileChange {

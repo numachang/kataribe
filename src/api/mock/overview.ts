@@ -10,7 +10,7 @@ import {
   scenePath,
   WORLD_OVERVIEW_PATH,
 } from "./paths";
-import type { ProjectState } from "./state";
+import type { MockScene, ProjectState } from "./state";
 
 function charsOf(text: string | null): number {
   return text === null ? 0 : computeTextStats(text).chars;
@@ -18,6 +18,17 @@ function charsOf(text: string | null): number {
 
 function leaf(entry: Omit<OverviewEntry, "children">): OverviewEntry {
   return { ...entry, children: [] };
+}
+
+/** シーンの目標文字数を合計する。1 つも目標を定めていなければ null（目標なし）を返す。 */
+function sumSceneTargetChars(scenes: MockScene[]): number | null {
+  const withTarget = scenes.filter(
+    (scene): scene is MockScene & { targetChars: number } => scene.targetChars !== null,
+  );
+  if (withTarget.length === 0) {
+    return null;
+  }
+  return withTarget.reduce((sum, scene) => sum + scene.targetChars, 0);
 }
 
 function buildPlanningSection(state: ProjectState): OverviewSection {
@@ -208,7 +219,7 @@ function buildManuscriptSection(state: ProjectState): OverviewSection {
       kind: "chapter",
       exists: true,
       chars: sceneEntries.reduce((sum, entry) => sum + entry.chars, 0),
-      target_chars: chapter.scenes.reduce((sum, scene) => sum + scene.targetChars, 0),
+      target_chars: sumSceneTargetChars(chapter.scenes),
       error: null,
       children: sceneEntries,
     };

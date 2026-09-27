@@ -2,7 +2,9 @@ import { useEffect } from "react";
 import { useBackend } from "../../../api/context";
 import type { PipelineStep, StepState, Task } from "../../../api/types";
 import { useGenerationSessionContext } from "../../../features/generation/GenerationSessionProvider";
+import { toErrorMessage } from "../../../lib/errorMessage";
 import { taskKey } from "../../../lib/taskKey";
+import { useUiStore } from "../../../store/uiStore";
 import { useWorkspaceStore } from "../../../store/workspaceStore";
 import "./PipelineTab.css";
 
@@ -33,12 +35,18 @@ function groupSteps(pipeline: PipelineStep[]): Array<{ label: string; steps: Pip
 /** 「工程」タブ。企画から本文まで、段階ごとに何が終わっていて何ができるかを見せる。 */
 export function PipelineTab() {
   const backend = useBackend();
+  const showToast = useUiStore((state) => state.showToast);
   const pipeline = useWorkspaceStore((state) => state.pipeline);
   const session = useGenerationSessionContext();
 
   useEffect(() => {
-    void useWorkspaceStore.getState().refreshPipeline(backend);
-  }, [backend]);
+    useWorkspaceStore
+      .getState()
+      .refreshPipeline(backend)
+      .catch((error: unknown) => {
+        showToast(toErrorMessage(error, "工程の一覧を読み込めませんでした。"), "error");
+      });
+  }, [backend, showToast]);
 
   const groups = groupSteps(pipeline);
   const firstReady = pipeline.find((step) => step.state === "ready") ?? null;

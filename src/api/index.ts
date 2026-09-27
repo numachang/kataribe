@@ -1,10 +1,7 @@
 import type { Backend } from "./backend";
+import { runningInsideTauri } from "./environment";
 import { createMockBackend } from "./mock";
 import { TauriBackend } from "./tauri";
-
-function runningInsideTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
 
 /**
  * 実行環境に応じたアプリ本体を作る。

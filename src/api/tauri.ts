@@ -20,7 +20,8 @@ import type {
 } from "./types";
 
 // docs/architecture.md §5.1 のコマンド名・引数のとおりに呼び出す。
-// Rust 側は snake_case の引数名で受けるため、invoke に渡すオブジェクトのキーも snake_case にする。
+// invoke に渡すオブジェクトのキーは JS の慣習どおり camelCase のままでよい。
+// Tauri がコマンド呼び出し時に自動で snake_case に変換して Rust 側へ渡す。
 
 interface CommandFailure {
   kind: BackendErrorKind;

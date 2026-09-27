@@ -106,6 +106,8 @@ pub(crate) struct DraftMaterial<'a> {
     pub story: &'a Story,
     pub position: Position,
     pub unit: DraftUnit,
+    /// 今回書くシーンの範囲（章の中の添字）。章単位なら複数のシーンになる。
+    pub scenes: std::ops::Range<usize>,
     pub story_so_far: &'a [StoryEntry],
 }
 
@@ -178,18 +180,8 @@ impl DraftMaterial<'_> {
         )
     }
 
-    /// 今回書くシーンの範囲（章単位なら章の残りすべて）。
-    fn current_range(&self) -> std::ops::Range<usize> {
-        match self.unit {
-            DraftUnit::Chapter => {
-                self.position.scene..self.story.chapter(self.position).meta.scenes.len()
-            }
-            DraftUnit::Scene | DraftUnit::Beat => self.position.scene..self.position.scene + 1,
-        }
-    }
-
     fn current_scenes(&self) -> Vec<&ScenePlan> {
-        self.story.chapter(self.position).meta.scenes[self.current_range()]
+        self.story.chapter(self.position).meta.scenes[self.scenes.clone()]
             .iter()
             .collect()
     }
@@ -207,7 +199,7 @@ impl DraftMaterial<'_> {
 
     fn chapter_context(&self) -> Value {
         let chapter = self.story.chapter(self.position);
-        let current = self.current_range();
+        let current = self.scenes.clone();
         let scenes: Vec<PlannedScene<'_>> = chapter
             .meta
             .scenes

@@ -28,10 +28,15 @@ pub(super) async fn write(
     )?;
     let position = story.locate(chapter_id, scene_id)?;
     let story_so_far = digest::story_so_far(stage, &story, position).await?;
+    let scenes = match stage.settings.draft_unit {
+        DraftUnit::Chapter => story.unwritten_run(stage.project, position)?,
+        DraftUnit::Scene | DraftUnit::Beat => position.scene..position.scene + 1,
+    };
     let material = DraftMaterial {
         story: &story,
         position,
         unit: stage.settings.draft_unit,
+        scenes,
         story_so_far: &story_so_far,
     };
     match stage.settings.draft_unit {

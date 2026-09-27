@@ -238,7 +238,7 @@ class MockBackend implements Backend {
     const job = createGenerationJob();
     this.jobs.set(jobId, job);
     try {
-      return await runGeneration(
+      const changes = await runGeneration(
         project,
         task,
         this.settings.generation,
@@ -246,6 +246,7 @@ class MockBackend implements Backend {
         this.delayMs,
         onEvent,
       );
+      return { ...changes, project_root: project.folder };
     } catch (error) {
       if (error instanceof GenerationCancelled) {
         throw new BackendError("cancelled", error.message);
@@ -268,6 +269,12 @@ class MockBackend implements Backend {
 
   async applyChangeSet(changeSet: ChangeSet): Promise<ProjectOverview> {
     let project = this.requireProject();
+    if (changeSet.project_root !== project.folder) {
+      throw new BackendError(
+        "invalid_input",
+        `この変更案は別の作品（${changeSet.project_root}）のものなので、今開いている作品には適用できません。`,
+      );
+    }
     for (const file of changeSet.files) {
       project = this.applyFileChange(project, file);
     }

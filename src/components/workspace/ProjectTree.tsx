@@ -3,7 +3,8 @@ import { useWorkspaceStore } from "../../store/workspaceStore";
 import "./ProjectTree.css";
 
 function formatChars(entry: OverviewEntry): string | null {
-  if (entry.target_chars !== null) {
+  // target_chars が 0 以下は「目標なし」として扱う（quality.ts の detectLengthIssue と揃える）。
+  if (entry.target_chars !== null && entry.target_chars > 0) {
     return `${entry.chars.toLocaleString("ja-JP")} / ${entry.target_chars.toLocaleString("ja-JP")} 字`;
   }
   if (entry.chars > 0) {
@@ -42,14 +43,16 @@ function EntryNode({ entry, depth }: EntryNodeProps) {
     .filter(Boolean)
     .join(" ");
 
+  const path = entry.path;
+
   return (
     <li>
-      {entry.path !== null ? (
+      {path !== null ? (
         <button
           type="button"
           className={rowClassName}
           style={{ paddingLeft: 12 + depth * 14 }}
-          onClick={() => useWorkspaceStore.getState().openDocument(entry.path ?? "")}
+          onClick={() => useWorkspaceStore.getState().openDocument(path)}
         >
           {label}
         </button>
@@ -91,8 +94,9 @@ export function ProjectTree() {
           <div className="project-tree__progress-fill" style={{ width: `${progress * 100}%` }} />
         </div>
         <span className="project-tree__progress-label">
-          {overview.total_chars.toLocaleString("ja-JP")} /{" "}
-          {overview.target_length.toLocaleString("ja-JP")} 字
+          {overview.target_length > 0
+            ? `${overview.total_chars.toLocaleString("ja-JP")} / ${overview.target_length.toLocaleString("ja-JP")} 字`
+            : `${overview.total_chars.toLocaleString("ja-JP")} 字`}
         </span>
       </header>
 

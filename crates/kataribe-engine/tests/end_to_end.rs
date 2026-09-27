@@ -567,3 +567,107 @@ fn write(project: &Project, path: &str, content: &str) {
         )
         .unwrap();
 }
+
+#[tokio::test]
+async fn change_set_is_applied_only_to_the_project_it_was_made_for() {
+    let (first_folder, second_folder) =
+        (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let first = new_project(first_folder.path());
+    let second = new_project(second_folder.path());
+    let model = Arc::new(ScriptedChatModel::new([Script::reply([CONCEPT])]));
+    let engine = Engine::new(model, settings(DraftUnit::Scene)).unwrap();
+    let changes = engine
+        .generate(
+            &first,
+            &Task::Concept,
+            &IgnoreEvents,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let concept: RelPath = "concept.md".parse().unwrap();
+
+    // 生成中に別の作品へ開き直した場合: 前の作品の変更案は書き込まない
+    assert!(changes.apply(&second).is_err());
+    assert!(second.store().read_text_opt(&concept).unwrap().is_none());
+
+    changes.apply(&first).unwrap();
+    assert!(first.store().read_text_opt(&concept).unwrap().is_some());
+}
+
+#[tokio::test]
+async fn chapter_unit_stops_before_a_scene_the_author_already_wrote() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path());
+    prepare_two_scene_chapter(&project);
+    write(
+        &project,
+        "manuscript/01/s02.txt",
+        "　作家が手で書いた書斎の場面。\n",
+    );
+    let model = Arc::new(ScriptedChatModel::new([Script::reply([
+        "雨が降っていた。\n",
+    ])]));
+    let engine = Engine::new(model.clone(), settings(DraftUnit::Chapter)).unwrap();
+    let chapter = ChapterId::from_number(1);
+
+    run(
+        &engine,
+        &project,
+        &Task::Draft {
+            chapter,
+            scene: "s01".parse().unwrap(),
+        },
+    )
+    .await;
+
+    let scene_text = |scene: &str| {
+        project
+            .scene_text(&chapter, &scene.parse().unwrap())
+            .unwrap()
+            .unwrap()
+    };
+    assert_eq!(scene_text("s01"), "　雨が降っていた。\n");
+    assert_eq!(scene_text("s02"), "　作家が手で書いた書斎の場面。\n");
+    let prompt = &model.requests()[0].messages[1].content;
+    assert!(prompt.contains("シーン 1 からシーン 1 まで"), "{prompt}");
+}
+
+#[test]
+fn chapter_target_is_shown_only_when_every_scene_has_one() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path());
+    write(
+        &project,
+        "plot/chapters/01.md",
+        "---\ntitle: 全部ある\nscenes:\n  - id: s01\n    title: 一\n    summary: 始まり。\n    target_chars: 1000\n  - id: s02\n    title: 二\n    summary: 続き。\n    target_chars: 1500\n---\n",
+    );
+    write(
+        &project,
+        "plot/chapters/02.md",
+        "---\ntitle: 一部だけ\nscenes:\n  - id: s01\n    title: 一\n    summary: 始まり。\n    target_chars: 1000\n  - id: s02\n    title: 二\n    summary: 続き。\n    target_chars: 0\n---\n",
+    );
+
+    let overview = kataribe_engine::overview(&project).unwrap();
+    let manuscript = overview
+        .sections
+        .iter()
+        .find(|section| section.kind == kataribe_engine::SectionKind::Manuscript)
+        .unwrap();
+    let targets: Vec<(Option<u32>, Vec<Option<u32>>)> = manuscript
+        .entries
+        .iter()
+        .map(|chapter| {
+            let scenes = chapter.children.iter().map(|scene| scene.target_chars);
+            (chapter.target_chars, scenes.collect())
+        })
+        .collect();
+
+    assert_eq!(
+        targets,
+        vec![
+            (Some(2500), vec![Some(1000), Some(1500)]),
+            (None, vec![Some(1000), None]),
+        ]
+    );
+}

@@ -46,19 +46,34 @@ export function ChangeSetReview() {
         })}
       </div>
 
+      {session.applyErrorMessage && (
+        <p className="changeset-review__error">{session.applyErrorMessage}</p>
+      )}
+
       <div className="changeset-review__actions">
-        <button type="button" className="app-button" onClick={session.discard}>
+        <button
+          type="button"
+          className="app-button"
+          disabled={session.isApplying}
+          onClick={session.discard}
+        >
           破棄
         </button>
-        <button type="button" className="app-button" onClick={session.regenerate}>
+        <button
+          type="button"
+          className="app-button"
+          disabled={session.isApplying}
+          onClick={session.regenerate}
+        >
           もう一度生成
         </button>
         <button
           type="button"
           className="app-button app-button--primary"
+          disabled={session.isApplying}
           onClick={() => void session.apply()}
         >
-          適用
+          {session.isApplying ? "適用しています…" : "適用"}
         </button>
       </div>
     </div>

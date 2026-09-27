@@ -20,15 +20,13 @@ use crate::error::CommandError;
 use crate::settings::AppSettings;
 use crate::state::AppState;
 use crate::text_file::TextFile;
-use crate::{engine_client, files, generation, projects, settings};
+use crate::{engine_client, files, generation, projects};
 
 // ---- 設定 ----
 
 #[tauri::command]
 pub async fn load_settings(state: State<'_, AppState>) -> Result<AppSettings, CommandError> {
-    let loaded = settings::load(state.settings_path())?;
-    state.set_settings(loaded.clone());
-    Ok(loaded)
+    state.reload_settings()
 }
 
 #[tauri::command]
@@ -36,9 +34,7 @@ pub async fn save_settings(
     state: State<'_, AppState>,
     settings: AppSettings,
 ) -> Result<(), CommandError> {
-    settings::save(state.settings_path(), &settings)?;
-    state.set_settings(settings);
-    Ok(())
+    state.save_settings(settings)
 }
 
 #[tauri::command]
@@ -85,7 +81,7 @@ pub async fn create_project(
 ) -> Result<ProjectOverview, CommandError> {
     let (opened, overview) = projects::create_project(std::path::Path::new(&folder), project)?;
     state.set_project(opened);
-    state.record_recent_project(&folder)?;
+    remember_recent_project(&state, &folder);
     Ok(overview)
 }
 
@@ -96,8 +92,16 @@ pub async fn open_project(
 ) -> Result<ProjectOverview, CommandError> {
     let (opened, overview) = projects::open_project(std::path::Path::new(&folder))?;
     state.set_project(opened);
-    state.record_recent_project(&folder)?;
+    remember_recent_project(&state, &folder);
     Ok(overview)
+}
+
+/// 最近の作品に記録する。記録できなくても作品は開けているので、失敗はログに残すだけにする
+/// （ここでエラーを返すと、画面は「開けなかった」と表示するのに作品は開いたままになり、食い違う）。
+fn remember_recent_project(state: &AppState, folder: &str) {
+    if let Err(error) = state.record_recent_project(folder) {
+        tracing::warn!(%error, folder, "最近の作品を記録できませんでした");
+    }
 }
 
 #[tauri::command]
@@ -144,19 +148,21 @@ pub async fn write_file(
 // 所有した `String` を受ける（`#[tauri::command]` の呼び出し規約）。中身は借用するだけなので
 // clippy::needless_pass_by_value を意図的に無効にする。
 
-#[tauri::command]
+// 長い本文の解析で画面の操作が止まらないよう、どれもメインスレッドの外（async）で動かす。
+
+#[tauri::command(async)]
 #[allow(clippy::needless_pass_by_value)]
 pub fn text_stats(text: String) -> TextStats {
     kataribe_text::count::stats(&text)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[allow(clippy::needless_pass_by_value)]
 pub fn parse_ruby(text: String) -> Vec<Segment> {
     kataribe_text::ruby::parse(&text)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[allow(clippy::needless_pass_by_value)]
 pub fn analyze_quality(text: String, target_chars: Option<usize>) -> QualityReport {
     kataribe_text::quality::analyze(&text, &QualityOptions { target_chars })
@@ -171,15 +177,21 @@ pub async fn generate(
     task: Task,
     on_event: Channel<GenerationEvent>,
 ) -> Result<ChangeSet, CommandError> {
+    // 準備（API キーの読み込みなど）の間に届いた中止も受け付けるよう、最初に登録する
+    let job = generation::Job::register(state.jobs(), &job_id)?;
     let project = state.require_project()?;
     let current_settings = state.settings();
     let api_key = state.api_key_store().load().map_err(CommandError::from)?;
     let engine =
         engine_client::build_engine(&current_settings.llm, &current_settings.generation, api_key)?;
+    let cancel = job.cancel_token().clone();
     let sink = move |event: GenerationEvent| {
-        let _ = on_event.send(event);
+        // 画面が再読み込みなどで無くなり、送れなくなった。結果を受け取る先が無いので生成を止める
+        if on_event.send(event).is_err() {
+            cancel.cancel();
+        }
     };
-    generation::generate(state.jobs(), &engine, &project, &job_id, &task, &sink).await
+    job.run(&engine, &project, &task, &sink).await
 }
 
 #[tauri::command]

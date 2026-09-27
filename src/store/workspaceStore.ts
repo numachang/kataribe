@@ -11,6 +11,8 @@ interface WorkspaceState {
   openWorkspace: (overview: ProjectOverview) => void;
   closeWorkspace: () => void;
   openDocument: (path: string) => void;
+  /** 選択中の文書を外す（読み込みに失敗したときなど、選択自体を取り消したいとき）。 */
+  clearCurrentDocument: () => void;
   /** Backend を呼ばず、既に持っている目次で置き換える（applyChangeSet の戻り値の反映など）。 */
   setOverview: (overview: ProjectOverview) => void;
   refreshOverview: (backend: Backend) => Promise<void>;
@@ -33,6 +35,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
 
   openDocument(path) {
     set({ currentPath: path });
+  },
+
+  clearCurrentDocument() {
+    set({ currentPath: null });
   },
 
   setOverview(overview) {

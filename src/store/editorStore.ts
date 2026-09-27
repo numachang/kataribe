@@ -16,6 +16,8 @@ interface EditorState {
   updateContent: (content: string) => void;
   markSaving: () => void;
   markSaved: (hash: string) => void;
+  /** 保存は成功したが、保存中にさらに編集が進んでいて内容が一致しないときに使う。dirty のまま基準ハッシュだけ更新する。 */
+  recordSavedHash: (hash: string) => void;
   markError: (message: string) => void;
   toggleRubyPreview: () => void;
   setVertical: (vertical: boolean) => void;
@@ -57,6 +59,10 @@ export const useEditorStore = create<EditorState>((set) => ({
 
   markSaved(hash) {
     set({ status: "clean", savedHash: hash, errorMessage: null });
+  },
+
+  recordSavedHash(hash) {
+    set({ savedHash: hash });
   },
 
   markError(message) {

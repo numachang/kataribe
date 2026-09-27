@@ -1,10 +1,12 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BackendError } from "../../api/backend";
 import { useBackend } from "../../api/context";
 import type { ChangeSet, Task } from "../../api/types";
+import { toErrorMessage } from "../../lib/errorMessage";
 import { useEditorStore } from "../../store/editorStore";
 import { useUiStore } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
+import { documentSaveController } from "../editor/documentSaveController";
 import {
   applyGenerationEvent,
   createEmptyGenerationDisplay,
@@ -19,6 +21,10 @@ export interface GenerationSessionApi {
   display: GenerationDisplay;
   changeSet: ChangeSet | null;
   errorMessage: string | null;
+  /** 変更案の適用中かどうか。適用中は「適用」などのボタンを無効にする。 */
+  isApplying: boolean;
+  /** 適用に失敗したときのメッセージ。phase は reviewing のまま、変更案の下に表示する。 */
+  applyErrorMessage: string | null;
   autoAdvancing: boolean;
   start: (task: Task) => void;
   cancel: () => void;
@@ -29,20 +35,22 @@ export interface GenerationSessionApi {
   stopAutoAdvance: () => void;
 }
 
-let jobSequence = 0;
-
+/**
+ * ジョブ ID を採番する。画面をリロードするとモジュール変数は 0 に戻ってしまうため、
+ * 連番ではなく `crypto.randomUUID()` で一意な ID にする
+ * （連番だと、リロード前に Rust 側へ残っていたジョブと ID が衝突しうる）。
+ */
 function createJobId(): string {
-  jobSequence += 1;
-  return `job-${jobSequence}`;
-}
-
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "生成に失敗しました。";
+  return crypto.randomUUID();
 }
 
 /**
  * 「工程」タブと「この文書」タブが共有する、生成 1 回分のセッション。
  * 一度に実行できる生成は 1 件だけで、どちらのタブから始めても同じ進捗・結果を表示する。
+ *
+ * このフックは作品を開いている間だけ（`GenerationSessionProvider` の寿命だけ）マウントされる。
+ * 作品を閉じてアンマウントされたら、自動で進めるループを止め、実行中のジョブを中止し、
+ * それ以降は変更案の適用など画面の状態を変える処理を一切行わない。
  */
 export function useGenerationSession(): GenerationSessionApi {
   const backend = useBackend();
@@ -53,10 +61,27 @@ export function useGenerationSession(): GenerationSessionApi {
   const [display, setDisplay] = useState<GenerationDisplay>(createEmptyGenerationDisplay());
   const [changeSet, setChangeSet] = useState<ChangeSet | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [applyErrorMessage, setApplyErrorMessage] = useState<string | null>(null);
+  const [isApplying, setIsApplying] = useState(false);
   const [autoAdvancing, setAutoAdvancing] = useState(false);
 
   const activeJobId = useRef<string | null>(null);
   const autoAdvanceStopRequested = useRef(false);
+  const unmountedRef = useRef(false);
+
+  // 作品を閉じる（このフックがアンマウントされる）ときに、自動で進めるループを止め、
+  // 実行中の生成ジョブを中止する。アンマウント後は変更案の適用など画面の状態を変える処理を行わない。
+  useEffect(() => {
+    return () => {
+      unmountedRef.current = true;
+      autoAdvanceStopRequested.current = true;
+      const jobId = activeJobId.current;
+      if (jobId) {
+        // アンマウント後はエラーを表示する場所がないので、失敗しても静かに諦める。
+        backend.cancelGeneration(jobId).catch(() => {});
+      }
+    };
+  }, [backend]);
 
   const runTask = useCallback(
     async (task: Task): Promise<ChangeSet | null> => {
@@ -67,20 +92,30 @@ export function useGenerationSession(): GenerationSessionApi {
       setDisplay(createEmptyGenerationDisplay());
       setChangeSet(null);
       setErrorMessage(null);
+      setApplyErrorMessage(null);
 
       try {
         const result = await backend.generate(jobId, task, (event) => {
+          if (unmountedRef.current) {
+            return;
+          }
           setDisplay((previous) => applyGenerationEvent(previous, event));
         });
+        if (unmountedRef.current) {
+          return null;
+        }
         setChangeSet(result);
         setPhase("reviewing");
         return result;
       } catch (error) {
+        if (unmountedRef.current) {
+          return null;
+        }
         if (error instanceof BackendError && error.kind === "cancelled") {
           setPhase("idle");
           return null;
         }
-        const message = toErrorMessage(error);
+        const message = toErrorMessage(error, "生成に失敗しました。");
         setErrorMessage(message);
         setPhase("error");
         showToast(message, "error");
@@ -92,34 +127,78 @@ export function useGenerationSession(): GenerationSessionApi {
     [backend, showToast],
   );
 
-  const applyResult = useCallback(
+  /** 適用が完了した文書を、今開いていれば読み直す。開いているかどうかは currentPath で判定する。 */
+  const reloadOpenDocumentIfTouched = useCallback(
     async (result: ChangeSet): Promise<void> => {
+      const openPath = useWorkspaceStore.getState().currentPath;
+      const touchesOpenDocument =
+        openPath !== null && result.files.some((file) => file.path === openPath);
+      if (!touchesOpenDocument || openPath === null) {
+        return;
+      }
       try {
+        const file = await backend.readFile(openPath);
+        if (!unmountedRef.current && useWorkspaceStore.getState().currentPath === openPath) {
+          useEditorStore.getState().loadDocument(openPath, file.content, file.hash);
+        }
+      } catch (error) {
+        showToast(toErrorMessage(error, "適用後に文書を読み直せませんでした。"), "error");
+      }
+    },
+    [backend, showToast],
+  );
+
+  /**
+   * 変更案を適用する。適用の前に、開いている文書の保存を済ませておく
+   * （そうすればディスク側の競合検出が働き、未保存の編集を黙って上書きしない）。
+   * 成功したかどうかを返す。呼び出し側（自動で進めるループ）はこれで止まるべきかを判断する。
+   */
+  const applyResult = useCallback(
+    async (result: ChangeSet): Promise<boolean> => {
+      if (unmountedRef.current) {
+        return false;
+      }
+      setIsApplying(true);
+      setApplyErrorMessage(null);
+      try {
+        await documentSaveController.flush(backend);
+        if (unmountedRef.current) {
+          return false;
+        }
         const overview = await backend.applyChangeSet(result);
+        if (unmountedRef.current) {
+          return true;
+        }
         useWorkspaceStore.getState().setOverview(overview);
         await useWorkspaceStore.getState().refreshPipeline(backend);
-
-        const editor = useEditorStore.getState();
-        const touchesOpenDocument =
-          editor.path !== null && result.files.some((file) => file.path === editor.path);
-        if (touchesOpenDocument && editor.path !== null) {
-          const file = await backend.readFile(editor.path);
-          useEditorStore.getState().loadDocument(editor.path, file.content, file.hash);
+        if (unmountedRef.current) {
+          return true;
         }
+
+        await reloadOpenDocumentIfTouched(result);
 
         setPhase("idle");
         setCurrentTask(null);
         setChangeSet(null);
         setDisplay(createEmptyGenerationDisplay());
         showToast(result.summary);
+        return true;
       } catch (error) {
-        const message = toErrorMessage(error);
-        setErrorMessage(message);
-        setPhase("error");
+        if (unmountedRef.current) {
+          return false;
+        }
+        // 適用の失敗は reviewing のまま変更案を残し、下にエラーを表示する（生成の失敗とは区別する）。
+        const message = toErrorMessage(error, "適用に失敗しました。");
+        setApplyErrorMessage(message);
         showToast(message, "error");
+        return false;
+      } finally {
+        if (!unmountedRef.current) {
+          setIsApplying(false);
+        }
       }
     },
-    [backend, showToast],
+    [backend, reloadOpenDocumentIfTouched, showToast],
   );
 
   const start = useCallback(
@@ -133,9 +212,11 @@ export function useGenerationSession(): GenerationSessionApi {
     autoAdvanceStopRequested.current = true;
     const jobId = activeJobId.current;
     if (jobId) {
-      void backend.cancelGeneration(jobId);
+      backend.cancelGeneration(jobId).catch((error: unknown) => {
+        showToast(toErrorMessage(error, "中止できませんでした。"), "error");
+      });
     }
-  }, [backend]);
+  }, [backend, showToast]);
 
   const apply = useCallback(async () => {
     if (!changeSet) {
@@ -149,6 +230,7 @@ export function useGenerationSession(): GenerationSessionApi {
     setCurrentTask(null);
     setChangeSet(null);
     setErrorMessage(null);
+    setApplyErrorMessage(null);
     setDisplay(createEmptyGenerationDisplay());
   }, []);
 
@@ -164,8 +246,11 @@ export function useGenerationSession(): GenerationSessionApi {
 
     void (async () => {
       try {
-        while (!autoAdvanceStopRequested.current) {
+        while (!autoAdvanceStopRequested.current && !unmountedRef.current) {
           await useWorkspaceStore.getState().refreshPipeline(backend);
+          if (unmountedRef.current) {
+            break;
+          }
           const nextReady = useWorkspaceStore
             .getState()
             .pipeline.find((step) => step.state === "ready");
@@ -173,13 +258,20 @@ export function useGenerationSession(): GenerationSessionApi {
             break;
           }
           const result = await runTask(nextReady.task);
-          if (!result || autoAdvanceStopRequested.current) {
+          if (!result || autoAdvanceStopRequested.current || unmountedRef.current) {
             break;
           }
-          await applyResult(result);
+          const applied = await applyResult(result);
+          if (!applied) {
+            // 適用が失敗した工程を無限に生成し続けないよう、ここで止める。
+            // 変更案は reviewing のまま残っているので、利用者が見直せる。
+            break;
+          }
         }
       } finally {
-        setAutoAdvancing(false);
+        if (!unmountedRef.current) {
+          setAutoAdvancing(false);
+        }
       }
     })();
   }, [applyResult, backend, runTask]);
@@ -195,6 +287,8 @@ export function useGenerationSession(): GenerationSessionApi {
     display,
     changeSet,
     errorMessage,
+    isApplying,
+    applyErrorMessage,
     autoAdvancing,
     start,
     cancel,

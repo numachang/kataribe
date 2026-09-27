@@ -5,12 +5,13 @@ interface ConflictDialogProps {
   path: string;
   onReload: () => void;
   onOverwrite: () => void;
+  onDismiss: () => void;
 }
 
 /** 保存しようとした文書が外部で変更されていたときに、どちらを残すか選ばせる。 */
-export function ConflictDialog({ path, onReload, onOverwrite }: ConflictDialogProps) {
+export function ConflictDialog({ path, onReload, onOverwrite, onDismiss }: ConflictDialogProps) {
   return (
-    <Dialog title="外部で変更されています" onClose={null}>
+    <Dialog title="外部で変更されています" onClose={onDismiss}>
       <p>
         「{path}」は、この画面を開いている間に外部で変更されたようです。
         <br />

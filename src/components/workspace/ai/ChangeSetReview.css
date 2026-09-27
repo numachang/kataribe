@@ -53,6 +53,12 @@
   overflow-y: auto;
 }
 
+.changeset-review__error {
+  margin: 0;
+  color: var(--color-error);
+  font-size: 13px;
+}
+
 .changeset-review__actions {
   display: flex;
   justify-content: flex-end;

@@ -21,4 +21,6 @@ pub use model::{
 };
 pub use path::{PathError, RelPath};
 pub use project::Project;
-pub use store::{BackupMode, ContentHash, ProjectStore, TextFile, WriteCondition, WriteOptions};
+pub use store::{
+    BackupMode, ContentHash, PendingWrite, ProjectStore, TextFile, WriteCondition, WriteOptions,
+};
