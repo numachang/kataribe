@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 import { BackendProvider } from "../../api/context";
 import { createMockBackend } from "../../api/mock";
 import { SAMPLE_PROJECT_FOLDER } from "../../api/mock/sampleProject";
+import { useUiStore } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { resetAllStores } from "../../test/resetStores";
 import { wrapBackend } from "../../test/wrapBackend";
@@ -54,4 +55,33 @@ it("保存中に入力してすぐ別の文書へ切り替えても、前の文�
   await waitFor(() => expect(result.current.path).toBe("style.md"));
   expect((await inner.readFile("concept.md")).content).toBe("二回目の編集");
   expect((await inner.readFile("style.md")).content).toBe(styleBefore.content);
+});
+
+it("保存に失敗した編集が残っているときは、別の文書へ切り替えずに知らせる", async () => {
+  const inner = createMockBackend({ delayMs: 0 });
+  useWorkspaceStore.getState().openWorkspace(await inner.openProject(SAMPLE_PROJECT_FOLDER));
+  const backend = wrapBackend(inner, {
+    async writeFile(path, content, expectedHash) {
+      if (path === "concept.md") {
+        throw new Error("ディスクがいっぱいです");
+      }
+      return inner.writeFile(path, content, expectedHash);
+    },
+  });
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <BackendProvider backend={backend}>{children}</BackendProvider>
+  );
+  const { result } = renderHook(() => useDocumentEditor(), { wrapper });
+  act(() => useWorkspaceStore.getState().openDocument("concept.md"));
+  await waitFor(() => expect(result.current.path).toBe("concept.md"));
+  act(() => result.current.onContentChange("保存できない大事な編集"));
+
+  act(() => useWorkspaceStore.getState().openDocument("style.md"));
+
+  await waitFor(() => expect(useWorkspaceStore.getState().currentPath).toBe("concept.md"));
+  expect(result.current.path).toBe("concept.md");
+  expect(result.current.content).toBe("保存できない大事な編集");
+  expect(
+    useUiStore.getState().toasts.some((toast) => toast.message.includes("切り替えません")),
+  ).toBe(true);
 });

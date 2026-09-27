@@ -106,6 +106,18 @@ class MockBackend implements Backend {
     this.projectsByFolder.set(next.folder, next);
   }
 
+  /** 作品を開き直す・閉じる。Rust と同じく、前の作品のための生成は中止する。 */
+  private switchProject(next: ProjectState | null): void {
+    for (const job of this.jobs.values()) {
+      job.cancel();
+    }
+    if (next) {
+      this.setCurrentProject(next);
+    } else {
+      this.project = null;
+    }
+  }
+
   private addRecentProject(folder: string): void {
     const withoutFolder = this.settings.recent_projects.filter((entry) => entry !== folder);
     this.settings.recent_projects = [folder, ...withoutFolder].slice(0, MAX_RECENT_PROJECTS);
@@ -153,7 +165,7 @@ class MockBackend implements Backend {
       );
     }
     const state = createEmptyProjectState(folder, project);
-    this.setCurrentProject(state);
+    this.switchProject(state);
     this.addRecentProject(folder);
     return buildOverview(state);
   }
@@ -166,13 +178,13 @@ class MockBackend implements Backend {
         "指定されたフォルダに作品が見つかりません。kataribe.yaml があるフォルダを選んでください。",
       );
     }
-    this.setCurrentProject(state);
+    this.switchProject(state);
     this.addRecentProject(folder);
     return buildOverview(state);
   }
 
   async closeProject(): Promise<void> {
-    this.project = null;
+    this.switchProject(null);
   }
 
   async overview(): Promise<ProjectOverview> {

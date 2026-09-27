@@ -57,6 +57,9 @@ export function QualityTab() {
   if (!isManuscript) {
     return <p className="quality-tab__empty">本文（.txt）を開いているときだけ確認できます。</p>;
   }
+  if (entry && !entry.exists) {
+    return <p className="quality-tab__empty">この本文はまだ生成されていません。</p>;
+  }
   if (!isCurrentDocumentLoaded || !report) {
     return <p className="quality-tab__empty">解析しています…</p>;
   }

@@ -7,6 +7,9 @@ import { useUiStore } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { documentSaveController } from "./documentSaveController";
 
+const UNSAVED_WORK_BLOCKS_SWITCH =
+  "保存できていない編集があるため、文書を切り替えませんでした。保存してから切り替えてください。";
+
 /**
  * 中央エディタで「今開いている文書」を保つためのロジック一式。
  * 目次でファイルを選ぶと読み込み、入力が止まって 1 秒後・Ctrl+S・ファイル切り替え・
@@ -45,6 +48,21 @@ export function useDocumentEditor() {
       .flush(backend)
       .then(() => {
         if (cancelled) {
+          return;
+        }
+        const shownPath = useEditorStore.getState().path;
+        if (shownPath !== null && shownPath === currentPath) {
+          // 既に表示している（切り替えを取り消して戻ってきたときなど）。読み直すと未保存の編集を消す。
+          return;
+        }
+        if (documentSaveController.hasUnsavedWork()) {
+          // 前の文書に保存できていない編集がある。切り替えると編集が消えるので、切り替えを取り消す。
+          showToast(UNSAVED_WORK_BLOCKS_SWITCH, "error");
+          if (shownPath === null) {
+            useWorkspaceStore.getState().clearCurrentDocument();
+          } else {
+            useWorkspaceStore.getState().openDocument(shownPath);
+          }
           return;
         }
         if (currentPath === null) {

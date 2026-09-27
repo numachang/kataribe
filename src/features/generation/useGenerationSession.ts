@@ -44,6 +44,13 @@ function createJobId(): string {
   return crypto.randomUUID();
 }
 
+const UNSAVED_WORK_BLOCKS_APPLY =
+  "開いている文書に保存できていない編集があるため、適用しませんでした。保存してから、もう一度適用してください。";
+
+function touchesDocument(changeSet: ChangeSet, path: string): boolean {
+  return changeSet.files.some((file) => file.path === path);
+}
+
 /**
  * 「工程」タブと「この文書」タブが共有する、生成 1 回分のセッション。
  * 一度に実行できる生成は 1 件だけで、どちらのタブから始めても同じ進捗・結果を表示する。
@@ -72,6 +79,8 @@ export function useGenerationSession(): GenerationSessionApi {
   // 作品を閉じる（このフックがアンマウントされる）ときに、自動で進めるループを止め、
   // 実行中の生成ジョブを中止する。アンマウント後は変更案の適用など画面の状態を変える処理を行わない。
   useEffect(() => {
+    // StrictMode では後始末のあとにもう一度実行されるので、ここで戻しておく
+    unmountedRef.current = false;
     return () => {
       unmountedRef.current = true;
       autoAdvanceStopRequested.current = true;
@@ -127,18 +136,27 @@ export function useGenerationSession(): GenerationSessionApi {
     [backend, showToast],
   );
 
-  /** 適用が完了した文書を、今開いていれば読み直す。開いているかどうかは currentPath で判定する。 */
+  /**
+   * 適用が完了した文書を、今開いていれば読み直す。開いているかどうかは currentPath で判定する。
+   * 適用の間にエディタへ入力されていたら（`contentBeforeApply` から変わっていたら）読み直さない。
+   * その編集の基準は古いハッシュのままなので、次の保存で競合として知らせることになる。
+   */
   const reloadOpenDocumentIfTouched = useCallback(
-    async (result: ChangeSet): Promise<void> => {
+    async (result: ChangeSet, contentBeforeApply: string): Promise<void> => {
       const openPath = useWorkspaceStore.getState().currentPath;
-      const touchesOpenDocument =
-        openPath !== null && result.files.some((file) => file.path === openPath);
-      if (!touchesOpenDocument || openPath === null) {
+      if (openPath === null || !touchesDocument(result, openPath)) {
         return;
       }
       try {
         const file = await backend.readFile(openPath);
-        if (!unmountedRef.current && useWorkspaceStore.getState().currentPath === openPath) {
+        const editor = useEditorStore.getState();
+        const isUntouchedSinceApply =
+          editor.path === openPath && editor.content === contentBeforeApply;
+        if (
+          !unmountedRef.current &&
+          useWorkspaceStore.getState().currentPath === openPath &&
+          isUntouchedSinceApply
+        ) {
           useEditorStore.getState().loadDocument(openPath, file.content, file.hash);
         }
       } catch (error) {
@@ -165,6 +183,17 @@ export function useGenerationSession(): GenerationSessionApi {
         if (unmountedRef.current) {
           return false;
         }
+        // 開いている文書の保存に失敗していると、ディスクは生成したときのままなので適用が通り、
+        // 適用後の読み直しで保存できていない編集が消える。そうなる前に止める。
+        const openPath = useWorkspaceStore.getState().currentPath;
+        if (
+          openPath !== null &&
+          touchesDocument(result, openPath) &&
+          documentSaveController.hasUnsavedWork()
+        ) {
+          throw new Error(UNSAVED_WORK_BLOCKS_APPLY);
+        }
+        const contentBeforeApply = useEditorStore.getState().content;
         const overview = await backend.applyChangeSet(result);
         if (unmountedRef.current) {
           return true;
@@ -175,7 +204,7 @@ export function useGenerationSession(): GenerationSessionApi {
           return true;
         }
 
-        await reloadOpenDocumentIfTouched(result);
+        await reloadOpenDocumentIfTouched(result, contentBeforeApply);
 
         setPhase("idle");
         setCurrentTask(null);

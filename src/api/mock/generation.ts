@@ -3,9 +3,6 @@ import { hashText } from "../../lib/hash";
 import { BackendError } from "../backend";
 import type { ChangeSet, FileChange, GenerationEvent, GenerationSettings, Task } from "../types";
 
-/** 生成した変更案のうち、作品フォルダ（`project_root`）を付ける前のもの。 */
-export type GeneratedChanges = Omit<ChangeSet, "project_root">;
-
 import {
   generateCastDrafts,
   generateCharacterDetail,
@@ -32,6 +29,9 @@ import {
 import { readMockFile, renderChapterFile, renderCharacterFile } from "./render";
 import type { MockChapter, MockScene, ProjectState } from "./state";
 import { findChapter, findCharacter, findScene } from "./state";
+
+/** 生成した変更案のうち、作品フォルダ（`project_root`）を付ける前のもの。 */
+export type GeneratedChanges = Omit<ChangeSet, "project_root">;
 
 /** キャンセルされた生成が投げる合図。呼び出し側は BackendError("cancelled") に変換する。 */
 export class GenerationCancelled extends Error {

@@ -20,15 +20,25 @@ function leaf(entry: Omit<OverviewEntry, "children">): OverviewEntry {
   return { ...entry, children: [] };
 }
 
-/** シーンの目標文字数を合計する。1 つも目標を定めていなければ null（目標なし）を返す。 */
-function sumSceneTargetChars(scenes: MockScene[]): number | null {
-  const withTarget = scenes.filter(
-    (scene): scene is MockScene & { targetChars: number } => scene.targetChars !== null,
-  );
-  if (withTarget.length === 0) {
-    return null;
+/** シーンの目標文字数。0 は目標なしとして扱う（Rust の overview と同じ）。 */
+function sceneTargetChars(scene: MockScene): number | null {
+  return scene.targetChars !== null && scene.targetChars > 0 ? scene.targetChars : null;
+}
+
+/**
+ * 章の目標文字数。すべてのシーンに目標があるときだけ合計する（Rust の overview と同じ。
+ * 一部のシーンだけの合計を、章全体の目標のように見せないため）。
+ */
+function chapterTargetChars(scenes: MockScene[]): number | null {
+  let sum = 0;
+  for (const scene of scenes) {
+    const target = sceneTargetChars(scene);
+    if (target === null) {
+      return null;
+    }
+    sum += target;
   }
-  return withTarget.reduce((sum, scene) => sum + scene.targetChars, 0);
+  return scenes.length > 0 ? sum : null;
 }
 
 function buildPlanningSection(state: ProjectState): OverviewSection {
@@ -209,7 +219,7 @@ function buildManuscriptSection(state: ProjectState): OverviewSection {
         kind: "scene",
         exists: scene.draft !== null,
         chars: charsOf(scene.draft),
-        target_chars: scene.targetChars,
+        target_chars: sceneTargetChars(scene),
         error: null,
       }),
     );
@@ -219,7 +229,7 @@ function buildManuscriptSection(state: ProjectState): OverviewSection {
       kind: "chapter",
       exists: true,
       chars: sceneEntries.reduce((sum, entry) => sum + entry.chars, 0),
-      target_chars: sumSceneTargetChars(chapter.scenes),
+      target_chars: chapterTargetChars(chapter.scenes),
       error: null,
       children: sceneEntries,
     };

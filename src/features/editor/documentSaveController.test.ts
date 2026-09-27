@@ -4,6 +4,7 @@ import { createMockBackend } from "../../api/mock";
 import { SAMPLE_PROJECT_FOLDER } from "../../api/mock/sampleProject";
 import { useEditorStore } from "../../store/editorStore";
 import { useUiStore } from "../../store/uiStore";
+import { wrapBackend } from "../../test/wrapBackend";
 import { documentSaveController } from "./documentSaveController";
 
 // このモジュールは React の外で完結する保存ロジックなので、フックやコンポーネントを介さずに
@@ -24,14 +25,13 @@ function withDelayedWrite(inner: Backend): {
   const writeStarted = new Promise<void>((resolve) => {
     notifyStarted = resolve;
   });
-  const backend: Backend = {
-    ...inner,
+  const backend = wrapBackend(inner, {
     async writeFile(path, content, expectedHash) {
       notifyStarted();
       await gate;
       return inner.writeFile(path, content, expectedHash);
     },
-  };
+  });
   return { backend, releaseWrites: release, writeStarted };
 }
 
@@ -74,12 +74,11 @@ describe("flush", () => {
     await openProject(inner);
     const original = await inner.readFile("concept.md");
     useEditorStore.getState().loadDocument("concept.md", original.content, original.hash);
-    const backend: Backend = {
-      ...inner,
+    const backend = wrapBackend(inner, {
       async writeFile() {
         throw new Error("ディスクがいっぱいです");
       },
-    };
+    });
 
     useEditorStore.getState().updateContent("保存できない編集");
     documentSaveController.notifyChange(backend);

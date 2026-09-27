@@ -25,9 +25,13 @@ export function WorkspaceScreen() {
     const lifecycle = createWindowLifecycle();
     return lifecycle.interceptClose(async () => {
       await documentSaveController.flush(backend);
-      return !documentSaveController.hasUnsavedWork();
+      if (documentSaveController.hasUnsavedWork()) {
+        showToast("保存できていない編集があるため、ウィンドウを閉じませんでした。", "error");
+        return false;
+      }
+      return true;
     });
-  }, [backend]);
+  }, [backend, showToast]);
 
   if (!overview) {
     return null;

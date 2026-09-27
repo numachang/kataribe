@@ -204,6 +204,35 @@ describe("createMockBackend / 生成", () => {
     await expect(promise).rejects.toMatchObject({ kind: "cancelled" });
   });
 
+  it("章の目標文字数は、すべてのシーンに目標があるときだけ合計し、目標 0 は目標なしとする（Rust と同じ）", async () => {
+    const backend = createMockBackend({ delayMs: 0 });
+    await backend.openProject(SAMPLE_PROJECT_FOLDER);
+    const chapter = await backend.readFile("plot/chapters/01.md");
+    await backend.writeFile(
+      "plot/chapters/01.md",
+      "---\ntitle: 一部だけ\nscenes:\n  - id: s01\n    title: 一\n    summary: 始まり。\n    target_chars: 1000\n  - id: s02\n    title: 二\n    summary: 続き。\n    target_chars: 0\n---\n",
+      chapter.hash,
+    );
+
+    const overview = await backend.overview();
+
+    const manuscript = overview.sections.find((section) => section.kind === "manuscript");
+    const firstChapter = manuscript?.entries[0];
+    expect(firstChapter?.target_chars).toBeNull();
+    expect(firstChapter?.children.map((scene) => scene.target_chars)).toEqual([1000, null]);
+  });
+
+  it("作品を閉じると、実行中の生成は中止される（Rust と同じ）", async () => {
+    const backend = createMockBackend({ delayMs: 20 });
+    await backend.openProject(SAMPLE_PROJECT_FOLDER);
+
+    const promise = backend.generate("job-close", { kind: "concept" }, () => {});
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await backend.closeProject();
+
+    await expect(promise).rejects.toMatchObject({ kind: "cancelled" });
+  });
+
   it("書き直し指示（revise）で既存の本文を変更できる", async () => {
     const backend = createMockBackend({ delayMs: 0 });
     await backend.openProject(SAMPLE_PROJECT_FOLDER);
