@@ -116,6 +116,7 @@ kataribe-project ─┘          │
 | `tokens` | `estimate_tokens(&str) -> usize` | トークン数の保守的な見積もり（かな・漢字 1 文字 ≒ 1 トークン） |
 | `normalize` | `normalize(&str, &NormalizeOptions) -> String` | 段落頭の全角字下げ、`…`/`...`→`……`、`--`→`――`、`!?`→`！？` と後続の全角空白、空行の整理、行末空白の除去 |
 | `quality` | `analyze(&str, &QualityOptions) -> QualityReport` | 品質指標と問題点の検出（§7） |
+| `repetition` | `overused_phrases(&str, &OverusedOptions) -> Vec<RepeatedPhrase>` | 繰り返し使っている表現の検出（漢字かカタカナを含む 3〜10 字。人物名は除く） |
 
 `TextStats`・`Segment`・`QualityReport` などは `serde::Serialize` と（`ts` feature で）`ts_rs::TS` を実装する。
 
@@ -154,7 +155,7 @@ pub async fn collect(stream, on_event) -> Result<Completion, LlmError>;   // 全
 | モジュール | 公開 API | 内容 |
 |---|---|---|
 | `path` | `RelPath` | 作品フォルダ内の相対パス。`..`・絶対パス・ドライブ指定・`\`・Windows 予約名・末尾のドット／空白・制御文字を拒否する |
-| `store` | `ProjectStore`、`TextFile { content, hash }`、`ContentHash`、`WriteCondition`、`BackupMode` | フォルダ外に出られないファイル操作。アトミック書き込み、競合検出、バックアップ、ゴミ箱 |
+| `store` | `ProjectStore`、`TextFile { content, hash }`、`ContentHash`、`WriteCondition`、`BackupMode`、`normalize_text(&str) -> String` | フォルダ外に出られないファイル操作。アトミック書き込み、競合検出、バックアップ、ゴミ箱 |
 | `frontmatter` | `Document<M> { meta, body }`、`parse`、`render` | YAML front matter の分解・合成（未知の項目を保持） |
 | `layout` | パス定数と `character_path(id)` などの関数 | §2 のフォルダ構成の唯一の定義 |
 | `model` | `Manifest`・`Rating`・`MarkdownDoc`・`Character`/`CharacterMeta`・`Chapter`/`ChapterMeta`・`ScenePlan`・`ChapterId`・`SceneId`・`CharacterId` | 各ファイルの型。`render()` でファイル内容を生成 |
@@ -241,6 +242,11 @@ Gemma には前者だけ、Qwen には後者だけが効き、両方を指定す
 6. ここまでの要約（直近ほど詳しく）
 7. 世界観、企画
 
+予算とは別に、直前までの本文（約 2 万字）と書きかけの本文から繰り返し使っている表現を機械的に抜き出し、
+「別の言い方にする（物語に必要な用語はそのまま使ってよい）」と伝える。ローカル LLM は前のシーンの決まり文句を
+場面をまたいで繰り返しがちなため（試作の短編で「嵐の咆哮」11 回）。同じ設計で書き比べると、
+文の使い回しが約 3 分の 1 に、最も多い表現の回数が 14 回から 9 回に減った。
+
 ### 4.4 プロンプト
 
 - プロンプトはコードに埋め込まず、`crates/kataribe-engine/prompts/*.j2`（minijinja）に置く。
@@ -257,7 +263,8 @@ Gemma には前者だけ、Qwen には後者だけが効き、両方を指定す
   生成物が Rust の型と一致していることは、CI で `cargo test --all-features` の後に `src/bindings` に差分が無いことで確かめる。
 - ブラウザ単体（`pnpm dev`）では、メモリ上の偽バックエンドで動く（画面の開発とテスト用）。
 - 起動オプション `--settings=<PATH>`（`--settings <PATH>` も可）で、既定の場所の代わりに使う設定ファイルを指定できる
-  （CLI の同名のオプションと同じ意味）。E2E テストが利用者の設定に触れずに動くためにも使う。
+  （設定ファイルの場所を指定する点は CLI と同じ。ただし指定したファイルが無い場合、CLI はエラーにするのに対し、
+  GUI は既定値から始める）。E2E テストが利用者の設定に触れずに動くためにも使う。
 
 ### 5.1 IPC の契約
 

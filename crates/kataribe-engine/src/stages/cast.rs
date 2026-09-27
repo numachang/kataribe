@@ -15,8 +15,9 @@ use super::materials::{
 };
 use crate::change_set::ChangeSet;
 use crate::error::{EngineError, Result};
+use crate::events::{NoticeLevel, notice};
 use crate::excerpt;
-use crate::prompt::PromptTemplate;
+use crate::prompt::{Prompt, PromptTemplate};
 
 const ROSTER_OUTPUT_TOKENS: u32 = 3072;
 const PROFILE_OUTPUT_TOKENS: u32 = 3072;
@@ -60,15 +61,7 @@ pub(super) async fn roster(stage: &Stage<'_>) -> Result<ChangeSet> {
         },
     )?;
     let output_tokens = stage.output_tokens(&prompt, ROSTER_OUTPUT_TOKENS)?;
-    let roster: Roster = stage
-        .caller
-        .json("登場人物の一覧を生成", &prompt, output_tokens)
-        .await?;
-    if roster.characters.is_empty() {
-        return Err(EngineError::InvalidOutput(
-            "登場人物が一人もいませんでした。".into(),
-        ));
-    }
+    let roster = generate_roster(stage, &prompt, output_tokens).await?;
 
     let mut taken: Vec<CharacterId> = existing
         .iter()
@@ -129,6 +122,55 @@ pub(super) async fn profile(stage: &Stage<'_>, id: &CharacterId) -> Result<Chang
         Some(base),
     );
     Ok(changes)
+}
+
+/// 登場人物の一覧を生成する。名前にローマ字が混ざっていたら、設定の回数まで生成し直す
+/// （ローカル LLM が「田中 Shukichi」のような名前を返すことがあった）。それでも残れば警告して使う。
+async fn generate_roster(stage: &Stage<'_>, prompt: &Prompt, output_tokens: u32) -> Result<Roster> {
+    const LABEL: &str = "登場人物の一覧を生成";
+    let mut retries_left = stage.settings.quality_retries;
+    loop {
+        let roster: Roster = stage.caller.json(LABEL, prompt, output_tokens).await?;
+        if roster.characters.is_empty() {
+            return Err(EngineError::InvalidOutput(
+                "登場人物が一人もいませんでした。".into(),
+            ));
+        }
+        let Some(problem) = roster_problem(&roster) else {
+            return Ok(roster);
+        };
+        if retries_left == 0 {
+            notice(
+                stage.caller.sink(),
+                NoticeLevel::Warning,
+                format!("{problem}確認して直してください。"),
+            );
+            return Ok(roster);
+        }
+        notice(
+            stage.caller.sink(),
+            NoticeLevel::Warning,
+            format!("{problem}生成し直します。"),
+        );
+        stage.caller.expect_steps(1);
+        retries_left -= 1;
+    }
+}
+
+/// 一覧の、生成し直す理由になる問題（名前にローマ字が混ざっている）。
+fn roster_problem(roster: &Roster) -> Option<String> {
+    let latin_names: Vec<&str> = roster
+        .characters
+        .iter()
+        .map(|entry| entry.name.as_str())
+        .filter(|name| name.chars().any(|c| c.is_ascii_alphabetic()))
+        .collect();
+    (!latin_names.is_empty()).then(|| {
+        format!(
+            "人物の名前にローマ字が混ざっています（{}）。",
+            latin_names.join("、")
+        )
+    })
 }
 
 fn new_character(id: CharacterId, entry: RosterEntry, order: Option<u32>) -> Character {

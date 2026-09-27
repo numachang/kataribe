@@ -169,21 +169,10 @@ mod tests {
     #[test]
     fn run_reports_a_failure_when_stdout_cannot_be_written_to() {
         use crate::output::testing::FailingConsole;
+        use crate::test_support::new_test_project;
 
         let folder = tempfile::tempdir().unwrap();
-        kataribe_engine::create_project(
-            folder.path(),
-            kataribe_engine::NewProject {
-                title: "みさき館の殺人".into(),
-                author: None,
-                genre: "mystery".into(),
-                genre_note: None,
-                rating: kataribe_project::Rating::General,
-                target_length: 6000,
-                idea: "嵐で孤立した洋館で起きる密室殺人。".into(),
-            },
-        )
-        .unwrap();
+        new_test_project(folder.path());
         let args = QualityArgs {
             folder: folder.path().to_path_buf(),
             json: false,

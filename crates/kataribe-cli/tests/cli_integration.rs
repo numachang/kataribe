@@ -1,16 +1,29 @@
-//! `kataribe_cli::run` を通した結合テスト。
+//! `kataribe_cli::run_cancellable` を通した結合テスト。
 //!
 //! wiremock で `OpenAI` 互換の SSE を返す偽サーバーを立て、一時フォルダに対して
 //! `new` → `run --until concept` → `status --json` → `generate style --dry-run`
 //! の流れを検証する。実際の LM Studio には一切つながない。
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::ffi::OsString;
+use std::sync::Arc;
 use std::time::Duration;
 
-use kataribe_cli::BufferConsole;
+use kataribe_cli::{ApplyGuard, BufferConsole, CancellationToken};
 use serde_json::{Value, json};
+use tokio::sync::Notify;
 use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+/// `kataribe_cli::run_cancellable` を、中止しない前提の呼び出しのために簡単にしたもの。
+/// 中止そのものを確かめるテストは、引き続き `run_cancellable` を直接使う。
+async fn run<I, T>(args: I, console: &BufferConsole) -> std::process::ExitCode
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+{
+    kataribe_cli::run_cancellable(args, console, CancellationToken::new(), &ApplyGuard::new()).await
+}
 
 /// `data:` チャンクの列から、`[DONE]` で終わる SSE 本文を組み立てる
 /// (kataribe-llm の結合テストと同じ組み立て方)。
@@ -77,7 +90,7 @@ async fn create_test_project(project_dir: &std::path::Path) {
         "--idea".to_owned(),
         "嵐で孤立した洋館で起きる密室殺人。".to_owned(),
     ];
-    let code = kataribe_cli::run(new_args, &BufferConsole::new()).await;
+    let code = run(new_args, &BufferConsole::new()).await;
     assert_eq!(code, std::process::ExitCode::from(0), "new に失敗");
 }
 
@@ -100,7 +113,7 @@ async fn full_flow_creates_a_project_and_generates_concept_then_previews_style()
         "--idea".to_owned(),
         "嵐で孤立した洋館で起きる密室殺人。".to_owned(),
     ];
-    let code = kataribe_cli::run(new_args, &new_console).await;
+    let code = run(new_args, &new_console).await;
     assert_eq!(
         code,
         std::process::ExitCode::from(0),
@@ -123,7 +136,7 @@ async fn full_flow_creates_a_project_and_generates_concept_then_previews_style()
         "--until".to_owned(),
         "concept".to_owned(),
     ]);
-    let code = kataribe_cli::run(run_args, &run_console).await;
+    let code = run(run_args, &run_console).await;
     assert_eq!(
         code,
         std::process::ExitCode::from(0),
@@ -145,7 +158,7 @@ async fn full_flow_creates_a_project_and_generates_concept_then_previews_style()
         project_dir.display().to_string(),
         "--json".to_owned(),
     ]);
-    let code = kataribe_cli::run(status_args, &status_console).await;
+    let code = run(status_args, &status_console).await;
     assert_eq!(code, std::process::ExitCode::from(0));
     let payload: Value = serde_json::from_str(&status_console.stdout()).unwrap();
     let concept_step = payload["pipeline"]
@@ -170,7 +183,7 @@ async fn full_flow_creates_a_project_and_generates_concept_then_previews_style()
         "style".to_owned(),
         "--dry-run".to_owned(),
     ]);
-    let code = kataribe_cli::run(generate_args, &generate_console).await;
+    let code = run(generate_args, &generate_console).await;
     assert_eq!(
         code,
         std::process::ExitCode::from(0),
@@ -209,7 +222,7 @@ async fn generate_reports_missing_prerequisites_as_a_failure() {
         "嵐で孤立した洋館で起きる密室殺人。".to_owned(),
     ];
     assert_eq!(
-        kataribe_cli::run(new_args, &console).await,
+        run(new_args, &console).await,
         std::process::ExitCode::from(0)
     );
 
@@ -220,7 +233,7 @@ async fn generate_reports_missing_prerequisites_as_a_failure() {
         project_dir.display().to_string(),
         "style".to_owned(),
     ]);
-    let code = kataribe_cli::run(generate_args, &console).await;
+    let code = run(generate_args, &console).await;
 
     assert_eq!(code, std::process::ExitCode::from(1));
     assert!(console.stderr().contains("先に企画を生成してください"));
@@ -237,7 +250,7 @@ async fn unknown_task_argument_is_a_usage_error() {
         temp_dir.path().display().to_string(),
         "no-such-task".to_owned(),
     ];
-    let code = kataribe_cli::run(args, &console).await;
+    let code = run(args, &console).await;
 
     assert_eq!(code, std::process::ExitCode::from(2));
     assert!(console.stderr().contains("不明な工程です"));
@@ -256,7 +269,7 @@ async fn instruction_without_revise_is_a_usage_error() {
         "--instruction".to_owned(),
         "無視されるはず".to_owned(),
     ];
-    let code = kataribe_cli::run(args, &console).await;
+    let code = run(args, &console).await;
 
     assert_eq!(code, std::process::ExitCode::from(2));
     assert!(console.stderr().contains("--instruction"));
@@ -273,7 +286,7 @@ async fn revise_without_instruction_is_a_usage_error() {
         temp_dir.path().display().to_string(),
         "revise:concept.md".to_owned(),
     ];
-    let code = kataribe_cli::run(args, &console).await;
+    let code = run(args, &console).await;
 
     assert_eq!(code, std::process::ExitCode::from(2));
     assert!(console.stderr().contains("--instruction"));
@@ -289,14 +302,24 @@ async fn cancelling_during_a_slow_response_exits_with_130_and_writes_nothing() {
     create_test_project(&project_dir).await;
 
     // 応答をわざと遅らせる（idle_timeout の既定値は 5 分なので、タイムアウトより先に中止が効く）。
+    // 中止しなければ本当にファイルへ書き込まれるはずの、実 SSE 本文を持たせる。そうしないと、
+    // 応答が空のままでも(中止が効いていなくても)concept.md が作られず、この後の
+    // 「何も書き込まれない」確認が中止の効果ではなく偶然で通ってしまう。
+    let chunks = vec![json!({
+        "choices": [{"delta": {"content": "# 企画\n## ログライン\n中止しなければ書かれる内容。\n"}, "finish_reason": "stop"}]
+    })];
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
-        .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(2)))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_delay(Duration::from_secs(2))
+                .set_body_raw(sse_body(&chunks), "text/event-stream"),
+        )
         .mount(&server)
         .await;
 
     let console = BufferConsole::new();
-    let cancel = kataribe_cli::CancellationToken::new();
+    let cancel = CancellationToken::new();
     let trigger = cancel.clone();
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -309,7 +332,8 @@ async fn cancelling_during_a_slow_response_exits_with_130_and_writes_nothing() {
         project_dir.display().to_string(),
         "concept".to_owned(),
     ]);
-    let code = kataribe_cli::run_cancellable(generate_args, &console, cancel).await;
+    let code =
+        kataribe_cli::run_cancellable(generate_args, &console, cancel, &ApplyGuard::new()).await;
 
     assert_eq!(code, std::process::ExitCode::from(130));
     assert!(
@@ -342,7 +366,7 @@ async fn run_stops_after_max_steps_even_though_more_work_is_ready() {
         "--max-steps".to_owned(),
         "1".to_owned(),
     ]);
-    let code = kataribe_cli::run(run_args, &console).await;
+    let code = run(run_args, &console).await;
 
     assert_eq!(
         code,
@@ -384,7 +408,7 @@ async fn run_stops_at_until_stage_even_though_more_work_is_ready() {
         "--until".to_owned(),
         "concept".to_owned(),
     ]);
-    let code = kataribe_cli::run(run_args, &console).await;
+    let code = run(run_args, &console).await;
 
     assert_eq!(
         code,
@@ -417,7 +441,7 @@ async fn dry_run_leaves_an_existing_file_completely_unchanged() {
         "concept".to_owned(),
     ]);
     assert_eq!(
-        kataribe_cli::run(first_args, &BufferConsole::new()).await,
+        run(first_args, &BufferConsole::new()).await,
         std::process::ExitCode::from(0)
     );
     let original = std::fs::read_to_string(project_dir.join("concept.md")).unwrap();
@@ -435,7 +459,7 @@ async fn dry_run_leaves_an_existing_file_completely_unchanged() {
         "concept".to_owned(),
         "--dry-run".to_owned(),
     ]);
-    let code = kataribe_cli::run(dry_run_args, &console).await;
+    let code = run(dry_run_args, &console).await;
 
     assert_eq!(
         code,
@@ -472,7 +496,7 @@ async fn generate_without_dry_run_replaces_the_file_and_backs_it_up() {
         "concept".to_owned(),
     ]);
     assert_eq!(
-        kataribe_cli::run(first_args, &BufferConsole::new()).await,
+        run(first_args, &BufferConsole::new()).await,
         std::process::ExitCode::from(0)
     );
 
@@ -484,7 +508,7 @@ async fn generate_without_dry_run_replaces_the_file_and_backs_it_up() {
         project_dir.display().to_string(),
         "concept".to_owned(),
     ]);
-    let code = kataribe_cli::run(second_args, &console).await;
+    let code = run(second_args, &console).await;
 
     assert_eq!(
         code,
@@ -515,13 +539,21 @@ async fn external_edit_during_generation_causes_a_conflict_and_writes_nothing() 
     let chunks = vec![json!({
         "choices": [{"delta": {"content": "# 企画\n## ログライン\n生成された内容。\n"}, "finish_reason": "stop"}]
     })];
+    let response_body = sse_body(&chunks);
+    // 固定の待ち時間に頼ると、遅い実行環境では外部の書き込みが応答より先に終わる保証がない
+    // （逆に速すぎる環境では意味のある競合にならない）。偽サーバーが実際にリクエストを受けた
+    // 瞬間を合図にすることで、タイミングに関係なく「応答が返る前に外部で書き換わる」状況を
+    // 確実に再現する。
+    let request_received = Arc::new(Notify::new());
+    let signal_on_request = request_received.clone();
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
-        .respond_with(
+        .respond_with(move |_request: &Request| {
+            signal_on_request.notify_one();
             ResponseTemplate::new(200)
                 .set_delay(Duration::from_millis(300))
-                .set_body_raw(sse_body(&chunks), "text/event-stream"),
-        )
+                .set_body_raw(response_body.clone(), "text/event-stream")
+        })
         .up_to_n_times(1)
         .mount(&server)
         .await;
@@ -529,7 +561,7 @@ async fn external_edit_during_generation_causes_a_conflict_and_writes_nothing() 
     let concept_path = project_dir.join("concept.md");
     let external_write_path = concept_path.clone();
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        request_received.notified().await;
         std::fs::write(&external_write_path, "外部から書かれた内容").unwrap();
     });
 
@@ -540,7 +572,7 @@ async fn external_edit_during_generation_causes_a_conflict_and_writes_nothing() 
         project_dir.display().to_string(),
         "concept".to_owned(),
     ]);
-    let code = kataribe_cli::run(generate_args, &console).await;
+    let code = run(generate_args, &console).await;
 
     assert_eq!(code, std::process::ExitCode::from(1));
     assert_eq!(
@@ -570,7 +602,7 @@ async fn export_refuses_a_destination_inside_the_project_folder() {
         "--output".to_owned(),
         project_dir.join("novel.txt").display().to_string(),
     ];
-    let code = kataribe_cli::run(args, &console).await;
+    let code = run(args, &console).await;
 
     assert_eq!(code, std::process::ExitCode::from(1));
     assert!(console.stderr().contains("作品フォルダの中"));
@@ -593,7 +625,7 @@ async fn export_writes_to_a_destination_outside_the_project_folder() {
         "--output".to_owned(),
         output_path.display().to_string(),
     ];
-    let code = kataribe_cli::run(args, &console).await;
+    let code = run(args, &console).await;
 
     assert_eq!(
         code,
@@ -602,4 +634,76 @@ async fn export_writes_to_a_destination_outside_the_project_folder() {
         console.stderr()
     );
     assert!(output_path.is_file());
+}
+
+/// リクエストのたびに `contents` を順番に返す偽サーバーを立てる。`run` は工程ごとに別々の
+/// `engine.generate` 呼び出しをするので、1 回のモックでは工程間の区切りを検証できない
+/// （`respond_once_with` を 2 回呼んでも、どちらが先に消費されるかは wiremock の実装に依存する）。
+async fn respond_with_sequence(server: &MockServer, contents: &[&str]) {
+    let contents: Vec<String> = contents
+        .iter()
+        .map(|content| (*content).to_owned())
+        .collect();
+    let next_index = std::sync::atomic::AtomicUsize::new(0);
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(move |_request: &Request| {
+            let index = next_index.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let content = contents.get(index).cloned().unwrap_or_default();
+            let chunks = vec![
+                json!({"choices": [{"delta": {"content": content}, "finish_reason": "stop"}]}),
+            ];
+            ResponseTemplate::new(200).set_body_raw(sse_body(&chunks), "text/event-stream")
+        })
+        .mount(server)
+        .await;
+}
+
+/// 13(g): `run` が続けて 2 つの工程を生成したとき、標準出力側にも工程の区切りが入ること。
+/// 1 つ目の工程の本文はわざと改行で終わらせず、区切りの前に改行を補ってから空行を入れる
+/// 規則も確かめる。
+#[tokio::test]
+async fn run_separates_stdout_between_consecutive_pipeline_steps_with_a_blank_line() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    let server = MockServer::start().await;
+    create_test_project(&project_dir).await;
+
+    respond_with_sequence(
+        &server,
+        &[
+            "# 企画\n## ログライン\n嵐の洋館で起きる密室殺人。",
+            "# 文体ガイド\n## 文体見本\n　雨の音が響く。\n",
+        ],
+    )
+    .await;
+
+    let console = BufferConsole::new();
+    let mut run_args = common_args(&server.uri(), temp_dir.path());
+    run_args.extend([
+        "run".to_owned(),
+        project_dir.display().to_string(),
+        "--until".to_owned(),
+        "style".to_owned(),
+    ]);
+    let code = run(run_args, &console).await;
+
+    assert_eq!(
+        code,
+        std::process::ExitCode::from(0),
+        "run に失敗: {}",
+        console.stderr()
+    );
+    let stdout = console.stdout();
+    let concept_end = stdout
+        .find("密室殺人。")
+        .expect("企画の内容が出力されるはず")
+        + "密室殺人。".len();
+    let style_start = stdout
+        .find("雨の音が響く。")
+        .expect("文体ガイドの内容が出力されるはず");
+    assert!(
+        stdout[concept_end..style_start].contains("\n\n"),
+        "工程の間に空行が入るはず: {stdout:?}"
+    );
 }

@@ -6,28 +6,40 @@ use std::io::{BufRead, IsTerminal};
 
 use anyhow::Context;
 use kataribe_engine::ApiKeyStore;
+use tokio_util::sync::CancellationToken;
 
 use crate::args::{ApiKeyAction, ApiKeyArgs};
 use crate::output::Console;
 
 use super::Outcome;
 
-pub fn run(args: &ApiKeyArgs, console: &dyn Console) -> anyhow::Result<Outcome> {
+pub fn run(
+    args: &ApiKeyArgs,
+    console: &dyn Console,
+    cancel: &CancellationToken,
+) -> anyhow::Result<Outcome> {
     match args.action {
-        ApiKeyAction::Set => set(console),
+        ApiKeyAction::Set => set(console, cancel),
         ApiKeyAction::Clear => clear(console),
         ApiKeyAction::Status => status(console),
     }
 }
 
-fn set(console: &dyn Console) -> anyhow::Result<Outcome> {
+/// 標準入力から 1 行読んで API キーとして保存する。
+///
+/// `read_line` は同期処理で、Ctrl+C を受けても即座には中断されない（実際に何か入力されるまで
+/// 待ち続ける）。1 回目の Ctrl+C のあとに利用者が入力してしまっても保存しないよう、読み終えた
+/// あとで `cancel` を確かめる。応答しなくなったこの待ちをそれでも切り上げたいときは、
+/// `main.rs` が 2 回目の Ctrl+C でプロセスごと終了する。
+fn set(console: &dyn Console, cancel: &CancellationToken) -> anyhow::Result<Outcome> {
     let stdin = std::io::stdin();
     if stdin.is_terminal() {
         console
             .eprint(
                 "注意: 端末から直接入力すると、入力したキーがそのまま画面に表示されます。\n\
                  表示したくない場合は、パイプで渡してください\n\
-                 （例: Get-Content key.txt | kataribe-cli api-key set）。\n",
+                 （例: Get-Content key.txt | kataribe-cli api-key set）。\n\
+                 中止するには Ctrl+C を 2 回押してください。\n",
             )
             .context("標準エラー出力への書き込みに失敗しました")?;
     }
@@ -36,6 +48,9 @@ fn set(console: &dyn Console) -> anyhow::Result<Outcome> {
         .lock()
         .read_line(&mut line)
         .context("標準入力から API キーを読み取れません")?;
+    if cancel.is_cancelled() {
+        return Ok(Outcome::Cancelled);
+    }
     let key = line.trim();
     if key.is_empty() {
         anyhow::bail!("API キーが入力されませんでした。");

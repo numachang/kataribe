@@ -1,6 +1,7 @@
 //! 本文生成のプロンプトを、モデルの文脈に収まるように組み立てる。
 
 use kataribe_project::{Character, ScenePlan};
+use kataribe_text::repetition::{OverusedOptions, overused_phrases};
 use minijinja::{Value, context};
 use serde::Serialize;
 
@@ -22,6 +23,10 @@ const PROFILE_ESSENTIALS: &[&str] = &["口調", "性格"];
 /// 小さなモデルは長い文脈の途中にある人称の指定を見落とし、視点人物の一人称で書きがちなため。
 const NARRATION_HEADING: &str = "人称";
 const NARRATION_CHARS: usize = 400;
+/// 「使いすぎ」とみなす回数と、プロンプトで避けさせる表現の数。
+/// ローカル LLM は前のシーンの決まり文句を場面をまたいで繰り返しがちなので、機械的に拾って伝える。
+const OVERUSED_MIN_COUNT: usize = 3;
+const MAX_OVERUSED_PHRASES: usize = 8;
 
 /// 資料ごとの文字数の上限。上の段から順に試し、文脈に収まった段を使う。
 /// 優先度の低い資料（世界観 → これまでの要約 → 人物の詳細 → 直前の本文 → 文体）から先に減らす。
@@ -109,6 +114,8 @@ pub(crate) struct DraftMaterial<'a> {
     /// 今回書くシーンの範囲（章の中の添字）。章単位なら複数のシーンになる。
     pub scenes: std::ops::Range<usize>,
     pub story_so_far: &'a [StoryEntry],
+    /// このシーンより前の本文の末尾（使いすぎの表現を探すのに使う）。
+    pub recent_prose: &'a str,
 }
 
 #[derive(Debug, Serialize)]
@@ -131,12 +138,13 @@ impl DraftMaterial<'_> {
         output_tokens: u32,
     ) -> Result<Prompt> {
         let budget = stage.prompt_budget(output_tokens);
-        let mut prompt = self.render_with(stage, assignment, LEVELS[0])?;
+        let overused = self.overused_phrases(assignment.written_so_far);
+        let mut prompt = self.render_with(stage, assignment, &overused, LEVELS[0])?;
         for caps in &LEVELS[1..] {
             if prompt.estimated_tokens() <= budget {
                 return Ok(prompt);
             }
-            prompt = self.render_with(stage, assignment, *caps)?;
+            prompt = self.render_with(stage, assignment, &overused, *caps)?;
         }
         if prompt.estimated_tokens() > budget {
             notice(
@@ -148,10 +156,28 @@ impl DraftMaterial<'_> {
         Ok(prompt)
     }
 
+    /// 直前までの本文と、このシーンの書きかけの本文で、繰り返し使っている表現。
+    fn overused_phrases(&self, written_so_far: &str) -> Vec<String> {
+        let text = format!("{}\n{written_so_far}", self.recent_prose);
+        let names = self.story.character_name_words();
+        overused_phrases(
+            &text,
+            &OverusedOptions {
+                min_count: OVERUSED_MIN_COUNT,
+                max_phrases: MAX_OVERUSED_PHRASES,
+                ignored_words: &names,
+            },
+        )
+        .into_iter()
+        .map(|found| found.phrase)
+        .collect()
+    }
+
     fn render_with(
         &self,
         stage: &Stage<'_>,
         assignment: &Assignment<'_>,
+        overused: &[String],
         caps: Caps,
     ) -> Result<Prompt> {
         let story_start = self.story_so_far.len().saturating_sub(caps.story_entries);
@@ -161,6 +187,7 @@ impl DraftMaterial<'_> {
                 project => &stage.info,
                 style => excerpt::prioritized(&self.story.style, STYLE_ESSENTIALS, caps.style),
                 narration => excerpt::section(&self.story.style, NARRATION_HEADING, NARRATION_CHARS),
+                overused => overused,
                 world => excerpt::head(&self.story.world, caps.world),
                 characters => self.cast(caps.profile),
                 story_so_far => &self.story_so_far[story_start..],

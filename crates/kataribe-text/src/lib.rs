@@ -7,5 +7,6 @@ pub mod count;
 pub mod meta;
 pub mod normalize;
 pub mod quality;
+pub mod repetition;
 pub mod ruby;
 pub mod tokens;

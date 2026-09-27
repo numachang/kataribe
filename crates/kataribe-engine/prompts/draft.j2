@@ -76,6 +76,13 @@
 {{ narration }}
 
 {% endif %}
+{% if overused %}
+【ここまでの本文で繰り返し使っている表現】
+{% for phrase in overused %}「{{ phrase }}」{% endfor %}
+
+言い回しが単調になっているので、今回はこれらの表現を使わず、別の言い方や別の描写にすること（物語に必要な固有名詞や用語はそのまま使ってよい）。
+
+{% endif %}
 【指示】
 {% if unit == "chapter" %}
 この章のシーン {{ chapter.first_current }} からシーン {{ chapter.last_current }} までの本文を、順に約{{ target_chars }}字で書いてください。

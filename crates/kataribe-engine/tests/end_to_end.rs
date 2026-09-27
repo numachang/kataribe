@@ -715,3 +715,93 @@ async fn chapter_unit_writes_every_unwritten_scene_up_to_the_next_written_one() 
     let prompt = &model.requests()[0].messages[1].content;
     assert!(prompt.contains("シーン 1 からシーン 2 まで"), "{prompt}");
 }
+
+#[tokio::test]
+async fn phrases_repeated_in_earlier_scenes_are_named_so_the_next_scene_avoids_them() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path());
+    prepare_two_scene_chapter(&project);
+    write(
+        &project,
+        "manuscript/01/s01.txt",
+        "　嵐の咆哮が屋根を叩いた。\n　嵐の咆哮の合間に足音がした。\n　また嵐の咆哮が窓を揺らした。\n",
+    );
+    let model = Arc::new(ScriptedChatModel::new([
+        Script::reply(["二人は嵐の中、洋館に着いた。"]),
+        Script::reply(["書斎は静かだった。\n"]),
+    ]));
+    let engine = Engine::new(model.clone(), settings(DraftUnit::Chapter)).unwrap();
+
+    run(
+        &engine,
+        &project,
+        &Task::Draft {
+            chapter: ChapterId::from_number(1),
+            scene: SceneId::new("s02").unwrap(),
+        },
+    )
+    .await;
+
+    // 1 回目は書き終えたシーン 1 の要約、2 回目が本文
+    let prompt = &model.requests()[1].messages[1].content;
+    assert!(
+        prompt.contains("繰り返し使っている表現") && prompt.contains("「嵐の咆哮」"),
+        "{prompt}"
+    );
+}
+
+#[tokio::test]
+async fn nothing_is_named_when_no_phrase_is_overused() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path());
+    prepare_one_scene_chapter(&project);
+    let model = Arc::new(ScriptedChatModel::new([Script::reply([prose(
+        SCENE1_PART1,
+    )])]));
+    let engine = Engine::new(model.clone(), settings(DraftUnit::Chapter)).unwrap();
+
+    run(
+        &engine,
+        &project,
+        &Task::Draft {
+            chapter: ChapterId::from_number(1),
+            scene: "s01".parse().unwrap(),
+        },
+    )
+    .await;
+
+    let prompt = &model.requests()[0].messages[1].content;
+    assert!(!prompt.contains("繰り返し使っている表現"), "{prompt}");
+}
+
+#[tokio::test]
+async fn a_cast_with_romanized_names_is_generated_again() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path());
+    write(&project, "concept.md", CONCEPT);
+    write(&project, "world/overview.md", WORLD);
+    let romanized = r#"{"characters": [
+  {"id": "kirishima-rin", "name": "霧島 凛", "reading": "きりしま りん", "role": "主人公", "summary": "盲目の少女探偵。"},
+  {"id": "tanaka-shukichi", "name": "田中 Shukichi", "reading": "たなか しゅうきち", "role": "執事", "summary": "館の執事。"}
+]}"#;
+    let model = Arc::new(ScriptedChatModel::new([
+        Script::reply([romanized]),
+        Script::reply([CAST]),
+    ]));
+    let settings = GenerationSettings {
+        quality_retries: 1,
+        ..settings(DraftUnit::Beat)
+    };
+    let engine = Engine::new(model.clone(), settings).unwrap();
+
+    run(&engine, &project, &Task::Cast).await;
+
+    let names: Vec<String> = project
+        .characters()
+        .unwrap()
+        .into_iter()
+        .map(|character| character.meta.name)
+        .collect();
+    assert_eq!(names, vec!["霧島 凛", "佐藤 健二"]);
+    assert_eq!(model.requests().len(), 2);
+}

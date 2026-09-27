@@ -1,7 +1,7 @@
 //! `export` サブコマンド: 本文を章題付きの一つのテキストにまとめる。
 
 use std::io::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use kataribe_project::{Chapter, Project};
@@ -24,56 +24,83 @@ pub fn run(args: &ExportArgs, console: &dyn Console) -> anyhow::Result<Outcome> 
     Ok(Outcome::Success)
 }
 
-/// `path` に書き出す。作品フォルダの中を指すパスは拒否し、既存ファイルの上書きは
-/// `--force` を指定したときだけ許す。
+/// `path` に書き出す。作品フォルダの中を指すパスは拒否し、フォルダを指すパスも拒否する。
+/// 既存ファイルの上書きは `--force` を指定したときだけ許す。
 fn write_output(project: &Project, path: &Path, force: bool, text: &str) -> anyhow::Result<()> {
     reject_path_inside_project(project, path)?;
-    if path.exists() && !force {
-        anyhow::bail!(
-            "書き出し先に既にファイルがあります（上書きするには --force を指定してください）: {}",
-            path.display()
-        );
-    }
-    write_atomically(path, text)
+    reject_a_directory_destination(path)?;
+    write_atomically(path, text, force)
 }
 
 /// `path` が作品フォルダの中を指していないことを確かめる。
 ///
-/// まだ存在しないファイルは、実在する親フォルダを canonicalize して比べる
-/// （ファイル自体はまだ無いので canonicalize できないため）。
+/// パスの文字列としての前方一致では、同じ実体を別の綴りで指すパス（Windows の管理共有
+/// `\\localhost\c$\...` など）を見逃してしまう。そのため、書き出し先から実在する祖先を
+/// 一つ見つけ、そこから上のフォルダをすべて実体で（[`same_file::is_same_file`]）比べる。
+/// 実体で比べれば、管理共有はもちろん、大文字小文字の違いやジャンクション越しの別名も、
+/// 実際には作品フォルダそのものなら見抜ける。
 fn reject_path_inside_project(project: &Project, path: &Path) -> anyhow::Result<()> {
-    let candidate = if path.exists() {
-        path.canonicalize()
-            .with_context(|| format!("書き出し先を確認できません: {}", path.display()))?
-    } else {
-        let parent = existing_parent(path);
-        parent
-            .canonicalize()
-            .with_context(|| format!("書き出し先の親フォルダがありません: {}", parent.display()))?
-    };
-    if candidate.starts_with(project.store().canonical_root()) {
-        anyhow::bail!(
-            "書き出し先に作品フォルダの中は指定できません（原稿と資料を巻き込んで上書きしてしまうため）: {}",
-            path.display()
-        );
+    let start = existing_ancestor(syntactic_parent(path))
+        .with_context(|| format!("書き出し先の親フォルダを確認できません: {}", path.display()))?;
+    for ancestor in start.ancestors() {
+        let is_project_root = same_file::is_same_file(ancestor, project.root())
+            .with_context(|| format!("書き出し先を確認できません: {}", ancestor.display()))?;
+        if is_project_root {
+            anyhow::bail!(
+                "書き出し先に作品フォルダの中は指定できません（原稿と資料を巻き込んで上書きしてしまうため）: {}",
+                path.display()
+            );
+        }
     }
     Ok(())
 }
 
-fn existing_parent(path: &Path) -> &Path {
+/// `path` が既存のフォルダを指していたら、専用のメッセージで拒否する。
+///
+/// `Path::exists` はリンク先の無いシンボリックリンクを「存在しない」として扱ってしまうため、
+/// リンクそのものの有無を確かめられる `symlink_metadata` を使う。
+fn reject_a_directory_destination(path: &Path) -> anyhow::Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => anyhow::bail!(
+            "書き出し先にはフォルダが指定されています。ファイル名を指定してください: {}",
+            path.display()
+        ),
+        _ => Ok(()),
+    }
+}
+
+/// `path` の字面上の親フォルダ（実在するとは限らない）。親が無ければカレントディレクトリ。
+fn syntactic_parent(path: &Path) -> &Path {
     match path.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
         _ => Path::new("."),
     }
 }
 
+/// `path` から、実在する祖先を一つ見つける（`path` 自身が実在しなくてもよい）。
+fn existing_ancestor(path: &Path) -> std::io::Result<PathBuf> {
+    for ancestor in path.ancestors() {
+        if ancestor.try_exists()? {
+            return Ok(ancestor.to_path_buf());
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        "実在する祖先フォルダが見つかりません",
+    ))
+}
+
 /// `path` と同じフォルダの一時ファイルに書いてから置き換える。書き込みの途中で失敗しても、
 /// 既存のファイル（あれば）はそのまま残る。
 ///
+/// `force` でなければ、既存ファイルが無いことを確かめてから置き換えるのではなく
+/// （その間に別プロセスがファイルを作る競合が起こりうる）、置き換え自体を無条件では行わない
+/// `persist_noclobber` を使い、既存判定と置き換えを一つの操作にする。
+///
 /// [`kataribe_project::ProjectStore`] と違い、一時的なロックの再試行はしない。書き出しは
 /// 作品フォルダの外への一度きりの操作で、書き込みの競合が繰り返し起きる想定がないため。
-fn write_atomically(path: &Path, text: &str) -> anyhow::Result<()> {
-    let parent = existing_parent(path);
+fn write_atomically(path: &Path, text: &str, force: bool) -> anyhow::Result<()> {
+    let parent = syntactic_parent(path);
     let mut temp = tempfile::NamedTempFile::new_in(parent)
         .with_context(|| format!("書き出し先に一時ファイルを作れません: {}", parent.display()))?;
     temp.write_all(text.as_bytes())
@@ -81,10 +108,23 @@ fn write_atomically(path: &Path, text: &str) -> anyhow::Result<()> {
     temp.as_file()
         .sync_all()
         .context("一時ファイルの同期に失敗しました")?;
-    temp.persist(path)
-        .map(|_file| ())
-        .map_err(|error| error.error)
-        .with_context(|| format!("書き出し先に書き込めません: {}", path.display()))
+    let result = if force {
+        temp.persist(path).map(|_file| ())
+    } else {
+        temp.persist_noclobber(path).map(|_file| ())
+    };
+    result.map_err(|error| describe_persist_error(error.error, path, force))
+}
+
+fn describe_persist_error(error: std::io::Error, path: &Path, force: bool) -> anyhow::Error {
+    if !force && error.kind() == std::io::ErrorKind::AlreadyExists {
+        anyhow::anyhow!(
+            "書き出し先に既にファイルがあります（上書きするには --force を指定してください）: {}",
+            path.display()
+        )
+    } else {
+        anyhow::Error::new(error).context(format!("書き出し先に書き込めません: {}", path.display()))
+    }
 }
 
 /// 章ごとに「第N章　章題」を見出しにし、シーンを空行で区切って一つの文章にまとめる。
@@ -117,24 +157,8 @@ fn export_chapter(project: &Project, chapter: &Chapter) -> anyhow::Result<String
 mod tests {
     use super::*;
     use crate::output::testing::FailingConsole;
-    use kataribe_engine::{NewProject, create_project};
-    use kataribe_project::{ChapterId, ChapterMeta, Rating, SceneId, ScenePlan, WriteOptions};
-
-    fn new_project(folder: &Path) -> Project {
-        create_project(
-            folder,
-            NewProject {
-                title: "みさき館の殺人".into(),
-                author: None,
-                genre: "mystery".into(),
-                genre_note: None,
-                rating: Rating::General,
-                target_length: 6000,
-                idea: "嵐で孤立した洋館で起きる密室殺人。".into(),
-            },
-        )
-        .unwrap()
-    }
+    use crate::test_support::new_test_project as new_project;
+    use kataribe_project::{ChapterId, ChapterMeta, SceneId, ScenePlan, WriteOptions};
 
     fn write_chapter_with_one_scene(project: &Project) {
         let chapter_id = ChapterId::from_number(1);
@@ -289,6 +313,124 @@ mod tests {
         write_output(&project, &output, false, "本文").unwrap();
 
         assert_eq!(std::fs::read_to_string(&output).unwrap(), "本文");
+    }
+
+    #[test]
+    fn write_output_rejects_the_project_folder_itself_as_the_destination() {
+        let folder = tempfile::tempdir().unwrap();
+        let project = new_project(folder.path());
+
+        let error = write_output(&project, project.root(), false, "本文").unwrap_err();
+
+        assert!(error.to_string().contains("フォルダ"));
+    }
+
+    #[test]
+    fn write_output_rejects_an_unrelated_existing_directory_as_the_destination() {
+        let folder = tempfile::tempdir().unwrap();
+        let project = new_project(folder.path());
+        let other_dir = tempfile::tempdir().unwrap();
+
+        let error = write_output(&project, other_dir.path(), false, "本文").unwrap_err();
+
+        assert!(error.to_string().contains("フォルダ"));
+    }
+
+    /// `..` を含む字面上のパスでも、実際に辿った先が作品フォルダの中なら拒否できること。
+    #[test]
+    fn write_output_rejects_a_destination_that_escapes_back_into_the_project_via_dot_dot() {
+        let folder = tempfile::tempdir().unwrap();
+        let project = new_project(folder.path());
+        std::fs::create_dir(project.root().join("sub")).unwrap();
+        let via_dot_dot = project.root().join("sub").join("..").join("novel.txt");
+
+        let error = write_output(&project, &via_dot_dot, false, "本文").unwrap_err();
+
+        assert!(error.to_string().contains("作品フォルダの中"));
+    }
+
+    /// Windows のジャンクション（ディレクトリの別名）越しに作品フォルダを指しても拒否できること。
+    /// ジャンクションは通常の権限でも作れるが、環境によっては作れないことがあるので、その場合は
+    /// このテストを skip する。
+    #[cfg(windows)]
+    #[test]
+    fn write_output_rejects_the_project_folder_via_a_junction() {
+        let folder = tempfile::tempdir().unwrap();
+        let project = new_project(folder.path());
+        let junction_parent = tempfile::tempdir().unwrap();
+        let junction = junction_parent.path().join("alias-to-project");
+
+        if !create_junction(&junction, project.root()) {
+            eprintln!("ジャンクションを作れない環境のため、このテストは skip します");
+            return;
+        }
+
+        let output = junction.join("novel.txt");
+        let error = write_output(&project, &output, false, "本文").unwrap_err();
+
+        assert!(error.to_string().contains("作品フォルダの中"));
+    }
+
+    #[cfg(windows)]
+    fn create_junction(link: &Path, target: &Path) -> bool {
+        std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("mklink")
+            .arg("/J")
+            .arg(link)
+            .arg(target)
+            .output()
+            .is_ok_and(|output| output.status.success())
+    }
+
+    /// Windows の管理共有（`\\localhost\<ドライブ>$\...`）越しに作品フォルダを指しても拒否できること。
+    /// パスの文字列としての前方一致比較では見抜けなかった不具合の再現テスト。管理共有が使えない
+    /// （ループバックの SMB が無効など）環境では skip する。
+    #[cfg(windows)]
+    #[test]
+    fn write_output_rejects_the_project_folder_via_an_administrative_share_alias() {
+        let folder = tempfile::tempdir().unwrap();
+        let project = new_project(folder.path());
+
+        let Some(share_root) = administrative_share_path(project.root()) else {
+            eprintln!("管理共有のパスを組み立てられない環境のため、このテストは skip します");
+            return;
+        };
+        if !matches!(
+            same_file::is_same_file(&share_root, project.root()),
+            Ok(true)
+        ) {
+            eprintln!("管理共有が使えない環境のため、このテストは skip します");
+            return;
+        }
+
+        let output = share_root.join("novel.txt");
+        let error = write_output(&project, &output, false, "本文").unwrap_err();
+
+        assert!(error.to_string().contains("作品フォルダの中"));
+    }
+
+    /// `path` のドライブ文字を管理共有の形式（`\\localhost\<ドライブ>$`）に書き換える。
+    /// ドライブ文字を取り出せない場合（UNC パスなど）は `None`。
+    #[cfg(windows)]
+    fn administrative_share_path(path: &Path) -> Option<PathBuf> {
+        use std::path::{Component, Prefix};
+
+        let mut components = path.components();
+        let Some(Component::Prefix(prefix)) = components.next() else {
+            return None;
+        };
+        let drive_letter = match prefix.kind() {
+            Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => letter as char,
+            _ => return None,
+        };
+        let mut share = PathBuf::from(format!(r"\\localhost\{drive_letter}$"));
+        for component in components {
+            if component != Component::RootDir {
+                share.push(component.as_os_str());
+            }
+        }
+        Some(share)
     }
 
     #[test]
