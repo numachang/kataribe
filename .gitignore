@@ -1,0 +1,23 @@
+# Rust
+/target/
+
+# Node
+node_modules/
+/dist/
+
+# Tauri
+/src-tauri/gen/schemas/
+
+# エディタ・OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# ローカル設定・一時ファイル
+*.local
+*.log
+
+# E2E テストのスクリーンショット
+/e2e/artifacts/

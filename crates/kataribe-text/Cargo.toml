@@ -1,0 +1,22 @@
+[package]
+name = "kataribe-text"
+description = "日本語小説テキストの計数・ルビ解析・表記整形・品質指標"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+ts = ["dep:ts-rs"]
+
+[dependencies]
+serde.workspace = true
+ts-rs = { workspace = true, optional = true }
+unicode-segmentation.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true
+
+[lints]
+workspace = true

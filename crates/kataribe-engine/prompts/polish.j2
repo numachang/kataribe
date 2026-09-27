@@ -1,0 +1,26 @@
+{% import "_macros.j2" as m %}
+{% block system %}
+{{ m.editor_role(project) }}作家の原稿を推敲します。
+
+{{ m.genre_and_rating(project) }}
+
+推敲した本文だけを出力し、説明や前置きは書かないこと。
+{% endblock %}
+
+{% block user %}
+{{ m.document("文体ガイド", style) }}
+
+【原稿】
+{{ text }}
+（原稿ここまで）
+
+【指示】
+この原稿を推敲してください。筋・出来事・会話の内容・分量は変えずに、次の点を直すこと。
+- 同じ言い回し、同じ文末（「〜た。」など）の繰り返し
+- 感情を説明しすぎている文（行動や描写で伝える形に）
+- 不自然な日本語、意味の通りにくい文
+- 文体ガイドから外れた表現
+{% for issue in issues %}
+- {{ issue }}
+{% endfor %}
+{% endblock %}

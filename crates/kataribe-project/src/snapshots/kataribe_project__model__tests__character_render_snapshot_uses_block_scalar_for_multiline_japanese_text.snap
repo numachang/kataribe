@@ -1,0 +1,17 @@
+---
+source: crates/kataribe-project/src/model.rs
+expression: character.render().unwrap()
+---
+---
+name: 霧島 凛
+reading: きりしま りん
+role: 主人公
+summary: |-
+  盲目の少女探偵。
+  声の揺れで嘘を聞き分ける。
+order: 1
+---
+## 外見
+…
+## 口調
+一人称は「わたし」。…

@@ -1,0 +1,145 @@
+/*
+ * 「和紙と墨」を基調にした配色。ライト／ダークは prefers-color-scheme に従う。
+ * ウェブフォントは読み込まない（オフライン動作のため）。OS 標準の明朝・ゴシックだけを使う。
+ */
+
+:root {
+  --font-ui: "Yu Gothic UI", "Meiryo", sans-serif;
+  --font-mincho: "Yu Mincho", "YuMincho", "Hiragino Mincho ProN", "Noto Serif JP", serif;
+  --font-gothic: "Yu Gothic", "Meiryo", sans-serif;
+
+  /* 生成り色の台紙・墨色・朱の落款 */
+  --color-bg: #f6f1e7;
+  --color-bg-raised: #fdfbf5;
+  --color-bg-sunken: #ece4d3;
+  --color-border: #d8cdb3;
+  --color-ink: #2b2620;
+  --color-ink-soft: #5a5245;
+  --color-ink-faint: #948a76;
+  --color-accent: #9c2b2b;
+  --color-accent-soft: #c65a4a1a;
+  --color-focus: #6b7d8c;
+
+  --color-success: #3f6b4a;
+  --color-warning: #a6742a;
+  --color-error: #9c2b2b;
+
+  --shadow-panel: 0 1px 3px rgba(43, 38, 32, 0.12);
+  --radius-md: 6px;
+  --radius-sm: 4px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #1c1a17;
+    --color-bg-raised: #24211c;
+    --color-bg-sunken: #16140f;
+    --color-border: #3a3529;
+    --color-ink: #ece6d8;
+    --color-ink-soft: #c3bbaa;
+    --color-ink-faint: #837a68;
+    --color-accent: #d97a6a;
+    --color-accent-soft: #d97a6a26;
+    --color-focus: #8fa6b8;
+
+    --color-success: #7bbf8e;
+    --color-warning: #d9a94f;
+    --color-error: #e08a7a;
+
+    --shadow-panel: 0 1px 3px rgba(0, 0, 0, 0.4);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.app-button {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-raised);
+  color: var(--color-ink);
+  border-radius: var(--radius-sm);
+  padding: 6px 14px;
+  font-size: 13px;
+}
+
+.app-button:hover:not(:disabled) {
+  border-color: var(--color-ink-faint);
+}
+
+.app-button:disabled {
+  opacity: 0.5;
+}
+
+.app-button--primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fdfbf5;
+}
+
+.app-button--primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.app-button--danger {
+  color: var(--color-error);
+  border-color: var(--color-error);
+}
+
+.app-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.app-field input,
+.app-field select,
+.app-field textarea {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-raised);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.app-field textarea {
+  resize: vertical;
+  font-family: var(--font-ui);
+}

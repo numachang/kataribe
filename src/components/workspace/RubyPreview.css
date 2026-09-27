@@ -1,0 +1,23 @@
+.ruby-preview {
+  height: 100%;
+  overflow: auto;
+  padding: 24px 32px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ruby-preview--vertical {
+  writing-mode: vertical-rl;
+  white-space: pre-wrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.ruby-preview__emphasis {
+  text-emphasis: filled sesame;
+  text-emphasis-position: over right;
+}
+
+.ruby-preview--vertical .ruby-preview__emphasis {
+  text-emphasis-position: right;
+}

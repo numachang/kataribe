@@ -1,0 +1,48 @@
+[package]
+name = "kataribe"
+description = "LLM と一緒に日本語の小説を書くエディタ"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "kataribe_app"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6", features = [] }
+
+[features]
+ts = [
+    "dep:ts-rs",
+    "kataribe-engine/ts",
+    "kataribe-llm/ts",
+    "kataribe-project/ts",
+    "kataribe-text/ts",
+]
+
+[dependencies]
+kataribe-engine.workspace = true
+kataribe-llm.workspace = true
+kataribe-project.workspace = true
+kataribe-text.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2.11", features = [] }
+tauri-plugin-dialog = "2.7"
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+ts-rs = { workspace = true, optional = true }
+
+[dev-dependencies]
+kataribe-llm = { workspace = true, features = ["testing"] }
+pretty_assertions.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

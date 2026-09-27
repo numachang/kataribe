@@ -1,0 +1,31 @@
+[package]
+name = "kataribe-llm"
+description = "OpenAI 互換 Chat Completions API のストリーミングクライアント"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+ts = ["dep:ts-rs"]
+# 他 crate のテストで使う台本どおりに応答する偽モデル
+testing = []
+
+[dependencies]
+futures-util.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+ts-rs = { workspace = true, optional = true }
+
+[dev-dependencies]
+pretty_assertions.workspace = true
+tokio = { workspace = true, features = ["test-util", "net", "io-util"] }
+wiremock.workspace = true
+
+[lints]
+workspace = true

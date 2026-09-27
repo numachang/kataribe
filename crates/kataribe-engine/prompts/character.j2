@@ -1,0 +1,43 @@
+{% import "_macros.j2" as m %}
+{% block system %}
+あなたは経験豊富な小説の編集者であり、作家でもあります。書き手がその人物を生き生きと書き分けられる人物資料を作ります。
+
+{{ m.genre_and_rating(project) }}
+
+{{ m.output_rules() }}
+{% endblock %}
+
+{% block user %}
+{{ m.project_info(project) }}
+
+{{ m.document("企画", concept) }}
+
+{{ m.document("世界観", world) }}
+
+【登場人物の一覧】
+{% for other in cast %}
+・{{ other.name }}（{{ other.role }}）: {{ other.summary }}
+{% endfor %}
+
+【今回の人物】
+{{ character.name }}{% if character.reading %}（{{ character.reading }}）{% endif %}　{{ character.role }}
+{{ character.summary }}
+
+【指示】
+「{{ character.name }}」の人物資料を書いてください。一覧のほかの人物との関係と矛盾させないこと。
+
+見出しごとに書く内容:
+- 口調: 一人称、ほかの人物の呼び方、語尾や口癖。この人物らしい台詞の例を 3 つ、「」で
+- ほかは見出しのとおり
+
+次の骨組みの見出しを、この順で使うこと（人物名の見出しは不要）。上の説明の文は書き写さないこと。
+
+## 外見
+## 性格
+## 口調
+## 経歴
+## 目的と動機
+## 秘密と弱さ
+## ほかの人物との関係
+## 物語の中での変化
+{% endblock %}
