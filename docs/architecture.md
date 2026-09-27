@@ -116,6 +116,7 @@ kataribe-project ─┘          │
 | `tokens` | `estimate_tokens(&str) -> usize` | トークン数の保守的な見積もり（かな・漢字 1 文字 ≒ 1 トークン） |
 | `normalize` | `normalize(&str, &NormalizeOptions) -> String` | 段落頭の全角字下げ、`…`/`...`→`……`、`--`→`――`、`!?`→`！？` と後続の全角空白、空行の整理、行末空白の除去 |
 | `quality` | `analyze(&str, &QualityOptions) -> QualityReport` | 品質指標と問題点の検出（§7） |
+| `repetition` | `overused_phrases(&str, &OverusedOptions) -> Vec<RepeatedPhrase>` | 繰り返し使っている表現の検出（漢字かカタカナを含む 3〜10 字。人物名は除く） |
 
 `TextStats`・`Segment`・`QualityReport` などは `serde::Serialize` と（`ts` feature で）`ts_rs::TS` を実装する。
 
@@ -240,6 +241,11 @@ Gemma には前者だけ、Qwen には後者だけが効き、両方を指定す
 5. この章のストーリーラインと、前後のシーンの予定
 6. ここまでの要約（直近ほど詳しく）
 7. 世界観、企画
+
+予算とは別に、直前までの本文（約 2 万字）と書きかけの本文から繰り返し使っている表現を機械的に抜き出し、
+「別の言い方にする（物語に必要な用語はそのまま使ってよい）」と伝える。ローカル LLM は前のシーンの決まり文句を
+場面をまたいで繰り返しがちなため（試作の短編で「嵐の咆哮」11 回）。同じ設計で書き比べると、
+文の使い回しが約 3 分の 1 に、最も多い表現の回数が 14 回から 9 回に減った。
 
 ### 4.4 プロンプト
 
