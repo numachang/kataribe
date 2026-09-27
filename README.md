@@ -121,6 +121,7 @@ my-novel/
 4. `pnpm e2e`（msedgedriver が PATH に無ければ、環境変数 `KATARIBE_E2E_MSEDGEDRIVER` に場所を指定する）
 
 テスト中に撮った画面は `e2e/artifacts/` に保存される。
+CI（GitHub Actions）でも、ランナーの WebView2 と同じ版の msedgedriver を取得して同じテストを動かす。
 
 ## ライセンス
 

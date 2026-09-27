@@ -72,3 +72,47 @@ jobs:
         with:
           name: kataribe-installer
           path: target/release/bundle/nsis/*.exe
+
+  e2e:
+    name: E2E（本物のアプリを WebView2 で操作）
+    needs: [rust, frontend]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: tauri-driver を入れる
+        run: cargo install tauri-driver --locked
+      # msedgedriver は、アプリが使う WebView2 ランタイムと同じ版でないと接続できない
+      - name: WebView2 と同じ版の msedgedriver を用意する
+        shell: pwsh
+        run: |
+          $client = 'Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $keys = @("HKLM:\SOFTWARE\WOW6432Node\$client", "HKLM:\SOFTWARE\$client", "HKCU:\Software\$client")
+          $version = $keys |
+            ForEach-Object { (Get-ItemProperty -Path $_ -ErrorAction SilentlyContinue).pv } |
+            Where-Object { $_ } |
+            Select-Object -First 1
+          if (-not $version) { throw 'WebView2 ランタイムが見つかりません。' }
+          Write-Host "WebView2 $version"
+          $dir = Join-Path $env:RUNNER_TEMP 'edgedriver'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          Invoke-WebRequest "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile "$dir\edgedriver.zip"
+          Expand-Archive "$dir\edgedriver.zip" -DestinationPath $dir -Force
+          "KATARIBE_E2E_MSEDGEDRIVER=$dir\msedgedriver.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: 画面を埋め込んだアプリを作る
+        run: pnpm tauri build --debug --no-bundle
+      - run: pnpm e2e
+      - name: テスト中に撮った画面を残す
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: e2e/artifacts/
+          if-no-files-found: ignore
