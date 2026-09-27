@@ -115,3 +115,23 @@ test("縦書きのまま入力した文章が、Ctrl+S で作品フォルダの�
   );
   expect(await readSceneFile()).toBe(`${INITIAL_SCENE_TEXT}　風が吹いた。`);
 });
+
+test("設定の「この作品」で変えた生成単位が、作品の kataribe.yaml に保存される", async () => {
+  const readManifest = () => readFile(path.join(fixture.projectFolder, "kataribe.yaml"), "utf8");
+  await (await waitForElement(By.xpath("//button[normalize-space(.)='設定']"))).click();
+  await (
+    await waitForElement(By.xpath("//button[@role='tab' and contains(., 'この作品')]"))
+  ).click();
+  await (await waitForElement(By.css('input[aria-label="生成単位をこの作品で変える"]'))).click();
+  const draftUnit = await waitForElement(By.css('select[aria-label="生成単位"]'));
+  await draftUnit.findElement(By.css('option[value="scene"]')).click();
+  await saveScreenshot("settings-project-scope.png");
+  await (await waitForElement(By.xpath("//button[normalize-space(.)='保存']"))).click();
+
+  await app.wait(
+    async () => (await readManifest()).includes("draft_unit: scene"),
+    SAVE_TIMEOUT_MS,
+    "作品の設定が kataribe.yaml に保存されませんでした。",
+  );
+  expect(await readManifest()).toContain("title: E2E の作品");
+});

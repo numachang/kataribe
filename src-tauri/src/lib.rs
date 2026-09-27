@@ -5,6 +5,9 @@
 //! コマンドの実体は [`commands`] にあり、判断そのものは他のモジュールの、
 //! Tauri に依存しない関数が行う（単体テストのため）。
 
+// 一覧そのものは build.rs が使う。ここでは、登録・許可の一覧と食い違っていないかをテストで確かめる
+#[cfg(test)]
+mod command_names;
 mod commands;
 mod engine_client;
 mod error;
