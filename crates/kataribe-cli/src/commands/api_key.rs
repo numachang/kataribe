@@ -23,7 +23,13 @@ pub fn run(args: &ApiKeyArgs, console: &dyn Console) -> anyhow::Result<Outcome> 
 fn set(console: &dyn Console) -> anyhow::Result<Outcome> {
     let stdin = std::io::stdin();
     if stdin.is_terminal() {
-        console.eprint("注意: 依存を増やしていないため、入力はそのまま画面に表示されます。\n");
+        console
+            .eprint(
+                "注意: 端末から直接入力すると、入力したキーがそのまま画面に表示されます。\n\
+                 表示したくない場合は、パイプで渡してください\n\
+                 （例: Get-Content key.txt | kataribe-cli api-key set）。\n",
+            )
+            .context("標準エラー出力への書き込みに失敗しました")?;
     }
     let mut line = String::new();
     stdin
@@ -37,7 +43,9 @@ fn set(console: &dyn Console) -> anyhow::Result<Outcome> {
     ApiKeyStore::default()
         .save(key)
         .context("API キーを資格情報マネージャーに保存できません")?;
-    console.print("API キーを保存しました。\n");
+    console
+        .print("API キーを保存しました。\n")
+        .context("標準出力への書き込みに失敗しました")?;
     Ok(Outcome::Success)
 }
 
@@ -45,7 +53,9 @@ fn clear(console: &dyn Console) -> anyhow::Result<Outcome> {
     ApiKeyStore::default()
         .delete()
         .context("API キーを削除できません")?;
-    console.print("API キーを削除しました。\n");
+    console
+        .print("API キーを削除しました。\n")
+        .context("標準出力への書き込みに失敗しました")?;
     Ok(Outcome::Success)
 }
 
@@ -54,10 +64,13 @@ fn status(console: &dyn Console) -> anyhow::Result<Outcome> {
         .load()
         .context("API キーの設定状況を確認できません")?
         .is_some();
-    if has_key {
-        console.print("API キーは設定されています。\n");
+    let message = if has_key {
+        "API キーは設定されています。\n"
     } else {
-        console.print("API キーは設定されていません。\n");
-    }
+        "API キーは設定されていません。\n"
+    };
+    console
+        .print(message)
+        .context("標準出力への書き込みに失敗しました")?;
     Ok(Outcome::Success)
 }

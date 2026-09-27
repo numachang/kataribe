@@ -26,14 +26,22 @@ pub fn run(
 
     if args.json {
         let payload = json!({ "pipeline": steps, "overview": overview });
-        console.print(&serde_json::to_string_pretty(&payload)?);
-        console.print("\n");
+        console
+            .print(&serde_json::to_string_pretty(&payload)?)
+            .context("標準出力への書き込みに失敗しました")?;
+        console
+            .print("\n")
+            .context("標準出力への書き込みに失敗しました")?;
     } else {
-        console.print(&render_steps(&steps));
-        console.print(&format!(
-            "\n本文: {} / {} 文字\n",
-            overview.total_chars, overview.target_length
-        ));
+        console
+            .print(&render_steps(&steps))
+            .context("標準出力への書き込みに失敗しました")?;
+        console
+            .print(&format!(
+                "\n本文: {} / {} 文字\n",
+                overview.total_chars, overview.target_length
+            ))
+            .context("標準出力への書き込みに失敗しました")?;
     }
     Ok(Outcome::Success)
 }
@@ -88,5 +96,33 @@ mod tests {
         assert!(rendered.contains("✓ 済  企画"));
         assert!(rendered.contains("▶ 可  文体ガイド"));
         assert!(rendered.contains("・ 待ち  世界観（先に企画が必要です。）"));
+    }
+
+    #[test]
+    fn run_reports_a_failure_when_stdout_cannot_be_written_to() {
+        use crate::output::testing::FailingConsole;
+
+        let folder = tempfile::tempdir().unwrap();
+        kataribe_engine::create_project(
+            folder.path(),
+            kataribe_engine::NewProject {
+                title: "みさき館の殺人".into(),
+                author: None,
+                genre: "mystery".into(),
+                genre_note: None,
+                rating: kataribe_project::Rating::General,
+                target_length: 6000,
+                idea: "嵐で孤立した洋館で起きる密室殺人。".into(),
+            },
+        )
+        .unwrap();
+        let args = StatusArgs {
+            folder: folder.path().to_path_buf(),
+            json: false,
+        };
+
+        let error = run(&args, &GlobalOptions::default(), &FailingConsole).unwrap_err();
+
+        assert!(error.to_string().contains("標準出力"));
     }
 }

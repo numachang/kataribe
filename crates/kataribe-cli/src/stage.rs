@@ -53,6 +53,15 @@ fn task_order(task: &Task) -> u8 {
     }
 }
 
+/// `task` が `stage` と同じか、それより手前の段階に属するか。
+///
+/// `run --until` が、指定した段階より後ろの工程を生成の候補にしないために使う
+/// （`pipeline` が返す一覧の並び順に依存しないようにするため）。
+#[must_use]
+pub(crate) fn task_is_within_stage(task: &Task, stage: Stage) -> bool {
+    task_order(task) <= stage.order()
+}
+
 /// `steps` のうち、`stage` と同じか、それより手前の段階の工程がすべて済んでいるか。
 ///
 /// 章立てが済むまで章ごとの工程がまだ 1 つも無いように、後の段階の工程は
@@ -61,10 +70,9 @@ fn task_order(task: &Task) -> u8 {
 /// すべて `Done` であることを確かめることで、この見せかけの完了を避ける。
 #[must_use]
 pub fn reached_stage(steps: &[PipelineStep], stage: Stage) -> bool {
-    let target = stage.order();
     steps
         .iter()
-        .filter(|step| task_order(&step.task) <= target)
+        .filter(|step| task_is_within_stage(&step.task, stage))
         .all(|step| step.state == StepState::Done)
 }
 
@@ -80,6 +88,19 @@ mod tests {
             state,
             blocked_by: None,
         }
+    }
+
+    #[test]
+    fn task_is_within_stage_excludes_later_categories() {
+        assert!(task_is_within_stage(&Task::Concept, Stage::Concept));
+        assert!(task_is_within_stage(&Task::Style, Stage::Outline));
+        assert!(!task_is_within_stage(
+            &Task::Draft {
+                chapter: ChapterId::from_number(1),
+                scene: kataribe_project::SceneId::from_number(1),
+            },
+            Stage::Scenes
+        ));
     }
 
     #[test]

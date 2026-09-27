@@ -27,10 +27,16 @@ pub fn run(args: &QualityArgs, console: &dyn Console) -> anyhow::Result<Outcome>
 
     if args.json {
         let payload: Vec<_> = reports.iter().map(as_json).collect();
-        console.print(&serde_json::to_string_pretty(&payload)?);
-        console.print("\n");
+        console
+            .print(&serde_json::to_string_pretty(&payload)?)
+            .context("標準出力への書き込みに失敗しました")?;
+        console
+            .print("\n")
+            .context("標準出力への書き込みに失敗しました")?;
     } else {
-        console.print(&render(&reports));
+        console
+            .print(&render(&reports))
+            .context("標準出力への書き込みに失敗しました")?;
     }
     Ok(Outcome::Success)
 }
@@ -158,5 +164,33 @@ mod tests {
     #[test]
     fn render_reports_when_nothing_is_written_yet() {
         assert_eq!(render(&[]), "本文はまだありません。\n");
+    }
+
+    #[test]
+    fn run_reports_a_failure_when_stdout_cannot_be_written_to() {
+        use crate::output::testing::FailingConsole;
+
+        let folder = tempfile::tempdir().unwrap();
+        kataribe_engine::create_project(
+            folder.path(),
+            kataribe_engine::NewProject {
+                title: "みさき館の殺人".into(),
+                author: None,
+                genre: "mystery".into(),
+                genre_note: None,
+                rating: kataribe_project::Rating::General,
+                target_length: 6000,
+                idea: "嵐で孤立した洋館で起きる密室殺人。".into(),
+            },
+        )
+        .unwrap();
+        let args = QualityArgs {
+            folder: folder.path().to_path_buf(),
+            json: false,
+        };
+
+        let error = run(&args, &FailingConsole).unwrap_err();
+
+        assert!(error.to_string().contains("標準出力"));
     }
 }

@@ -18,15 +18,18 @@ pub async fn run(global: &GlobalOptions, console: &dyn Console) -> anyhow::Resul
         .context("モデル一覧を取得できません")?;
 
     if models.is_empty() {
-        console.print("利用できるモデルがありません。\n");
+        console
+            .print("利用できるモデルがありません。\n")
+            .context("標準出力への書き込みに失敗しました")?;
     }
     for model in models {
-        match model.context_length {
-            Some(context_length) => {
-                console.print(&format!("{}（文脈長 {context_length}）\n", model.id));
-            }
-            None => console.print(&format!("{}\n", model.id)),
-        }
+        let line = match model.context_length {
+            Some(context_length) => format!("{}（文脈長 {context_length}）\n", model.id),
+            None => format!("{}\n", model.id),
+        };
+        console
+            .print(&line)
+            .context("標準出力への書き込みに失敗しました")?;
     }
     Ok(Outcome::Success)
 }

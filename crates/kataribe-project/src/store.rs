@@ -826,7 +826,12 @@ fn is_transient_lock_error(error: &std::io::Error) -> bool {
 }
 
 /// BOM を除き、CRLF・CR を LF に正規化する。
-fn normalize_text(text: &str) -> String {
+///
+/// [`ProjectStore`] が読み書きするテキストはすべてこれを通す。作品フォルダの外から来る
+/// テキスト（CLI の `--idea-file` など）を同じ規則で扱いたい場合にも、ここを再利用する
+/// （改行の正規化を作品フォルダ内外で重複させないため）。
+#[must_use]
+pub fn normalize_text(text: &str) -> String {
     let without_bom = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut normalized = String::with_capacity(without_bom.len());
     let mut chars = without_bom.chars().peekable();

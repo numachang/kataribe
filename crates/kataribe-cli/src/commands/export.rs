@@ -1,5 +1,8 @@
 //! `export` サブコマンド: 本文を章題付きの一つのテキストにまとめる。
 
+use std::io::Write as _;
+use std::path::Path;
+
 use anyhow::Context;
 use kataribe_project::{Chapter, Project};
 
@@ -13,11 +16,75 @@ pub fn run(args: &ExportArgs, console: &dyn Console) -> anyhow::Result<Outcome> 
     let text = export_text(&project)?;
 
     match &args.output {
-        Some(path) => std::fs::write(path, &text)
-            .with_context(|| format!("書き出し先に書き込めません: {}", path.display()))?,
-        None => console.print(&text),
+        Some(path) => write_output(&project, path, args.force, &text)?,
+        None => console
+            .print(&text)
+            .context("標準出力への書き込みに失敗しました")?,
     }
     Ok(Outcome::Success)
+}
+
+/// `path` に書き出す。作品フォルダの中を指すパスは拒否し、既存ファイルの上書きは
+/// `--force` を指定したときだけ許す。
+fn write_output(project: &Project, path: &Path, force: bool, text: &str) -> anyhow::Result<()> {
+    reject_path_inside_project(project, path)?;
+    if path.exists() && !force {
+        anyhow::bail!(
+            "書き出し先に既にファイルがあります（上書きするには --force を指定してください）: {}",
+            path.display()
+        );
+    }
+    write_atomically(path, text)
+}
+
+/// `path` が作品フォルダの中を指していないことを確かめる。
+///
+/// まだ存在しないファイルは、実在する親フォルダを canonicalize して比べる
+/// （ファイル自体はまだ無いので canonicalize できないため）。
+fn reject_path_inside_project(project: &Project, path: &Path) -> anyhow::Result<()> {
+    let candidate = if path.exists() {
+        path.canonicalize()
+            .with_context(|| format!("書き出し先を確認できません: {}", path.display()))?
+    } else {
+        let parent = existing_parent(path);
+        parent
+            .canonicalize()
+            .with_context(|| format!("書き出し先の親フォルダがありません: {}", parent.display()))?
+    };
+    if candidate.starts_with(project.store().canonical_root()) {
+        anyhow::bail!(
+            "書き出し先に作品フォルダの中は指定できません（原稿と資料を巻き込んで上書きしてしまうため）: {}",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn existing_parent(path: &Path) -> &Path {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    }
+}
+
+/// `path` と同じフォルダの一時ファイルに書いてから置き換える。書き込みの途中で失敗しても、
+/// 既存のファイル（あれば）はそのまま残る。
+///
+/// [`kataribe_project::ProjectStore`] と違い、一時的なロックの再試行はしない。書き出しは
+/// 作品フォルダの外への一度きりの操作で、書き込みの競合が繰り返し起きる想定がないため。
+fn write_atomically(path: &Path, text: &str) -> anyhow::Result<()> {
+    let parent = existing_parent(path);
+    let mut temp = tempfile::NamedTempFile::new_in(parent)
+        .with_context(|| format!("書き出し先に一時ファイルを作れません: {}", parent.display()))?;
+    temp.write_all(text.as_bytes())
+        .context("一時ファイルへの書き込みに失敗しました")?;
+    temp.as_file()
+        .sync_all()
+        .context("一時ファイルの同期に失敗しました")?;
+    temp.persist(path)
+        .map(|_file| ())
+        .map_err(|error| error.error)
+        .with_context(|| format!("書き出し先に書き込めません: {}", path.display()))
 }
 
 /// 章ごとに「第N章　章題」を見出しにし、シーンを空行で区切って一つの文章にまとめる。
@@ -49,10 +116,11 @@ fn export_chapter(project: &Project, chapter: &Chapter) -> anyhow::Result<String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::output::testing::FailingConsole;
     use kataribe_engine::{NewProject, create_project};
     use kataribe_project::{ChapterId, ChapterMeta, Rating, SceneId, ScenePlan, WriteOptions};
 
-    fn new_project(folder: &std::path::Path) -> Project {
+    fn new_project(folder: &Path) -> Project {
         create_project(
             folder,
             NewProject {
@@ -157,5 +225,85 @@ mod tests {
         let text = export_text(&project).unwrap();
 
         assert_eq!(text, "第1章　雨の匂い\n");
+    }
+
+    #[test]
+    fn write_output_rejects_a_destination_inside_the_project_folder() {
+        let folder = tempfile::tempdir().unwrap();
+        let project = new_project(folder.path());
+        let inside = project.root().join("novel.txt");
+
+        let error = write_output(&project, &inside, false, "本文").unwrap_err();
+
+        assert!(error.to_string().contains("作品フォルダの中"));
+        assert!(!inside.exists());
+    }
+
+    #[test]
+    fn write_output_rejects_an_existing_file_inside_the_project_folder_too() {
+        let folder = tempfile::tempdir().unwrap();
+        let project = new_project(folder.path());
+        // 既に存在するファイル（この場合は kataribe.yaml）を指しても拒否されること。
+        let inside = project.root().join("kataribe.yaml");
+        assert!(inside.is_file());
+
+        let error = write_output(&project, &inside, true, "本文").unwrap_err();
+
+        assert!(error.to_string().contains("作品フォルダの中"));
+    }
+
+    #[test]
+    fn write_output_refuses_to_overwrite_an_existing_file_without_force() {
+        let folder = tempfile::tempdir().unwrap();
+        let project = new_project(folder.path());
+        let output_dir = tempfile::tempdir().unwrap();
+        let output = output_dir.path().join("novel.txt");
+        std::fs::write(&output, "既存の内容").unwrap();
+
+        let error = write_output(&project, &output, false, "新しい本文").unwrap_err();
+
+        assert!(error.to_string().contains("--force"));
+        assert_eq!(std::fs::read_to_string(&output).unwrap(), "既存の内容");
+    }
+
+    #[test]
+    fn write_output_overwrites_when_force_is_given() {
+        let folder = tempfile::tempdir().unwrap();
+        let project = new_project(folder.path());
+        let output_dir = tempfile::tempdir().unwrap();
+        let output = output_dir.path().join("novel.txt");
+        std::fs::write(&output, "既存の内容").unwrap();
+
+        write_output(&project, &output, true, "新しい本文").unwrap();
+
+        assert_eq!(std::fs::read_to_string(&output).unwrap(), "新しい本文");
+    }
+
+    #[test]
+    fn write_output_creates_a_new_file_outside_the_project_folder() {
+        let folder = tempfile::tempdir().unwrap();
+        let project = new_project(folder.path());
+        let output_dir = tempfile::tempdir().unwrap();
+        let output = output_dir.path().join("novel.txt");
+
+        write_output(&project, &output, false, "本文").unwrap();
+
+        assert_eq!(std::fs::read_to_string(&output).unwrap(), "本文");
+    }
+
+    #[test]
+    fn run_reports_a_failure_when_stdout_cannot_be_written_to() {
+        let folder = tempfile::tempdir().unwrap();
+        let project = new_project(folder.path());
+        write_chapter_with_one_scene(&project);
+        let args = ExportArgs {
+            folder: folder.path().to_path_buf(),
+            output: None,
+            force: false,
+        };
+
+        let error = run(&args, &FailingConsole).unwrap_err();
+
+        assert!(error.to_string().contains("標準出力"));
     }
 }

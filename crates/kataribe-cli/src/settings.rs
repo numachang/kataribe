@@ -1,32 +1,36 @@
 //! 設定ファイルの読み込みと、グローバルオプションによる上書き・API キーの解決。
 
-use std::path::PathBuf;
-
 use anyhow::Context;
 use kataribe_engine::{ApiKeyStore, EngineSettings};
 
 use crate::args::GlobalOptions;
 
-/// 設定ファイルの場所。`--settings` が無ければ GUI と同じ既定の場所を使う。
-#[must_use]
-pub fn settings_path(global: &GlobalOptions) -> Option<PathBuf> {
-    global
-        .settings
-        .clone()
-        .or_else(kataribe_engine::default_settings_path)
-}
-
 /// 設定ファイルを読み、グローバルオプションで上書きし、値を安全な範囲に収める。
+///
+/// `--settings` で場所を明示したときは、そこにファイルが無ければエラーにする
+/// （別の場所を指定したつもりの誤りに気付けるように）。既定の場所（GUI と同じ）では、
+/// ファイルが無くても既定値から始める。
 pub fn load_effective_settings(global: &GlobalOptions) -> anyhow::Result<EngineSettings> {
-    let mut settings = match settings_path(global) {
-        Some(path) => {
-            kataribe_engine::load_settings(&path).with_context(|| "設定ファイルを読み込めません")?
-        }
-        None => EngineSettings::default(),
-    };
+    let mut settings = load_settings_from_location(global)?;
     apply_overrides(&mut settings, global);
     settings.generation = settings.generation.sanitized();
     Ok(settings)
+}
+
+fn load_settings_from_location(global: &GlobalOptions) -> anyhow::Result<EngineSettings> {
+    if let Some(explicit_path) = &global.settings {
+        if !explicit_path.is_file() {
+            anyhow::bail!("設定ファイルが見つかりません: {}", explicit_path.display());
+        }
+        return kataribe_engine::load_settings(explicit_path)
+            .with_context(|| "設定ファイルを読み込めません");
+    }
+    match kataribe_engine::default_settings_path() {
+        Some(path) => {
+            kataribe_engine::load_settings(&path).with_context(|| "設定ファイルを読み込めません")
+        }
+        None => Ok(EngineSettings::default()),
+    }
 }
 
 /// グローバルオプションで指定された値だけ、設定ファイルの値を上書きする。
@@ -139,5 +143,37 @@ mod tests {
     fn resolve_api_key_falls_back_to_the_store_when_the_environment_variable_is_unset() {
         let resolved = resolve_api_key_from(None, || Ok(None)).unwrap();
         assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn explicit_settings_path_that_does_not_exist_is_an_error() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let global = GlobalOptions {
+            settings: Some(temp_dir.path().join("no-such-settings.json")),
+            ..GlobalOptions::default()
+        };
+
+        let error = load_effective_settings(&global).unwrap_err();
+
+        assert!(error.to_string().contains("見つかりません"));
+    }
+
+    #[test]
+    fn explicit_settings_path_that_exists_is_loaded() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("settings.json");
+        std::fs::write(
+            &path,
+            r#"{"llm":{"model":"gemma","base_url":"http://x/v1"}}"#,
+        )
+        .unwrap();
+        let global = GlobalOptions {
+            settings: Some(path),
+            ..GlobalOptions::default()
+        };
+
+        let settings = load_effective_settings(&global).unwrap();
+
+        assert_eq!(settings.llm.model, "gemma");
     }
 }

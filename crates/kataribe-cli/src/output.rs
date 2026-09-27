@@ -5,17 +5,18 @@
 //! 本番では実際の標準出力・標準エラー出力に、テストでは共有バッファに書く。
 
 use std::io::Write as _;
-use std::sync::Mutex;
+use std::sync::{Mutex, PoisonError};
 
 use kataribe_engine::{GenerationEvent, NoticeLevel};
 
 /// 標準出力・標準エラー出力への書き込み先。
 ///
-/// `print` は生成中の本文の断片など、そのまま利用者に見せる出力に使う。
+/// `print` は生成中の本文の断片や、コマンドの結果として利用者に見せる出力に使う。
 /// `eprint` は進捗・注意・エラーに使う。どちらも改行の有無は呼び出し側が決める。
+/// 書き込みのたびに flush し、失敗（ディスクが一杯など）は `Err` で呼び出し側に返す。
 pub trait Console: Send + Sync {
-    fn print(&self, text: &str);
-    fn eprint(&self, text: &str);
+    fn print(&self, text: &str) -> std::io::Result<()>;
+    fn eprint(&self, text: &str) -> std::io::Result<()>;
 }
 
 /// 実際の標準出力・標準エラー出力に書き込む実装。
@@ -42,16 +43,16 @@ impl Default for StdConsole {
 }
 
 impl Console for StdConsole {
-    fn print(&self, text: &str) {
-        if let Ok(mut out) = self.stdout.lock() {
-            let _ = out.write_all(text.as_bytes());
-        }
+    fn print(&self, text: &str) -> std::io::Result<()> {
+        let mut out = self.stdout.lock().unwrap_or_else(PoisonError::into_inner);
+        out.write_all(text.as_bytes())?;
+        out.flush()
     }
 
-    fn eprint(&self, text: &str) {
-        if let Ok(mut out) = self.stderr.lock() {
-            let _ = out.write_all(text.as_bytes());
-        }
+    fn eprint(&self, text: &str) -> std::io::Result<()> {
+        let mut out = self.stderr.lock().unwrap_or_else(PoisonError::into_inner);
+        out.write_all(text.as_bytes())?;
+        out.flush()
     }
 }
 
@@ -87,24 +88,30 @@ fn buffer_to_string(buffer: &Mutex<Vec<u8>>) -> String {
 }
 
 impl Console for BufferConsole {
-    fn print(&self, text: &str) {
-        if let Ok(mut out) = self.stdout.lock() {
-            out.extend_from_slice(text.as_bytes());
-        }
+    fn print(&self, text: &str) -> std::io::Result<()> {
+        let mut out = self.stdout.lock().unwrap_or_else(PoisonError::into_inner);
+        out.extend_from_slice(text.as_bytes());
+        Ok(())
     }
 
-    fn eprint(&self, text: &str) {
-        if let Ok(mut out) = self.stderr.lock() {
-            out.extend_from_slice(text.as_bytes());
-        }
+    fn eprint(&self, text: &str) -> std::io::Result<()> {
+        let mut out = self.stderr.lock().unwrap_or_else(PoisonError::into_inner);
+        out.extend_from_slice(text.as_bytes());
+        Ok(())
     }
 }
 
 /// 生成中のイベントを `console` へ振り分ける。
 ///
+/// - `StepStarted`: 標準エラー出力へ進捗を 1 行。2 つ目以降の工程では、直前の工程の本文と
+///   混ざらないよう標準出力側にも区切りの空行を入れる（`quiet` なら本文自体を出さないので不要）。
 /// - `Content`（本文の断片）: 標準出力へそのまま。`quiet` なら出さない。
-/// - `StepStarted` / `StepFinished` / `Notice`: 標準エラー出力へ 1 行で。
+/// - `StepFinished` / `Notice`: 標準エラー出力へ 1 行で。
 /// - `Reasoning`（推論モデルの思考）: 既定では出さない。`verbose` なら薄く標準エラー出力へ。
+///
+/// `kataribe_engine::EventSink` は戻り値を持たないため、書き込みに失敗しても生成そのものは
+/// 続ける（表示できないことより、生成した内容を最後まで得られないことのほうが損失が大きい）。
+/// そのため、ここでの書き込み失敗は最善努力として無視する。
 pub fn report_generation_event(
     console: &dyn Console,
     quiet: bool,
@@ -114,7 +121,7 @@ pub fn report_generation_event(
     match event {
         GenerationEvent::Content { text } => {
             if !quiet {
-                console.print(text);
+                let _ = console.print(text);
             }
         }
         GenerationEvent::StepStarted {
@@ -122,14 +129,17 @@ pub fn report_generation_event(
             index,
             total,
         } => {
-            console.eprint(&format!("  ▶ [{index}/{total}] {label}\n"));
+            if !quiet && *index > 1 {
+                let _ = console.print("\n");
+            }
+            let _ = console.eprint(&format!("  ▶ [{index}/{total}] {label}\n"));
         }
         GenerationEvent::StepFinished {
             prompt_tokens,
             completion_tokens,
             elapsed_ms,
         } => {
-            console.eprint(&format!(
+            let _ = console.eprint(&format!(
                 "    完了（{}）\n",
                 describe_step_finish(*prompt_tokens, *completion_tokens, *elapsed_ms)
             ));
@@ -139,11 +149,11 @@ pub fn report_generation_event(
                 NoticeLevel::Info => "ℹ",
                 NoticeLevel::Warning => "⚠",
             };
-            console.eprint(&format!("  {mark} {message}\n"));
+            let _ = console.eprint(&format!("  {mark} {message}\n"));
         }
         GenerationEvent::Reasoning { text } => {
             if verbose {
-                console.eprint(&format!("    思考: {text}"));
+                let _ = console.eprint(&format!("    思考: {text}"));
             }
         }
     }
@@ -166,6 +176,27 @@ fn describe_step_finish(
     }
 }
 
+/// テスト用の道具。同じクレート内の他のモジュールのテストからも使う
+/// （書き込み失敗時の挙動を確かめるのに、本物の標準出力を壊す必要がないように）。
+#[cfg(test)]
+pub(crate) mod testing {
+    use super::Console;
+
+    /// 常に書き込みが失敗する [`Console`]。
+    #[derive(Debug, Default)]
+    pub(crate) struct FailingConsole;
+
+    impl Console for FailingConsole {
+        fn print(&self, _text: &str) -> std::io::Result<()> {
+            Err(std::io::Error::other("書き込みに失敗しました（テスト用）"))
+        }
+
+        fn eprint(&self, _text: &str) -> std::io::Result<()> {
+            Err(std::io::Error::other("書き込みに失敗しました（テスト用）"))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,8 +204,8 @@ mod tests {
     #[test]
     fn buffer_console_captures_writes_separately() {
         let console = BufferConsole::new();
-        console.print("本文");
-        console.eprint("進捗");
+        console.print("本文").unwrap();
+        console.eprint("進捗").unwrap();
 
         assert_eq!(console.stdout(), "本文");
         assert_eq!(console.stderr(), "進捗");
@@ -218,5 +249,55 @@ mod tests {
 
         report_generation_event(&console, false, true, &event);
         assert!(console.stderr().contains("考え中"));
+    }
+
+    #[test]
+    fn second_step_started_separates_stdout_from_the_previous_step_with_a_blank_line() {
+        let console = BufferConsole::new();
+        report_generation_event(
+            &console,
+            false,
+            false,
+            &GenerationEvent::Content {
+                text: "第一段落。".into(),
+            },
+        );
+        report_generation_event(
+            &console,
+            false,
+            false,
+            &GenerationEvent::StepStarted {
+                label: "続きを生成".into(),
+                index: 2,
+                total: 2,
+            },
+        );
+        report_generation_event(
+            &console,
+            false,
+            false,
+            &GenerationEvent::Content {
+                text: "第二段落。".into(),
+            },
+        );
+
+        assert_eq!(console.stdout(), "第一段落。\n第二段落。");
+    }
+
+    #[test]
+    fn first_step_started_does_not_add_a_leading_blank_line() {
+        let console = BufferConsole::new();
+        report_generation_event(
+            &console,
+            false,
+            false,
+            &GenerationEvent::StepStarted {
+                label: "企画を生成".into(),
+                index: 1,
+                total: 1,
+            },
+        );
+
+        assert_eq!(console.stdout(), "");
     }
 }

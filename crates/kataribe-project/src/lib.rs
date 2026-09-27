@@ -23,4 +23,5 @@ pub use path::{PathError, RelPath};
 pub use project::Project;
 pub use store::{
     BackupMode, ContentHash, PendingWrite, ProjectStore, TextFile, WriteCondition, WriteOptions,
+    normalize_text,
 };

@@ -292,9 +292,9 @@ GUI と同じ engine を使い、画面なしで作品を作る・生成する�
 kataribe-cli [グローバルオプション] <サブコマンド>
 
 グローバルオプション（設定ファイルの値を上書き）
-  --settings <PATH>          設定ファイル（既定: GUI と同じ場所）
+  --settings <PATH>          設定ファイル（既定: GUI と同じ場所。明示したのに無ければエラー）
   --base-url <URL>  --model <ID>
-  --api-key-env <VAR>        API キーを読む環境変数（既定 KATARIBE_API_KEY。未設定ならキーなし）
+  --api-key-env <VAR>        API キーを読む環境変数（既定 KATARIBE_API_KEY。未設定なら資格情報マネージャーのキーを使う）
   --unit <chapter|scene|beat>  --chars-per-call <N>  --context-tokens <N>
   --temperature <T>  --polish  --quality-retries <N>
   -q, --quiet                生成中の本文を表示しない
@@ -302,25 +302,40 @@ kataribe-cli [グローバルオプション] <サブコマンド>
 サブコマンド
   new <FOLDER> --title <T> [--author <A>] [--genre <ID>] [--genre-note <T>]
                [--rating general|r15|r18] [--length <N>] (--idea <TEXT> | --idea-file <PATH>)
+      --length は省略でき、既定は 30,000 字（GUI の新規作成と同じ値）
   status <FOLDER> [--json]            工程の状態と文字数
   generate <FOLDER> <TASK> [--instruction <TEXT>] [--dry-run]
       TASK = concept | style | world | cast | character:<id> | synopsis | outline
            | scenes:<NN> | draft:<NN>/<sNN> | revise:<path>
-      --dry-run は変更案を表示するだけで適用しない
+      --instruction は revise:<path> のときだけ必須。それ以外に付けると使い方の誤りにする
+      --dry-run は原稿と資料を書き換えない（要約などの中間データのキャッシュは更新する）
   run <FOLDER> [--until <STAGE>] [--max-steps <N>]
       取りかかれる工程（ready）を順に生成・適用し続ける。ready が無くなるか上限で止まる。
+      --until があるときは、それより後ろの段階の工程を候補にしない
+      （候補が無くなり、かつ完了していない工程が残っていれば行き詰まりとして失敗にする）。
       STAGE = concept | style | world | cast | characters | synopsis | outline | scenes | draft
   quality <FOLDER> [--json]           シーンごとの品質レポート
-  export <FOLDER> [--output <FILE>]   本文を章題付きの一つのテキストにまとめる
+  export <FOLDER> [--output <FILE>] [--force]
+      本文を章題付きの一つのテキストにまとめる。--output は作品フォルダの外を指定すること
+      （中を指すと拒否する）。既存ファイルへの上書きは --force を指定したときだけ許す
   models                              LLM サーバーのモデル一覧
   api-key set | clear | status        API キーを資格情報マネージャーに保存・削除・確認
-                                      （set は標準入力から読み、画面に表示しない）
+                                      （set は標準入力から読む。端末から直接入力すると
+                                       画面にそのまま表示されるので、表示したくなければ
+                                       パイプで渡す）
 ```
 
 - API キーは `--api-key-env` の環境変数 → 資格情報マネージャー（GUI と共有、`kataribe_engine::ApiKeyStore`）の順に探す。
 
-- 生成中の本文は標準出力、進捗・注意・エラーは標準エラー出力に出す。
-- Ctrl+C で生成を中止する（キャンセルトークン）。
+- 生成中の本文は標準出力、進捗・注意・エラーは標準エラー出力に出す。工程が切り替わるときは
+  標準出力側にも区切りの空行を入れる。`--dry-run` のときは生成そのものを流さず、最後に
+  変更案だけをまとめて出す。
+- Ctrl+C で実行中のサブコマンドを中止する（キャンセルトークン）。もう一度 Ctrl+C を受けたら、
+  応答しなくなった処理を待たずにその場で終了する。
+- 標準出力への書き込みに失敗したら（ディスクが一杯など）、少なくとも `status` / `quality` /
+  `export` の結果を出す箇所では失敗として扱う。
+- 変更案の適用が競合などで失敗したときは、生成した内容を失わないよう標準出力に表示してから
+  エラーで終わる。
 - 終了コード: 0 成功、1 失敗、2 使い方の誤り、130 中止。
 
 ## 7. 品質チェック

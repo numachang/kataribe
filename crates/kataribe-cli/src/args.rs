@@ -34,7 +34,7 @@ pub struct GlobalOptions {
     #[arg(long, global = true, value_name = "ID")]
     pub model: Option<String>,
 
-    /// API キーを読む環境変数（未設定ならキーなし）。
+    /// API キーを読む環境変数（未設定なら資格情報マネージャーのキーを使う）。
     #[arg(
         long,
         global = true,
@@ -96,6 +96,19 @@ pub enum Command {
     ApiKey(ApiKeyArgs),
 }
 
+impl Command {
+    /// clap 自身では表せない、引数の組み合わせの誤りを確かめる。
+    ///
+    /// clap のパースが通ったあと、コマンドを実行する前に呼ぶ。エラーは使い方の誤り
+    /// （終了コード 2）として扱う。
+    pub fn validate(&self) -> Result<(), String> {
+        match self {
+            Command::Generate(args) => args.validate(),
+            _ => Ok(()),
+        }
+    }
+}
+
 #[derive(Debug, Args)]
 pub struct NewArgs {
     /// 作品フォルダ（空のフォルダ、または存在しないフォルダ）。
@@ -122,8 +135,8 @@ pub struct NewArgs {
     #[arg(long, value_enum, default_value_t = RatingArg::General)]
     pub rating: RatingArg,
 
-    /// 目標総文字数。
-    #[arg(long)]
+    /// 目標総文字数（既定 30,000 字）。
+    #[arg(long, default_value_t = 30_000)]
     pub length: u32,
 
     #[command(flatten)]
@@ -167,13 +180,29 @@ pub struct GenerateArgs {
     #[arg(value_name = "TASK")]
     pub task: TaskSpec,
 
-    /// `revise:<path>` を書き直す指示。
+    /// `revise:<path>` を書き直す指示（`revise:<path>` のときは必須。それ以外では指定できない）。
     #[arg(long, value_name = "TEXT")]
     pub instruction: Option<String>,
 
-    /// 変更案を表示するだけで、作品フォルダには適用しない。
+    /// 変更案を表示するだけで、原稿と資料は書き換えない（要約などの中間データのキャッシュは更新する）。
     #[arg(long)]
     pub dry_run: bool,
+}
+
+impl GenerateArgs {
+    /// `--instruction` は `revise:<path>` のときだけ必須、それ以外では指定できない。
+    fn validate(&self) -> Result<(), String> {
+        let is_revise = matches!(self.task, TaskSpec::Revise(_));
+        match (is_revise, &self.instruction) {
+            (true, None) => {
+                Err("generate revise:<path> には --instruction <TEXT> が必要です。".to_owned())
+            }
+            (false, Some(_)) => {
+                Err("--instruction は revise:<path> のときだけ指定できます。".to_owned())
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -208,9 +237,13 @@ pub struct ExportArgs {
     #[arg(value_name = "FOLDER")]
     pub folder: PathBuf,
 
-    /// 書き出し先のファイル（省略時は標準出力）。
+    /// 書き出し先のファイル（省略時は標準出力。作品フォルダの外を指定すること）。
     #[arg(long, value_name = "FILE")]
     pub output: Option<PathBuf>,
+
+    /// 書き出し先に既存のファイルがあっても上書きする。
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[derive(Debug, Args)]
@@ -222,6 +255,9 @@ pub struct ApiKeyArgs {
 #[derive(Debug, Subcommand)]
 pub enum ApiKeyAction {
     /// 標準入力から読んだ 1 行を API キーとして保存する。
+    ///
+    /// 端末から直接入力すると、入力したキーがそのまま画面に表示される。
+    /// 表示したくない場合は、パイプで渡すこと（例: `Get-Content key.txt | kataribe-cli api-key set`）。
     Set,
     /// 保存されている API キーを削除する。
     Clear,
@@ -271,6 +307,7 @@ impl From<DraftUnitArg> for DraftUnit {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kataribe_project::RelPath;
 
     fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
         Cli::try_parse_from(std::iter::once(&"kataribe-cli").chain(args.iter()))
@@ -325,5 +362,62 @@ mod tests {
             panic!("New が来るはず");
         };
         assert_eq!(new_args.rating, RatingArg::R18);
+    }
+
+    #[test]
+    fn length_defaults_to_thirty_thousand_characters_when_omitted() {
+        let cli = parse(&["new", "folder", "--title", "t", "--idea", "a"]).unwrap();
+        let Command::New(new_args) = cli.command else {
+            panic!("New が来るはず");
+        };
+        assert_eq!(new_args.length, 30_000);
+    }
+
+    #[test]
+    fn length_can_still_be_given_explicitly() {
+        let cli = parse(&[
+            "new", "folder", "--title", "t", "--idea", "a", "--length", "5000",
+        ])
+        .unwrap();
+        let Command::New(new_args) = cli.command else {
+            panic!("New が来るはず");
+        };
+        assert_eq!(new_args.length, 5000);
+    }
+
+    fn generate_args(task: TaskSpec, instruction: Option<&str>) -> GenerateArgs {
+        GenerateArgs {
+            folder: PathBuf::from("folder"),
+            task,
+            instruction: instruction.map(str::to_owned),
+            dry_run: false,
+        }
+    }
+
+    #[test]
+    fn validate_requires_instruction_for_revise() {
+        let args = generate_args(TaskSpec::Revise(RelPath::new("concept.md").unwrap()), None);
+        assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn validate_accepts_revise_with_instruction() {
+        let args = generate_args(
+            TaskSpec::Revise(RelPath::new("concept.md").unwrap()),
+            Some("もっと短く"),
+        );
+        assert!(args.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_instruction_for_non_revise_tasks() {
+        let args = generate_args(TaskSpec::Concept, Some("無視されるはず"));
+        assert!(args.validate().is_err());
+    }
+
+    #[test]
+    fn validate_accepts_non_revise_tasks_without_instruction() {
+        let args = generate_args(TaskSpec::Concept, None);
+        assert!(args.validate().is_ok());
     }
 }
