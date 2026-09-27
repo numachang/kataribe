@@ -82,6 +82,42 @@ impl Story {
         })
     }
 
+    /// このシーンより前の本文の末尾、`max_chars` 文字ほど（読む順）。
+    pub fn recent_prose(
+        &self,
+        project: &Project,
+        position: Position,
+        max_chars: usize,
+    ) -> Result<String> {
+        let mut pieces = Vec::new();
+        let mut total_chars = 0;
+        let mut cursor = self.previous(position);
+        while let Some(previous) = cursor {
+            if total_chars >= max_chars {
+                break;
+            }
+            let text = self.text(project, previous)?;
+            total_chars += text.chars().count();
+            pieces.push(text);
+            cursor = self.previous(previous);
+        }
+        pieces.reverse();
+        Ok(pieces.join("\n"))
+    }
+
+    /// 人物の名前（姓・名に分けたものと、つなげたもの）。本文に繰り返し出てきて当然の語。
+    pub fn character_name_words(&self) -> Vec<String> {
+        let mut words = Vec::new();
+        for character in &self.characters {
+            let name = &character.meta.name;
+            words.extend(name.split_whitespace().map(str::to_owned));
+            words.push(name.split_whitespace().collect());
+        }
+        words.sort();
+        words.dedup();
+        words
+    }
+
     /// 章単位で書くシーンの範囲（章の中の添字）。このシーンから、次に本文のあるシーンの手前まで。
     /// 作家が手で書いた後ろのシーンを、LLM の文章で置き換えないようにする。
     pub fn unwritten_run(&self, project: &Project, position: Position) -> Result<Range<usize>> {

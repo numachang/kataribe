@@ -16,6 +16,9 @@ use crate::settings::DraftUnit;
 use context::DraftMaterial;
 use story::Story;
 
+/// 使いすぎの表現を探す範囲（直前までの本文の末尾の文字数）。
+const RECENT_PROSE_CHARS: usize = 20_000;
+
 pub(super) async fn write(
     stage: &Stage<'_>,
     chapter_id: ChapterId,
@@ -32,12 +35,14 @@ pub(super) async fn write(
         DraftUnit::Chapter => story.unwritten_run(stage.project, position)?,
         DraftUnit::Scene | DraftUnit::Beat => position.scene..position.scene + 1,
     };
+    let recent_prose = story.recent_prose(stage.project, position, RECENT_PROSE_CHARS)?;
     let material = DraftMaterial {
         story: &story,
         position,
         unit: stage.settings.draft_unit,
         scenes,
         story_so_far: &story_so_far,
+        recent_prose: &recent_prose,
     };
     match stage.settings.draft_unit {
         DraftUnit::Scene => units::by_scene(stage, &material).await,
