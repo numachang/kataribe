@@ -10,6 +10,7 @@ mod engine_client;
 mod error;
 mod files;
 mod generation;
+mod launch_options;
 mod logging;
 mod projects;
 mod settings;
@@ -21,6 +22,7 @@ use tauri::Manager;
 use crate::settings::AppSettings;
 use crate::state::AppState;
 
+/// アプリを起動し、ウィンドウが閉じられるまで動かす。
 pub fn run() {
     if let Err(error) = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -57,12 +59,18 @@ pub fn run() {
     }
 }
 
-/// 起動時の状態を作る。設定ファイルの場所が決められない・読み込めない場合は既定値で続ける
+/// 起動時の状態を作る。設定ファイルは `--settings` の指定、無ければ既定の場所（CLI と共有）を使う。
+/// 設定ファイルを読み込めない場合は既定値で続ける
 /// （利用者が最初の起動でいきなり使えなくなるのを避ける。詳細はログに残す）。
 fn build_initial_state() -> Result<AppState, Box<dyn std::error::Error>> {
-    let settings_path = kataribe_engine::default_settings_path().ok_or_else(|| {
-        "設定ファイルの置き場所を決められません（ホームディレクトリが見つかりません）。".to_owned()
-    })?;
+    let settings_path = match launch_options::settings_path_from_args(std::env::args_os().skip(1))?
+    {
+        Some(path) => path,
+        None => kataribe_engine::default_settings_path().ok_or_else(|| {
+            "設定ファイルの置き場所を決められません（ホームディレクトリが見つかりません）。"
+                .to_owned()
+        })?,
+    };
     let settings = settings::load(&settings_path).unwrap_or_else(|error| {
         tracing::warn!(%error, "設定ファイルを読み込めなかったため、既定値で起動します");
         AppSettings::default()

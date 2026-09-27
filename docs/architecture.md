@@ -238,8 +238,12 @@ Gemma には前者だけ、Qwen には後者だけが効き、両方を指定す
 - Rust 側は engine を Tauri コマンドとして公開するだけの薄い層にする。
 - ストリーミング出力は `tauri::ipc::Channel` で画面へ送る。キャンセルは画面が採番したジョブ ID で行う。
 - API キーは Windows 資格情報マネージャーに保存し、画面側には渡さない。
-- 画面の型は ts-rs が Rust の型から生成する `src/bindings/` を使う。
+- 画面の型は ts-rs が Rust の型から生成する `src/bindings/` を使う。手書きの契約（`src/api/types.ts`・`backend.ts`）を
+  残す場合は、`src/api/bindingsContract.ts` で生成物と完全に一致することを型検査で保証する。
+  生成物が Rust の型と一致していることは、CI で `cargo test --all-features` の後に `src/bindings` に差分が無いことで確かめる。
 - ブラウザ単体（`pnpm dev`）では、メモリ上の偽バックエンドで動く（画面の開発とテスト用）。
+- 起動オプション `--settings=<PATH>`（`--settings <PATH>` も可）で、既定の場所の代わりに使う設定ファイルを指定できる
+  （CLI の同名のオプションと同じ意味）。E2E テストが利用者の設定に触れずに動くためにも使う。
 
 ### 5.1 IPC の契約
 
@@ -261,6 +265,13 @@ Tauri コマンド名と引数（JS 側の名前。Rust 側は snake_case で受
 コマンドの失敗は `{ kind: BackendErrorKind, message: string }` で返り、画面側で `BackendError` に変換する。
 作品を開いていない状態で作品の操作を呼んだときは `not_found`。
 フォルダ選択は `@tauri-apps/plugin-dialog` の `open({ directory: true })` を画面側から直接呼ぶ。
+
+### 5.2 E2E テスト
+
+本物のアプリ（WebView2 と Rust のバックエンド）を tauri-driver（WebDriver）で操作する。`e2e/` に置き、`pnpm e2e` で動かす。
+一時フォルダに作品と設定ファイルを作り、`--settings=<PATH>` を付けて起動するので、利用者の設定や作品には触れない。
+msedgedriver は引数を Chromium のスイッチとして扱い、値だけの引数に `--` を付けて並べ替えるため、
+アプリへの引数は必ず `--name=value` の 1 つの引数で渡す。
 
 ## 6. ヘッドレス実行（kataribe-cli）
 

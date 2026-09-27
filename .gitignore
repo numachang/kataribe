@@ -18,3 +18,6 @@ Thumbs.db
 # ローカル設定・一時ファイル
 *.local
 *.log
+
+# E2E テストのスクリーンショット
+/e2e/artifacts/
