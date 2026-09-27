@@ -110,22 +110,25 @@ jobs:
           "KATARIBE_E2E_MSEDGEDRIVER=$dir\msedgedriver.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: 画面を埋め込んだアプリを作る
         run: pnpm tauri build --debug --no-bundle
-      - name: 診断（一時的）アプリを直接起動して WebView2 の状態を見る
+      - name: 診断（一時的）WebView2 のリモートデバッグが止められていないか見る
         shell: pwsh
         run: |
+          '--- Edge / WebView2 のポリシー'
+          foreach ($key in 'HKLM:\SOFTWARE\Policies\Microsoft\Edge', 'HKLM:\SOFTWARE\Policies\Microsoft\Edge\WebView2', 'HKCU:\SOFTWARE\Policies\Microsoft\Edge', 'HKLM:\SOFTWARE\WOW6432Node\Policies\Microsoft\Edge') {
+            "[$key]"
+            Get-ItemProperty -Path $key -ErrorAction SilentlyContinue | Out-String
+            Get-ChildItem -Path $key -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
+          }
           '{}' | Out-File -Encoding utf8 "$env:RUNNER_TEMP\diag-settings.json"
           $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9333'
-          $app = Start-Process target\debug\kataribe.exe -ArgumentList "--settings=$env:RUNNER_TEMP\diag-settings.json" -PassThru -RedirectStandardError "$env:RUNNER_TEMP\app-stderr.txt" -RedirectStandardOutput "$env:RUNNER_TEMP\app-stdout.txt"
-          Start-Sleep -Seconds 20
-          "app alive: $(-not $app.HasExited)"
-          if ($app.HasExited) { "exit code: $($app.ExitCode)" }
-          Get-Process kataribe, msedgewebview2 -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, MainWindowHandle, MainWindowTitle | Format-Table -AutoSize | Out-String
+          $app = Start-Process target\debug\kataribe.exe -ArgumentList "--settings=$env:RUNNER_TEMP\diag-settings.json" -PassThru
+          Start-Sleep -Seconds 15
+          '--- WebView2 のプロセスの引数'
+          Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" |
+            Select-Object -First 2 -ExpandProperty CommandLine |
+            ForEach-Object { $_.Substring(0, [Math]::Min(1500, $_.Length)) }
           try { (Invoke-WebRequest http://127.0.0.1:9333/json/version -UseBasicParsing -TimeoutSec 5).Content } catch { "devtools: $_" }
-          '--- stderr'; Get-Content "$env:RUNNER_TEMP\app-stderr.txt" -Tail 40 -ErrorAction SilentlyContinue
-          '--- stdout'; Get-Content "$env:RUNNER_TEMP\app-stdout.txt" -Tail 40 -ErrorAction SilentlyContinue
-          '--- app data'; Get-ChildItem "$env:LOCALAPPDATA\io.github.numachang.kataribe" -Recurse -Depth 1 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
-          [System.Environment]::UserInteractive
-          query session 2>&1
+          Get-Content "$env:LOCALAPPDATA\io.github.numachang.kataribe\EBWebView\DevToolsActivePort" -ErrorAction SilentlyContinue
           Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
       - run: pnpm e2e
       - name: テスト中に撮った画面を残す
