@@ -31,6 +31,8 @@ pub const CACHE_DIR: &str = ".kataribe/cache";
 pub const BACKUPS_DIR: &str = ".kataribe/backups";
 /// 削除したファイルの置き場。
 pub const TRASH_DIR: &str = ".kataribe/trash";
+/// 反映の途中の置き場（書き込む内容の一時ファイル・改名の途中で預けるもの・操作の記録）。
+pub const STAGING_DIR: &str = ".kataribe/staging";
 
 /// `.kataribe/` を Git 管理から除外するファイル。
 pub const GITIGNORE: &str = ".gitignore";

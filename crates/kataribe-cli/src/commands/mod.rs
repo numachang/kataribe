@@ -93,6 +93,9 @@ pub(crate) fn render_change_set(changes: &ChangeSet) -> String {
                 "\n=== ゴミ箱へ移す: {path} ===\n{}",
                 render_trashed_files(files)
             ),
+            FileChange::Move { from, to } => write!(rendered, "\n=== 移動: {from} → {to} ===\n"),
+            // 状態の確認は何も変えないので、変更案としては見せない
+            FileChange::Expect { .. } => continue,
         };
     }
     rendered
@@ -107,8 +110,8 @@ pub(crate) fn render_trashed_files(files: &[TrashedFile]) -> String {
     rendered
 }
 
-/// 適用した変更を、種類ごとに標準エラー出力へ知らせる（書き込んだファイルと、ゴミ箱へ移したもの）。
-/// `indent` は各行の頭に付ける空白。
+/// 適用した変更を、種類ごとに標準エラー出力へ知らせる（書き込んだファイル・ゴミ箱へ移したもの・改名したもの）。
+/// 状態の確認は何も変えないので知らせない。`indent` は各行の頭に付ける空白。
 pub(crate) fn report_applied_changes(
     console: &dyn Console,
     changes: &ChangeSet,
@@ -118,6 +121,8 @@ pub(crate) fn report_applied_changes(
         let line = match change {
             FileChange::Write { path, .. } => format!("{indent}書き込み: {path}\n"),
             FileChange::Trash { path, .. } => format!("{indent}ゴミ箱へ: {path}\n"),
+            FileChange::Move { from, to } => format!("{indent}移動: {from} → {to}\n"),
+            FileChange::Expect { .. } => continue,
         };
         console.eprint(&line)?;
     }
@@ -151,30 +156,33 @@ mod tests {
                 chars: 1234,
             }],
         });
+        changes.move_entry(path("plot/chapters/03.md"), path("plot/chapters/02.md"));
+        changes.expect(path("manuscript/03"), None);
         changes
     }
 
     #[test]
-    fn render_change_set_shows_the_content_of_writes_and_the_files_to_be_trashed() {
+    fn render_change_set_shows_writes_trashes_and_moves_but_not_expectations() {
         let rendered = render_change_set(&mixed_change_set());
 
         assert_eq!(
             rendered,
             "まとめ\n\
              \n=== plot/chapters/01.md ===\n新しい章立て\n\
-             \n=== ゴミ箱へ移す: manuscript/01/s02.txt ===\n  manuscript/01/s02.txt（1234 字）\n"
+             \n=== ゴミ箱へ移す: manuscript/01/s02.txt ===\n  manuscript/01/s02.txt（1234 字）\n\
+             \n=== 移動: plot/chapters/03.md → plot/chapters/02.md ===\n"
         );
     }
 
     #[test]
-    fn report_applied_changes_tells_writes_and_trashed_files_apart() {
+    fn report_applied_changes_tells_writes_trashes_and_moves_apart_and_skips_expectations() {
         let console = BufferConsole::new();
 
         report_applied_changes(&console, &mixed_change_set(), "  ").unwrap();
 
         assert_eq!(
             console.stderr(),
-            "  書き込み: plot/chapters/01.md\n  ゴミ箱へ: manuscript/01/s02.txt\n"
+            "  書き込み: plot/chapters/01.md\n  ゴミ箱へ: manuscript/01/s02.txt\n  移動: plot/chapters/03.md → plot/chapters/02.md\n"
         );
     }
 }

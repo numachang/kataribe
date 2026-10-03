@@ -42,6 +42,20 @@ pub enum StructureEdit {
         /// 消す資料。`world/` 直下の Markdown。
         path: RelPath,
     },
+    /// 章を足す。後ろの章の番号は 1 つずつ後ろへずれる（ファイルとフォルダの名前を振り直す）。
+    AddChapter {
+        /// この章の前に足す。`None` なら末尾。
+        before: Option<ChapterId>,
+        /// 章題。
+        title: String,
+        /// ストーリーライン（章立ての本文）。空でもよい。シーン構成は空で作る。
+        storyline: String,
+    },
+    /// 章を消す。章立てと本文のフォルダ（中のファイルごと）がゴミ箱へ移り、後ろの章の番号は 1 つずつ前へずれる。
+    RemoveChapter {
+        /// 消す章。
+        chapter: ChapterId,
+    },
     /// 章にシーンを足す。
     AddScene {
         /// 足す章。

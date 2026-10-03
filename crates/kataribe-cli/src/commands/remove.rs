@@ -1,4 +1,4 @@
-//! `remove` サブコマンド: 人物・世界観の資料・シーンを、ゴミ箱（`.kataribe/trash/`）へ移して消す。
+//! `remove` サブコマンド: 人物・世界観の資料・章・シーンを、ゴミ箱（`.kataribe/trash/`）へ移して消す。
 
 use crate::ApplyGuard;
 use crate::output::Console;

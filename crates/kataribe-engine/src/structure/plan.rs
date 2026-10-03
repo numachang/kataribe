@@ -18,6 +18,8 @@ pub struct StructurePlan {
     pub created: Option<RelPath>,
     /// 人物を消すとき、その人物の名前を挙げているシーン。名前は書き換えない（知らせるだけ）。
     pub references: Vec<SceneReference>,
+    /// 章を足す・消すときに、番号が変わる章（後ろの章）。番号の小さい順。
+    pub renumbered: Vec<RenumberedChapter>,
     /// 利用者への注意書き（「第 3 章は読めないため参照を確かめられませんでした」など）。
     pub notices: Vec<String>,
 }
@@ -63,8 +65,20 @@ pub struct SceneReference {
     pub as_character: bool,
 }
 
+/// 番号が変わる章。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+pub struct RenumberedChapter {
+    /// 変わる前の番号。
+    pub from: ChapterId,
+    /// 変わった後の番号。
+    pub to: ChapterId,
+    /// 章題。章立てが読めなければ `None`。
+    pub title: Option<String>,
+}
+
 impl StructurePlan {
-    /// 変更案だけの計画。何も開かず、参照も注意書きも無い。
+    /// 変更案だけの計画。何も開かず、参照も注意書きも番号の変わる章も無い。
     /// `change_set` は `wording.planned()` を説明にして作っておく。
     pub(super) fn new(change_set: ChangeSet, wording: &Wording) -> Self {
         Self {
@@ -72,6 +86,7 @@ impl StructurePlan {
             completed_summary: wording.completed(),
             created: None,
             references: Vec::new(),
+            renumbered: Vec::new(),
             notices: Vec::new(),
         }
     }

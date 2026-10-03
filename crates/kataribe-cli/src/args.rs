@@ -101,9 +101,9 @@ pub enum Command {
     Generate(GenerateArgs),
     /// 取りかかれる工程を順に生成・適用する。
     Run(RunArgs),
-    /// 登場人物・世界観の資料・シーンを、自分で書いて足す（LLM は使わない）。
+    /// 登場人物・世界観の資料・章・シーンを、自分で書いて足す（LLM は使わない）。
     Add(AddArgs),
-    /// 登場人物・世界観の資料・シーンを、ゴミ箱（.kataribe/trash/）へ移して消す（LLM は使わない）。
+    /// 登場人物・世界観の資料・章・シーンを、ゴミ箱（.kataribe/trash/）へ移して消す（LLM は使わない）。
     Remove(RemoveArgs),
     /// シーンごとの品質レポートを表示する。
     Quality(QualityArgs),
@@ -604,6 +604,67 @@ mod tests {
     }
 
     #[test]
+    fn add_chapter_takes_a_title_a_storyline_and_the_chapter_to_go_before() {
+        let cli = parse(&[
+            "add",
+            "chapter",
+            "folder",
+            "--title",
+            "雨の匂い",
+            "--storyline",
+            "あらすじ",
+            "--before",
+            "02",
+            "--dry-run",
+        ])
+        .unwrap();
+
+        let Command::Add(AddArgs {
+            target: AddTarget::Chapter(args),
+        }) = cli.command
+        else {
+            panic!("add chapter が来るはず");
+        };
+        assert_eq!(args.title, "雨の匂い");
+        assert_eq!(args.storyline.storyline.as_deref(), Some("あらすじ"));
+        assert_eq!(args.before, Some(ChapterId::from_number(2)));
+        assert!(args.dry_run);
+    }
+
+    #[test]
+    fn add_chapter_goes_to_the_end_by_default_and_checks_its_arguments() {
+        let cli = parse(&["add", "chapter", "folder", "--title", "題"]).unwrap();
+        let Command::Add(AddArgs {
+            target: AddTarget::Chapter(args),
+        }) = cli.command
+        else {
+            panic!("add chapter が来るはず");
+        };
+        assert_eq!(args.before, None);
+
+        assert!(parse(&["add", "chapter", "folder"]).is_err(), "章題は必須");
+        assert!(
+            parse(&["add", "chapter", "folder", "--title", "題", "--before", "1"]).is_err(),
+            "章番号は 2〜3 桁"
+        );
+        assert!(
+            parse(&[
+                "add",
+                "chapter",
+                "folder",
+                "--title",
+                "題",
+                "--storyline",
+                "a",
+                "--storyline-file",
+                "b"
+            ])
+            .is_err(),
+            "ストーリーラインは直接かファイルのどちらか"
+        );
+    }
+
+    #[test]
     fn remove_takes_a_target_and_a_dry_run_flag() {
         let cli = parse(&["remove", "folder", "scene:01/s02", "--dry-run"]).unwrap();
 
@@ -618,6 +679,19 @@ mod tests {
             }
         );
         assert!(args.dry_run);
-        assert!(parse(&["remove", "folder", "chapter:01"]).is_err());
+        assert!(parse(&["remove", "folder", "chapter:1"]).is_err());
+    }
+
+    #[test]
+    fn remove_takes_a_chapter() {
+        let cli = parse(&["remove", "folder", "chapter:03"]).unwrap();
+
+        let Command::Remove(args) = cli.command else {
+            panic!("remove が来るはず");
+        };
+        assert_eq!(
+            args.target,
+            RemoveTarget::Chapter(ChapterId::from_number(3))
+        );
     }
 }

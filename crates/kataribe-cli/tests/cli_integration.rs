@@ -1254,7 +1254,9 @@ async fn bad_arguments_for_add_and_remove_are_usage_errors() {
     let temp_dir = tempfile::tempdir().unwrap();
     let folder = path_arg(temp_dir.path());
     for args in [
-        vec!["remove", &folder, "chapter:01"],
+        vec!["remove", &folder, "chapter:1"],
+        vec!["add", "chapter", &folder],
+        vec!["add", "chapter", &folder, "--title", "題", "--before", "1"],
         vec!["remove", &folder, "scene:01"],
         vec!["add", "character", &folder],
         vec!["add", "scene", &folder, "1", "--title", "題"],
@@ -1282,4 +1284,314 @@ async fn bad_arguments_for_add_and_remove_are_usage_errors() {
             console.stderr()
         );
     }
+}
+
+// ---- add chapter / remove chapter（章の追加・削除。番号の振り直し） ----
+
+/// 作品を作り、章立てと本文を持つ第 1 章と、本文の無い第 2 章を置く。
+async fn project_with_two_chapters(project_dir: &std::path::Path) {
+    create_test_project(project_dir).await;
+    std::fs::write(
+        project_dir.join("plot/chapters/01.md"),
+        "---\ntitle: 雨の匂い\n---\n第一章のあらすじ\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(project_dir.join("manuscript/01")).unwrap();
+    std::fs::write(
+        project_dir.join("manuscript/01/s01.txt"),
+        "雨が降っていた。\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project_dir.join("plot/chapters/02.md"),
+        "---\ntitle: 閉ざされた書斎\n---\n第二章のあらすじ\n",
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn add_chapter_before_a_chapter_renumbers_the_later_chapters_and_reports_the_moves() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    project_with_two_chapters(&project_dir).await;
+    let console = BufferConsole::new();
+
+    let code = run_plain(
+        &[
+            "add",
+            "chapter",
+            &path_arg(&project_dir),
+            "--title",
+            "序章",
+            "--storyline",
+            "物語の前触れ",
+            "--before",
+            "01",
+        ],
+        &console,
+    )
+    .await;
+
+    assert_eq!(
+        code,
+        std::process::ExitCode::from(0),
+        "{}",
+        console.stderr()
+    );
+    let stderr = console.stderr();
+    assert!(stderr.contains("番号が変わる章"), "{stderr}");
+    assert!(stderr.contains("第1章「雨の匂い」 → 第2章"), "{stderr}");
+    assert!(
+        stderr.contains("第2章「閉ざされた書斎」 → 第3章"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("移動: plot/chapters/01.md → plot/chapters/02.md"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("移動: manuscript/01 → manuscript/02"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("書き込み: plot/chapters/01.md"), "{stderr}");
+    assert!(
+        !stderr.contains("manuscript/02 →"),
+        "本文のフォルダの無い章の分は、改名しない: {stderr}"
+    );
+    let new_chapter = std::fs::read_to_string(project_dir.join("plot/chapters/01.md")).unwrap();
+    assert!(new_chapter.contains("title: 序章"), "{new_chapter}");
+    assert!(new_chapter.contains("物語の前触れ"), "{new_chapter}");
+    let moved_chapter = std::fs::read_to_string(project_dir.join("plot/chapters/02.md")).unwrap();
+    assert!(moved_chapter.contains("title: 雨の匂い"), "{moved_chapter}");
+    let third_chapter = std::fs::read_to_string(project_dir.join("plot/chapters/03.md")).unwrap();
+    assert!(
+        third_chapter.contains("title: 閉ざされた書斎"),
+        "{third_chapter}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(project_dir.join("manuscript/02/s01.txt")).unwrap(),
+        "雨が降っていた。\n"
+    );
+    assert!(!project_dir.join("manuscript/01").exists());
+    assert!(
+        !project_dir
+            .join(".kataribe/staging")
+            .read_dir()
+            .is_ok_and(|mut entries| entries.next().is_some())
+    );
+}
+
+#[tokio::test]
+async fn add_chapter_goes_to_the_end_by_default_without_renaming_anything() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    project_with_two_chapters(&project_dir).await;
+    let storyline_file = temp_dir.path().join("storyline.txt");
+    std::fs::write(&storyline_file, "終章のあらすじ\r\n").unwrap();
+    let console = BufferConsole::new();
+
+    let code = run_plain(
+        &[
+            "add",
+            "chapter",
+            &path_arg(&project_dir),
+            "--title",
+            "終章",
+            "--storyline-file",
+            &path_arg(&storyline_file),
+        ],
+        &console,
+    )
+    .await;
+
+    assert_eq!(
+        code,
+        std::process::ExitCode::from(0),
+        "{}",
+        console.stderr()
+    );
+    let stderr = console.stderr();
+    assert!(stderr.contains("書き込み: plot/chapters/03.md"), "{stderr}");
+    assert!(!stderr.contains("移動:"), "{stderr}");
+    assert!(!stderr.contains("番号が変わる章"), "{stderr}");
+    let new_chapter = std::fs::read_to_string(project_dir.join("plot/chapters/03.md")).unwrap();
+    assert!(new_chapter.contains("title: 終章"), "{new_chapter}");
+    assert!(new_chapter.ends_with("終章のあらすじ\n"), "{new_chapter}");
+    assert!(project_dir.join("manuscript/01/s01.txt").is_file());
+}
+
+#[tokio::test]
+async fn add_chapter_with_dry_run_shows_the_moves_and_changes_nothing() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    project_with_two_chapters(&project_dir).await;
+    let console = BufferConsole::new();
+
+    let code = run_plain(
+        &[
+            "add",
+            "chapter",
+            &path_arg(&project_dir),
+            "--title",
+            "序章",
+            "--before",
+            "01",
+            "--dry-run",
+        ],
+        &console,
+    )
+    .await;
+
+    assert_eq!(
+        code,
+        std::process::ExitCode::from(0),
+        "{}",
+        console.stderr()
+    );
+    let stdout = console.stdout();
+    assert!(
+        stdout.contains("=== 移動: plot/chapters/01.md → plot/chapters/02.md ==="),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("=== 移動: manuscript/01 → manuscript/02 ==="),
+        "{stdout}"
+    );
+    assert!(stdout.contains("=== plot/chapters/01.md ==="), "{stdout}");
+    assert!(project_dir.join("manuscript/01/s01.txt").is_file());
+    assert!(!project_dir.join("plot/chapters/03.md").exists());
+    let first = std::fs::read_to_string(project_dir.join("plot/chapters/01.md")).unwrap();
+    assert!(first.contains("title: 雨の匂い"), "{first}");
+}
+
+#[tokio::test]
+async fn add_chapter_refuses_when_a_text_folder_without_a_chapter_is_in_the_way() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    project_with_two_chapters(&project_dir).await;
+    std::fs::create_dir_all(project_dir.join("manuscript/03")).unwrap();
+    std::fs::write(
+        project_dir.join("manuscript/03/s01.txt"),
+        "章立ての無い本文\n",
+    )
+    .unwrap();
+    let console = BufferConsole::new();
+
+    let code = run_plain(
+        &[
+            "add",
+            "chapter",
+            &path_arg(&project_dir),
+            "--title",
+            "序章",
+            "--before",
+            "01",
+        ],
+        &console,
+    )
+    .await;
+
+    assert_eq!(code, std::process::ExitCode::from(1));
+    assert!(
+        console.stderr().contains("manuscript/03 が既にあるため"),
+        "{}",
+        console.stderr()
+    );
+    assert!(project_dir.join("manuscript/01/s01.txt").is_file());
+    assert!(!project_dir.join("plot/chapters/03.md").exists());
+}
+
+#[tokio::test]
+async fn remove_chapter_tells_what_goes_to_the_trash_and_which_chapters_change_number() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    project_with_two_chapters(&project_dir).await;
+    let console = BufferConsole::new();
+
+    let code = run_plain(&["remove", &path_arg(&project_dir), "chapter:01"], &console).await;
+
+    assert_eq!(
+        code,
+        std::process::ExitCode::from(0),
+        "{}",
+        console.stderr()
+    );
+    let stderr = console.stderr();
+    assert!(stderr.contains("plot/chapters/01.md（"), "{stderr}");
+    assert!(stderr.contains("manuscript/01/s01.txt（8 字）"), "{stderr}");
+    assert!(
+        stderr.contains("第2章「閉ざされた書斎」 → 第1章"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("ゴミ箱へ: plot/chapters/01.md"), "{stderr}");
+    assert!(stderr.contains("ゴミ箱へ: manuscript/01"), "{stderr}");
+    assert!(
+        stderr.contains("移動: plot/chapters/02.md → plot/chapters/01.md"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("manuscript/02 →"), "{stderr}");
+    let first = std::fs::read_to_string(project_dir.join("plot/chapters/01.md")).unwrap();
+    assert!(first.contains("title: 閉ざされた書斎"), "{first}");
+    assert!(!project_dir.join("plot/chapters/02.md").exists());
+    assert!(!project_dir.join("manuscript/01").exists());
+    let trashed = std::fs::read_dir(project_dir.join(".kataribe/trash"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    assert!(trashed.join("plot/chapters/01.md").is_file());
+    assert_eq!(
+        std::fs::read_to_string(trashed.join("manuscript/01/s01.txt")).unwrap(),
+        "雨が降っていた。\n"
+    );
+}
+
+#[tokio::test]
+async fn remove_chapter_with_dry_run_prints_the_plan_and_moves_nothing() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    project_with_two_chapters(&project_dir).await;
+    let console = BufferConsole::new();
+
+    let code = run_plain(
+        &["remove", &path_arg(&project_dir), "chapter:01", "--dry-run"],
+        &console,
+    )
+    .await;
+
+    assert_eq!(
+        code,
+        std::process::ExitCode::from(0),
+        "{}",
+        console.stderr()
+    );
+    let stdout = console.stdout();
+    assert!(
+        stdout.contains("=== ゴミ箱へ移す: manuscript/01 ==="),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("=== 移動: plot/chapters/02.md → plot/chapters/01.md ==="),
+        "{stdout}"
+    );
+    assert!(console.stderr().contains("番号が変わる章"));
+    assert!(project_dir.join("manuscript/01/s01.txt").is_file());
+    assert!(project_dir.join("plot/chapters/02.md").is_file());
+    assert!(!project_dir.join(".kataribe/trash").exists());
+}
+
+#[tokio::test]
+async fn remove_chapter_that_does_not_exist_fails_and_changes_nothing() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    project_with_two_chapters(&project_dir).await;
+    let console = BufferConsole::new();
+
+    let code = run_plain(&["remove", &path_arg(&project_dir), "chapter:07"], &console).await;
+
+    assert_eq!(code, std::process::ExitCode::from(1));
+    assert!(console.stderr().contains("第7章"), "{}", console.stderr());
+    assert!(project_dir.join("plot/chapters/01.md").is_file());
+    assert!(project_dir.join("plot/chapters/02.md").is_file());
 }

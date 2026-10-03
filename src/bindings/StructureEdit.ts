@@ -46,7 +46,23 @@ body: string, } | { "kind": "remove_world_document",
 /**
  * 消す資料。`world/` 直下の Markdown。
  */
-path: RelPath, } | { "kind": "add_scene", 
+path: RelPath, } | { "kind": "add_chapter", 
+/**
+ * この章の前に足す。`None` なら末尾。
+ */
+before: ChapterId | null, 
+/**
+ * 章題。
+ */
+title: string, 
+/**
+ * ストーリーライン（章立ての本文）。空でもよい。シーン構成は空で作る。
+ */
+storyline: string, } | { "kind": "remove_chapter", 
+/**
+ * 消す章。
+ */
+chapter: ChapterId, } | { "kind": "add_scene", 
 /**
  * 足す章。
  */

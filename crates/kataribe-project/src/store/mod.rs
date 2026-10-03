@@ -23,10 +23,12 @@ use crate::layout;
 use crate::path::RelPath;
 
 mod batch;
+mod folder;
 #[cfg(test)]
 mod test_support;
 
-pub use batch::{PendingChange, PendingWrite};
+pub use batch::{EntryCondition, PendingChange, PendingWrite};
+pub use folder::FolderFile;
 
 /// 内容のハッシュ（SHA-256、16 進小文字）。書き込み時の競合検出に使う。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -585,24 +587,25 @@ fn create_parent_dir(target: &Path, path: &RelPath) -> Result<(), ProjectError> 
     })
 }
 
+/// `target` と同じフォルダの一時ファイルで、`target` を置き換える。
 fn atomic_write(target: &Path, path: &RelPath, bytes: &[u8]) -> Result<(), ProjectError> {
-    persist_temp_file(stage_temp_file(target, path, bytes)?, target, path)
-}
-
-/// `target` と同じフォルダの一時ファイルに `bytes` を書き、ディスクへ確実に書き出す。
-fn stage_temp_file(
-    target: &Path,
-    path: &RelPath,
-    bytes: &[u8],
-) -> Result<NamedTempFile, ProjectError> {
     let Some(parent) = target.parent() else {
         return Err(ProjectError::PathEscapesRoot { path: path.clone() });
     };
+    persist_temp_file(stage_temp_file(parent, path, bytes)?, target, path)
+}
+
+/// `dir` の一時ファイルに `bytes` を書き、ディスクへ確実に書き出す。`path` は、失敗を知らせるための対象のパス。
+fn stage_temp_file(
+    dir: &Path,
+    path: &RelPath,
+    bytes: &[u8],
+) -> Result<NamedTempFile, ProjectError> {
     let io_error = |source| ProjectError::Io {
         path: path.clone(),
         source,
     };
-    let mut temp = NamedTempFile::new_in(parent).map_err(io_error)?;
+    let mut temp = NamedTempFile::new_in(dir).map_err(io_error)?;
     temp.write_all(bytes).map_err(io_error)?;
     temp.as_file().sync_all().map_err(io_error)?;
     Ok(temp)
