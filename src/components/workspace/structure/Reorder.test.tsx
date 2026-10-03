@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BackendError } from "../../../api/backend";
 import { createMockBackend } from "../../../api/mock";
+import type { OverviewEntry } from "../../../api/types";
 import { useEditorStore } from "../../../store/editorStore";
 import { useUiStore } from "../../../store/uiStore";
 import { useWorkspaceStore } from "../../../store/workspaceStore";
@@ -262,8 +263,176 @@ describe("並べ替えの失敗と、操作できない間", () => {
 
     const item = screen.getByRole("menuitem", { name: "上へ移す" });
     expect(item).toBeDisabled();
-    expect(item).toHaveAttribute("title", "並べ替えている間は、操作できません。");
+    expect(item).toHaveAttribute(
+      "title",
+      "目次を変更している間は、追加・削除・並べ替えできません。",
+    );
     release();
     await waitFor(() => expect(characterLabels()).toEqual(["佐藤 健二", "霧島 凛"]));
+  });
+
+  it("失敗したあとは、また操作できる（動かしている間の印が残らない）", async () => {
+    const user = userEvent.setup();
+    const backend = wrapBackend(createMockBackend({ delayMs: 0 }), {
+      async applyChangeSet() {
+        throw new BackendError("conflict", "適用しませんでした。");
+      },
+    });
+    await renderWorkspace(backend);
+    await openRowMenu(user, "霧島 凛", "下へ移す");
+    await waitFor(() => expect(hasToast("適用しませんでした。")).toBe(true));
+
+    await user.click(screen.getByRole("button", { name: "「佐藤 健二」の操作" }));
+
+    expect(screen.getByRole("menuitem", { name: "上へ移す" })).toBeEnabled();
+    expect(useWorkspaceStore.getState().activeStructureEdits).toBe(0);
+  });
+});
+
+describe("並べ替えている間の生成", () => {
+  // 並べ替えの適用を止めておき、その間に生成を始められないことと、終われば始められることを確かめる
+  function gatedBackend() {
+    const inner = createMockBackend({ delayMs: 0 });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const backend = wrapBackend(inner, {
+      async applyChangeSet(changeSet) {
+        await gate;
+        return inner.applyChangeSet(changeSet);
+      },
+    });
+    return { backend, release: () => release() };
+  }
+
+  const BLOCKED_REASON = "目次を変更している間は、生成できません。";
+
+  it("「工程」タブの生成・「次の工程を実行」・「自動で進める」は、並べ替えが終わるまで押せない", async () => {
+    const user = userEvent.setup();
+    const { backend, release } = gatedBackend();
+    await renderWorkspace(backend);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "次の工程を実行" })).toBeEnabled(),
+    );
+
+    await openRowMenu(user, "霧島 凛", "下へ移す");
+
+    for (const name of ["次の工程を実行", "自動で進める"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute("title", BLOCKED_REASON);
+    }
+    for (const button of screen.getAllByRole("button", { name: "生成" })) {
+      expect(button).toBeDisabled();
+    }
+    release();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "次の工程を実行" })).toBeEnabled(),
+    );
+    expect(screen.getByRole("button", { name: "自動で進める" })).toBeEnabled();
+  });
+
+  it("まだ無い本文の「空の本文から書き始める」と「この文書」タブの生成は、並べ替えが終わるまで押せない", async () => {
+    const user = userEvent.setup();
+    const { backend, release } = gatedBackend();
+    await renderWorkspace(backend);
+    await user.click(await screen.findByRole("button", { name: /^消えた甥/ }));
+    await user.click(screen.getByRole("tab", { name: "この文書" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "本文を生成" })).toBeEnabled());
+
+    await openRowMenu(user, "霧島 凛", "下へ移す");
+
+    const startWriting = screen.getByRole("button", { name: "空の本文から書き始める" });
+    expect(startWriting).toBeDisabled();
+    expect(startWriting).toHaveAttribute("title", "目次を変更している間は、本文を作成できません。");
+    const generate = screen.getByRole("button", { name: "本文を生成" });
+    expect(generate).toBeDisabled();
+    expect(generate).toHaveAttribute("title", BLOCKED_REASON);
+    release();
+    await waitFor(() => expect(startWriting).toBeEnabled());
+    expect(generate).toBeEnabled();
+  });
+});
+
+describe("並べ替えの注意書き", () => {
+  it("変更案に注意書きがあれば、適用の要約に続けて知らせる", async () => {
+    const user = userEvent.setup();
+    const inner = createMockBackend({ delayMs: 0 });
+    const backend = wrapBackend(inner, {
+      async planStructureEdit(edit) {
+        const plan = await inner.planStructureEdit(edit);
+        return { ...plan, notices: ["読めない人物資料は、順番を変えずに後ろへ並べたままです。"] };
+      },
+    });
+    await renderWorkspace(backend);
+
+    await openRowMenu(user, "霧島 凛", "下へ移す");
+
+    await waitFor(() => expect(hasToast("人物「霧島 凛」を 2 番目に移しました。")).toBe(true));
+    const messages = useUiStore.getState().toasts.map((toast) => toast.message);
+    expect(messages).toEqual([
+      "人物「霧島 凛」を 2 番目に移しました。",
+      "読めない人物資料は、順番を変えずに後ろへ並べたままです。",
+    ]);
+  });
+
+  it("注意書きが無ければ、要約のトーストだけを出す", async () => {
+    const user = userEvent.setup();
+    await renderWorkspace(createMockBackend({ delayMs: 0 }));
+
+    await openRowMenu(user, "霧島 凛", "下へ移す");
+
+    await waitFor(() => expect(hasToast("2 番目に移しました。")).toBe(true));
+    expect(useUiStore.getState().toasts).toHaveLength(1);
+  });
+});
+
+describe("読めない章立てが混じる目次", () => {
+  it("本文の章見出しからの章の並べ替えは、読めない章立ても数えた位置を送る", async () => {
+    const user = userEvent.setup();
+    const inner = createMockBackend({ delayMs: 0 });
+    const planStructureEdit = vi.fn(async () => {
+      throw new BackendError("invalid_input", "このテストでは適用しません。");
+    });
+    const backend = wrapBackend(inner, {
+      // 本物の目次と同じく、本文の節は読めない章（00）を出さず、プロットの節は出す
+      async overview() {
+        const overview = await inner.overview();
+        const sections = overview.sections.map((section) =>
+          section.kind === "plot"
+            ? {
+                ...section,
+                entries: [
+                  ...section.entries.slice(0, 1),
+                  {
+                    ...(section.entries[1] as OverviewEntry),
+                    path: "plot/chapters/00.md",
+                    label: "壊れた章",
+                    chapter: "00",
+                    error: "YAML を読めません",
+                  },
+                  ...section.entries.slice(1),
+                ],
+              }
+            : section,
+        );
+        return { ...overview, sections };
+      },
+      planStructureEdit,
+    });
+    await renderWorkspace(backend);
+    // 章 00（読めない）・01・02 のうち、本文の節に出ているのは 01 と 02
+    useWorkspaceStore.getState().setOverview(await backend.overview());
+
+    await openRowMenu(user, "灯台のある岬", "章を上へ移す");
+
+    await waitFor(() =>
+      expect(planStructureEdit).toHaveBeenCalledWith({
+        kind: "move_chapter",
+        chapter: "02",
+        position: 1,
+      }),
+    );
   });
 });

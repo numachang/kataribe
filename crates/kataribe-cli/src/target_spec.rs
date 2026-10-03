@@ -86,7 +86,7 @@ impl FromStr for MoveTarget {
             return Err("世界観の資料には順番が無いので、並べ替えられません。".to_owned());
         }
         Err(format!(
-            "不明な対象です: {input}
+            "不明な対象です: {input}\n\
              次のいずれかを指定してください: character:<id> | chapter:<NN> | scene:<NN>/<sNN>"
         ))
     }
@@ -281,9 +281,10 @@ mod tests {
     #[test]
     fn a_move_target_rejects_unknown_kinds_and_bad_arguments() {
         let unknown = "rin".parse::<MoveTarget>().unwrap_err();
-        assert!(
-            unknown.contains("character:<id> | chapter:<NN> | scene:<NN>/<sNN>"),
-            "{unknown}"
+        assert_eq!(
+            unknown,
+            "不明な対象です: rin\n\
+             次のいずれかを指定してください: character:<id> | chapter:<NN> | scene:<NN>/<sNN>"
         );
         assert!("character:".parse::<MoveTarget>().is_err());
         assert!("chapter:1".parse::<MoveTarget>().is_err());

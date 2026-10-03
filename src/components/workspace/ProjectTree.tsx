@@ -3,6 +3,7 @@ import type { OverviewEntry, SectionKind } from "../../api/types";
 import type { MoveEdit, StructureRequest } from "../../features/structure/structureRequest";
 import { useEntryMove } from "../../features/structure/useEntryMove";
 import { useStructureEditBlockedReason } from "../../features/structure/useStructureAvailability";
+import { listPlanChapters } from "../../lib/overviewTree";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { ActionMenu } from "../ActionMenu";
 import type { EntryAction } from "./structure/entryActions";
@@ -29,9 +30,6 @@ interface StructureControls {
   move: (edit: MoveEdit) => void;
 }
 
-/** 並べ替えている間（適用が済んで目次が変わるまで）、構成の操作を受け付けない理由。 */
-const MOVING_REASON = "並べ替えている間は、操作できません。";
-
 /** 節の見出しの「＋」で足せるもの。 */
 const SECTION_ADDITIONS: Partial<
   Record<SectionKind, { label: string; request: StructureRequest }>
@@ -54,10 +52,12 @@ interface EntryNodeProps {
   depth: number;
   /** 同じ階層の項目の並び（この項目を含む）。「この後に追加」と並べ替えの位置に使う。 */
   siblings: OverviewEntry[];
+  /** プロットの節の章（読めない章立ても含む）。本文の章見出しの並べ替えの位置に使う。 */
+  planChapters: OverviewEntry[];
   controls: StructureControls;
 }
 
-function EntryNode({ entry, depth, siblings, controls }: EntryNodeProps) {
+function EntryNode({ entry, depth, siblings, planChapters, controls }: EntryNodeProps) {
   const currentPath = useWorkspaceStore((state) => state.currentPath);
   const isSelected = entry.path !== null && entry.path === currentPath;
   const charsLabel = formatChars(entry);
@@ -83,7 +83,7 @@ function EntryNode({ entry, depth, siblings, controls }: EntryNodeProps) {
     .join(" ");
 
   const path = entry.path;
-  const menuItems = entryActionsFor(entry, siblings).map((action) => ({
+  const menuItems = entryActionsFor(entry, { siblings, planChapters }).map((action) => ({
     label: action.label,
     onSelect: () => select(action),
     disabledReason: controls.blockedReason ?? undefined,
@@ -124,6 +124,7 @@ function EntryNode({ entry, depth, siblings, controls }: EntryNodeProps) {
               entry={child}
               depth={depth + 1}
               siblings={entry.children}
+              planChapters={planChapters}
               controls={controls}
             />
           ))}
@@ -136,8 +137,8 @@ function EntryNode({ entry, depth, siblings, controls }: EntryNodeProps) {
 /** 左ペイン。作品の目次をツリーで表示し、文字数の進み具合とあわせて見せる。人物・資料・章・シーンの追加・削除と、人物・章・シーンの並べ替えもここから行う。 */
 export function ProjectTree() {
   const overview = useWorkspaceStore((state) => state.overview);
-  const sessionBlockedReason = useStructureEditBlockedReason();
-  const { move, isMoving } = useEntryMove();
+  const blockedReason = useStructureEditBlockedReason();
+  const move = useEntryMove();
   const [request, setRequest] = useState<StructureRequest | null>(null);
   if (!overview) {
     return null;
@@ -145,7 +146,7 @@ export function ProjectTree() {
 
   const progress =
     overview.target_length > 0 ? Math.min(1, overview.total_chars / overview.target_length) : 0;
-  const blockedReason = sessionBlockedReason ?? (isMoving ? MOVING_REASON : null);
+  const planChapters = listPlanChapters(overview);
   const controls: StructureControls = { blockedReason, request: setRequest, move };
 
   return (
@@ -189,6 +190,7 @@ export function ProjectTree() {
                     entry={entry}
                     depth={0}
                     siblings={section.entries}
+                    planChapters={planChapters}
                     controls={controls}
                   />
                 ))}

@@ -81,12 +81,23 @@ export function sortedByNumber(chapters: MockChapter[]): MockChapter[] {
   );
 }
 
-/** 人物を目次に並べる順（表示順、無ければ最後。同じ値は id 順。Rust の `Project::characters` と同じ）。 */
+/**
+ * 人物を目次に並べる順（表示順、無ければ最後）。同じ値は、本物の目次の `sort_for_display` と同じく、読み込んだ順のまま
+ * （＝ファイル名の順。`rin-a.md` は `rin.md` より前になるので、id の順とは限らない）。
+ */
 export function sortedForDisplay(characters: MockCharacter[]): MockCharacter[] {
   const orderOf = (character: MockCharacter): number => character.order ?? Number.MAX_SAFE_INTEGER;
-  return [...characters].sort(
-    (left, right) => orderOf(left) - orderOf(right) || left.id.localeCompare(right.id),
-  );
+  const fileNameOf = (character: MockCharacter): string => `${character.id}.md`;
+  return [...characters].sort((left, right) => {
+    const byOrder = orderOf(left) - orderOf(right);
+    if (byOrder !== 0) {
+      return byOrder;
+    }
+    // localeCompare ではなく、ファイルシステムが並べる順（コードポイント順）にそろえる
+    const leftName = fileNameOf(left);
+    const rightName = fileNameOf(right);
+    return leftName < rightName ? -1 : leftName > rightName ? 1 : 0;
+  });
 }
 
 export function findScene(

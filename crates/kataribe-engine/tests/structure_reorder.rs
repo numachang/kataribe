@@ -306,6 +306,40 @@ fn moving_to_a_slot_taken_by_a_broken_character_puts_the_character_last_among_th
 }
 
 #[test]
+fn the_summary_counts_the_position_among_the_readable_characters() {
+    let dir = TempDir::new().unwrap();
+    let project = new_project(dir.path());
+    put_character(&project, "a", "亜", Some(1));
+    put(&project, "characters/b.md", "---\nname: [壊れた\n---\n");
+    put_character(&project, "c", "宇", None);
+    assert_eq!(character_labels(&project), vec!["亜", "b", "宇"]);
+
+    let plan = plan_structure_edit(&project, &move_character("a", 2)).unwrap();
+    plan.change_set.apply(&project).unwrap();
+
+    assert_eq!(plan.change_set.summary, "人物「亜」を 2 番目に移します。");
+    assert_eq!(plan.completed_summary, "人物「亜」を 2 番目に移しました。");
+    assert_eq!(
+        character_labels(&project),
+        vec!["宇", "亜", "b"],
+        "読める人物の中で 2 番目になる"
+    );
+}
+
+#[test]
+fn a_move_to_the_front_is_the_first_among_the_readable_characters_too() {
+    let dir = TempDir::new().unwrap();
+    let project = new_project(dir.path());
+    put_character(&project, "a", "亜", Some(1));
+    put(&project, "characters/b.md", "---\nname: [壊れた\n---\n");
+    put_character(&project, "c", "宇", None);
+
+    let plan = plan_structure_edit(&project, &move_character("c", 0)).unwrap();
+
+    assert_eq!(plan.change_set.summary, "人物「宇」を 1 番目に移します。");
+}
+
+#[test]
 fn a_move_that_changes_nothing_because_of_a_broken_character_is_refused() {
     let dir = TempDir::new().unwrap();
     let project = new_project(dir.path());
@@ -899,6 +933,71 @@ fn a_moved_chapter_shows_up_in_the_overview_and_the_pipeline_in_its_new_place() 
         })
         .unwrap();
     assert_eq!(second_chapter_draft.state, StepState::Done);
+}
+
+/// 目次の章（プロットの章立てと本文の章見出し）の番号の並び。
+fn overview_chapter_numbers(project: &Project, kind: SectionKind) -> Vec<String> {
+    section_entries(project, kind)
+        .into_iter()
+        .filter(|entry| entry.kind == EntryKind::Chapter)
+        .filter_map(|entry| entry.chapter.map(|chapter| chapter.to_string()))
+        .collect()
+}
+
+#[test]
+fn the_overview_lists_chapters_in_numeric_order_even_past_one_hundred() {
+    let dir = TempDir::new().unwrap();
+    let project = new_project(dir.path());
+    for number in ["100", "11", "10", "09"] {
+        put_chapter_with_text(&project, number, &format!("第{number}"));
+    }
+
+    let expected = vec!["09", "10", "11", "100"];
+    assert_eq!(
+        overview_chapter_numbers(&project, SectionKind::Plot),
+        expected
+    );
+    assert_eq!(
+        overview_chapter_numbers(&project, SectionKind::Manuscript),
+        expected
+    );
+}
+
+#[test]
+fn the_overview_orders_chapters_by_number_when_the_widths_are_mixed() {
+    let dir = TempDir::new().unwrap();
+    let project = new_project(dir.path());
+    for number in ["009", "01", "10"] {
+        put_chapter_with_text(&project, number, &format!("第{number}"));
+    }
+
+    let expected = vec!["01", "009", "10"];
+    assert_eq!(
+        overview_chapter_numbers(&project, SectionKind::Plot),
+        expected
+    );
+    assert_eq!(
+        overview_chapter_numbers(&project, SectionKind::Manuscript),
+        expected
+    );
+}
+
+#[test]
+fn moving_the_hundredth_chapter_up_renames_only_the_chapters_it_passes() {
+    let dir = TempDir::new().unwrap();
+    let project = new_project(dir.path());
+    for number in ["09", "10", "11", "100"] {
+        put_chapter_with_text(&project, number, &format!("第{number}"));
+    }
+
+    let plan = plan_and_apply(&project, &move_chapter(100, 2));
+
+    assert_eq!(renumbering(&plan), vec![(11, 100), (100, 11)]);
+    assert_eq!(chapter_numbers(&project), vec!["09", "10", "11", "100"]);
+    assert_eq!(
+        chapter_titles(&project),
+        vec!["第09", "第10", "第100", "第11"]
+    );
 }
 
 // ---- シーン ----

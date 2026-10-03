@@ -227,6 +227,8 @@ fn chapter_entries(project: &Project) -> Result<Vec<ChapterEntry>> {
         };
         chapters.push(ChapterEntry { id, path, parsed });
     }
+    // ファイル名の文字列順だと `100` が `10` と `11` の間に来る。章の順序は番号なので、`chapter_ids` と同じ並びにする
+    chapters.sort_by_key(|chapter| chapter.id);
     Ok(chapters)
 }
 

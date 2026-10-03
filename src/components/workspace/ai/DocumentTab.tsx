@@ -1,6 +1,7 @@
 import type { KeyboardEvent } from "react";
 import { useState } from "react";
 import { useGenerationSessionContext } from "../../../features/generation/GenerationSessionProvider";
+import { useGenerationStartBlockedReason } from "../../../features/structure/useStructureAvailability";
 import { findOverviewEntry } from "../../../lib/overviewTree";
 import { taskForEntry } from "../../../lib/taskForEntry";
 import { useWorkspaceStore } from "../../../store/workspaceStore";
@@ -12,7 +13,8 @@ export function DocumentTab() {
   const currentPath = useWorkspaceStore((state) => state.currentPath);
   const session = useGenerationSessionContext();
   const [instruction, setInstruction] = useState("");
-  const isBusy = session.phase !== "idle";
+  const startBlockedReason = useGenerationStartBlockedReason();
+  const isBusy = session.phase !== "idle" || startBlockedReason !== null;
 
   if (currentPath === null) {
     return <p className="document-tab__empty">左の目次から文書を選んでください。</p>;
@@ -33,6 +35,7 @@ export function DocumentTab() {
             type="button"
             className="app-button app-button--primary"
             disabled={isBusy}
+            title={startBlockedReason ?? undefined}
             onClick={() => session.start(task)}
           >
             {entry.kind === "scene" ? "本文を生成" : "生成"}
@@ -74,6 +77,7 @@ export function DocumentTab() {
         type="button"
         className="app-button app-button--primary"
         disabled={isBusy || instruction.trim().length === 0}
+        title={startBlockedReason ?? undefined}
         onClick={submitRevision}
       >
         書き直す（Ctrl+Enter）

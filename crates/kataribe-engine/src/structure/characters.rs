@@ -110,7 +110,8 @@ pub(super) fn move_to(project: &Project, path: &RelPath, position: usize) -> Res
     ensure_new_position(&subject, "人物", current, position, roster.len())?;
     move_item(&mut roster, current, position);
 
-    let wording = Wording::new(format!("{subject}を {} 番目に移し", position + 1));
+    let rank = rank_among_readable(&roster, position);
+    let wording = Wording::new(format!("{subject}を {rank} 番目に移し"));
     let mut changes = ChangeSet::new(wording.planned());
     let mut unreadable = Vec::new();
     let mut next_order = 1;
@@ -140,6 +141,16 @@ pub(super) fn move_to(project: &Project, path: &RelPath, position: usize) -> Res
         ));
     }
     Ok(plan)
+}
+
+/// 並べ替えたあとの `roster[position]` が、読める人物の中で何番目か（1 始まり）。読めない資料は `order` を
+/// 振り直さず目次の最後へ回るので、利用者に見える番号は、その手前にある読めない資料を数えない。
+fn rank_among_readable(roster: &[RosterEntry], position: usize) -> usize {
+    roster
+        .iter()
+        .take(position + 1)
+        .filter(|entry| entry.state.is_ok())
+        .count()
 }
 
 /// 動かす人物資料の、目次での位置（0 始まり）と人物の名前。読めない人物資料は動かせない。

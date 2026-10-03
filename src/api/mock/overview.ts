@@ -12,7 +12,7 @@ import {
   worldDocumentPath,
 } from "./paths";
 import type { MockScene, ProjectState } from "./state";
-import { sortedForDisplay, worldDocumentTitle } from "./state";
+import { sortedByNumber, sortedForDisplay, worldDocumentTitle } from "./state";
 
 function charsOf(text: string | null): number {
   return text === null ? 0 : computeTextStats(text).chars;
@@ -172,7 +172,8 @@ function buildPlotSection(state: ProjectState): OverviewSection {
       ],
     };
   }
-  const chapterEntries = state.chapters.map((chapter) =>
+  // 本物の目次の章も、番号の順（`100` は `99` の後ろ）に並ぶ
+  const chapterEntries = sortedByNumber(state.chapters).map((chapter) =>
     leaf({
       path: chapterPath(chapter.id),
       label: chapter.title,
@@ -205,7 +206,7 @@ function buildManuscriptSection(state: ProjectState): OverviewSection {
       ],
     };
   }
-  const entries: OverviewEntry[] = state.chapters.map((chapter) => {
+  const entries: OverviewEntry[] = sortedByNumber(state.chapters).map((chapter) => {
     if (!chapter.scenes) {
       return {
         path: null,
