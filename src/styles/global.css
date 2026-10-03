@@ -4,6 +4,8 @@
  */
 
 :root {
+  /* スクロールバーなど、ブラウザが描く部品もライト／ダークに合わせる */
+  color-scheme: light dark;
   --font-ui: "Yu Gothic UI", "Meiryo", sans-serif;
   --font-mincho: "Yu Mincho", "YuMincho", "Hiragino Mincho ProN", "Noto Serif JP", serif;
   --font-gothic: "Yu Gothic", "Meiryo", sans-serif;

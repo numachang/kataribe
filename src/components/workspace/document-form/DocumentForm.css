@@ -1,0 +1,57 @@
+.document-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.document-form__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.document-form__row > .app-field {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.document-form__scenes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.document-form__heading {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--color-ink-soft);
+}
+
+.scene-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+}
+
+.scene-card__heading {
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.scene-card__fields {
+  padding: 4px 10px 10px;
+}
+
+.scene-card__beats-heading {
+  margin: 0 0 2px;
+  font-size: 12px;
+  color: var(--color-ink-soft);
+}
+
+.scene-card__beats ol {
+  margin: 0;
+  padding-left: 1.6em;
+  font-size: 13px;
+  color: var(--color-ink-soft);
+}

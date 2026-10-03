@@ -6,8 +6,9 @@
 use std::fs;
 use std::path::Path;
 
+use crate::document::{self, EditableDocument, LoadedDocument};
 use crate::error::ProjectError;
-use crate::layout;
+use crate::layout::{self, DocumentKind};
 use crate::model::{
     Chapter, ChapterId, Character, CharacterId, FORMAT_VERSION, Manifest, MarkdownDoc, SceneId,
 };
@@ -168,6 +169,33 @@ impl Project {
         Ok(Some(doc))
     }
 
+    /// ファイルを、画面で編集する形（人物資料・章立ては front matter を項目に分けた形）で読み込む。
+    ///
+    /// 項目に分けられない人物資料・章立て（front matter を解釈できない、章立てのシーンの `id` が重複している）は、
+    /// 直して保存できるよう文字列のまま返し、その理由を [`LoadedDocument::parse_error`] に入れる。
+    pub fn read_document(&self, path: &RelPath) -> Result<LoadedDocument, ProjectError> {
+        document::read_document(&self.store, path)
+    }
+
+    /// 画面で編集した文書を保存し、保存した内容のハッシュを返す。
+    ///
+    /// `expected` が `Some` なら、今のファイルのハッシュがそれと一致するときだけ書く。
+    /// `None` なら新規作成だけを許す。合わなければ [`ProjectError::Conflict`]。
+    ///
+    /// 人物資料・章立ては、画面が知らない項目を保存されている側の値で残す。項目が変わっていなければ
+    /// 本文だけを差し替え、YAML は書かれたまま（コメントや項目の順番も）残す。項目が変わったときは
+    /// YAML を書き直す（コメントや項目の順番は残らない）。章立てのシーンの `id` が重複していれば
+    /// [`ProjectError::DuplicateSceneId`]。
+    /// [`EditableDocument::Text`] はどのパスにも書ける。
+    pub fn write_document(
+        &self,
+        path: &RelPath,
+        document: &EditableDocument,
+        expected: Option<&ContentHash>,
+    ) -> Result<ContentHash, ProjectError> {
+        document::write_document(&self.store, path, document, expected)
+    }
+
     /// `world/` 配下の Markdown 文書を、`overview.md` を先頭にして名前順で読み込む。
     pub fn world_docs(&self) -> Result<Vec<(RelPath, MarkdownDoc)>, ProjectError> {
         let world_dir = RelPath::new(layout::WORLD_DIR)?;
@@ -206,7 +234,7 @@ impl Project {
             if entry.kind != DirEntryKind::File || entry.path.extension() != Some("md") {
                 continue;
             }
-            let Ok(id) = CharacterId::new(entry.path.file_stem()) else {
+            let DocumentKind::Character(id) = layout::document_kind(&entry.path) else {
                 tracing::warn!(path = %entry.path, "登場人物 ID として解釈できないため無視しました");
                 continue;
             };
@@ -244,7 +272,7 @@ impl Project {
             if entry.kind != DirEntryKind::File || entry.path.extension() != Some("md") {
                 continue;
             }
-            let Ok(id) = ChapterId::new(entry.path.file_stem()) else {
+            let DocumentKind::Chapter(id) = layout::document_kind(&entry.path) else {
                 tracing::warn!(path = %entry.path, "章番号として解釈できないため無視しました");
                 continue;
             };

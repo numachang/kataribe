@@ -5,6 +5,7 @@ import type { Backend } from "../../../api/backend";
 import { createMockBackend } from "../../../api/mock";
 import { SAMPLE_PROJECT_FOLDER } from "../../../api/mock/sampleProject";
 import { useWorkspaceStore } from "../../../store/workspaceStore";
+import { readText } from "../../../test/documents";
 import { renderWithBackend } from "../../../test/renderWithBackend";
 import { resetAllStores } from "../../../test/resetStores";
 import { WorkspaceScreen } from "../WorkspaceScreen";
@@ -34,13 +35,12 @@ describe("この文書タブから書き直す", () => {
     await user.click(screen.getByRole("button", { name: /書き直す/ }));
 
     await screen.findByText("指示に沿って書き直しました", {}, { timeout: 3000 });
-    const before = await backend.readFile("manuscript/01/s01.txt");
+    const before = await readText(backend, "manuscript/01/s01.txt");
 
     await user.click(screen.getByRole("button", { name: "適用" }));
 
     await waitFor(async () => {
-      const after = await backend.readFile("manuscript/01/s01.txt");
-      expect(after.content).not.toBe(before.content);
+      expect(await readText(backend, "manuscript/01/s01.txt")).not.toBe(before);
     });
   });
 });

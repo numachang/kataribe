@@ -493,6 +493,7 @@ fn parse_numeric_id(input: &str) -> Option<(u16, u8)> {
 
 /// `characters/<id>.md` の front matter。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct CharacterMeta {
     /// 表示名。
     pub name: String,
@@ -510,6 +511,7 @@ pub struct CharacterMeta {
     pub order: Option<u32>,
     /// 利用者が追加した未知の項目。
     #[serde(flatten)]
+    #[cfg_attr(feature = "ts", ts(skip))]
     pub extra: BTreeMap<String, serde_json::Value>,
 }
 
@@ -546,6 +548,7 @@ impl Character {
 
 /// 1 シーンぶんの設計（`plot/chapters/<NN>.md` の `scenes` の要素）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct ScenePlan {
     /// シーン id。本文ファイル名にも使う。
     pub id: SceneId,
@@ -573,11 +576,13 @@ pub struct ScenePlan {
     pub beats: Vec<String>,
     /// 利用者が追加した未知の項目。
     #[serde(flatten)]
+    #[cfg_attr(feature = "ts", ts(skip))]
     pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 /// `plot/chapters/<NN>.md` の front matter。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct ChapterMeta {
     /// 章題。
     pub title: String,
@@ -586,6 +591,7 @@ pub struct ChapterMeta {
     pub scenes: Vec<ScenePlan>,
     /// 利用者が追加した未知の項目。
     #[serde(flatten)]
+    #[cfg_attr(feature = "ts", ts(skip))]
     pub extra: BTreeMap<String, serde_json::Value>,
 }
 

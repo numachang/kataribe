@@ -1,3 +1,4 @@
+import { characterDetailFromBody } from "./render";
 import type { MockChapter, MockCharacter, MockScene } from "./state";
 
 // render.ts の逆変換。ユーザーが生の本文（front matter を含む）をそのまま書き換えられるように、
@@ -50,7 +51,7 @@ export function parseCharacterFile(content: string, id: string, order: number): 
     role: fields.get("role") ?? "",
     summary: fields.get("summary") ?? "",
     order: fields.get("order") ? Number(fields.get("order")) : order,
-    detail: document.body.length > 0 ? document.body : null,
+    detail: characterDetailFromBody(document.body),
   };
 }
 

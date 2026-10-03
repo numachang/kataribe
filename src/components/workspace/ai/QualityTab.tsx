@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useBackend } from "../../../api/context";
 import type { QualityReport } from "../../../api/types";
+import { documentBody } from "../../../lib/editableDocument";
 import { isManuscriptFile } from "../../../lib/manuscript";
 import { findOverviewEntry } from "../../../lib/overviewTree";
 import { useEditorStore } from "../../../store/editorStore";
@@ -21,7 +22,9 @@ export function QualityTab() {
   const overview = useWorkspaceStore((state) => state.overview);
   const currentPath = useWorkspaceStore((state) => state.currentPath);
   const editorPath = useEditorStore((state) => state.path);
-  const content = useEditorStore((state) => state.content);
+  const content = useEditorStore((state) =>
+    state.document === null ? "" : documentBody(state.document),
+  );
   const [report, setReport] = useState<QualityReport | null>(null);
 
   const entry = findOverviewEntry(overview, currentPath);

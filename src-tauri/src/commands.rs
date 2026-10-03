@@ -12,14 +12,15 @@ use kataribe_engine::{
     ProjectOverview, ProjectSettings, Task,
 };
 use kataribe_llm::ModelInfo;
+use kataribe_project::EditableDocument;
 use kataribe_text::count::TextStats;
 use kataribe_text::quality::{QualityOptions, QualityReport};
 use kataribe_text::ruby::Segment;
 
 use crate::error::CommandError;
+use crate::hashed_file::{DocumentFile, ProjectSettingsFile};
 use crate::settings::AppSettings;
 use crate::state::AppState;
-use crate::text_file::{ProjectSettingsFile, TextFile};
 use crate::{engine_client, files, generation, projects};
 
 // ---- 設定 ----
@@ -158,23 +159,27 @@ pub async fn pipeline(state: State<'_, AppState>) -> Result<Vec<PipelineStep>, C
     kataribe_engine::pipeline(&project, unit).map_err(CommandError::from)
 }
 
-// ---- ファイル ----
+// ---- 文書 ----
 
+/// 画面で編集する形（人物資料・章立ては front matter を項目に分けた形）でファイルを読む。
 #[tauri::command]
-pub async fn read_file(state: State<'_, AppState>, path: String) -> Result<TextFile, CommandError> {
+pub async fn read_document(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<DocumentFile, CommandError> {
     let project = state.require_project()?;
-    files::read_file(&project, &path)
+    files::read_document(&project, &path)
 }
 
 #[tauri::command]
-pub async fn write_file(
+pub async fn write_document(
     state: State<'_, AppState>,
     path: String,
-    content: String,
+    document: EditableDocument,
     expected_hash: Option<String>,
 ) -> Result<String, CommandError> {
     let project = state.require_project()?;
-    files::write_file(&project, &path, &content, expected_hash.as_deref())
+    files::write_document(&project, &path, &document, expected_hash.as_deref())
 }
 
 // ---- テキスト ----

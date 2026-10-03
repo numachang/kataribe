@@ -80,6 +80,23 @@ pub fn render<M: Serialize>(doc: &Document<M>) -> Result<String, YamlError> {
     Ok(out)
 }
 
+/// front matter の部分を書かれたまま残し、本文だけを `body` に差し替えたテキストを返す。
+///
+/// YAML を解釈し直さないので、コメント・項目の順番・引用符やブロック表記も変わらない。
+/// front matter の判定は [`parse`] と同じで、無ければ [`YamlError::MissingFrontMatter`]、
+/// 閉じが無ければ [`YamlError::UnterminatedFrontMatter`] になる。
+pub fn replace_body(text: &str, body: &str) -> Result<String, YamlError> {
+    let split = split_front_matter(text)?.ok_or(YamlError::MissingFrontMatter)?;
+    let mut out = String::with_capacity(split.head.len() + body.len() + 1);
+    out.push_str(split.head);
+    // 閉じの `---` がファイルの最後の行（改行なし）だったとき、本文が同じ行に続かないようにする
+    if !split.head.ends_with('\n') && !body.is_empty() {
+        out.push('\n');
+    }
+    out.push_str(body);
+    Ok(out)
+}
+
 /// front matter を伴わない、単独の YAML ドキュメントを解析する（`kataribe.yaml` 用）。
 pub(crate) fn parse_yaml<M: DeserializeOwned>(text: &str) -> Result<M, YamlError> {
     parse_yaml_with_line_offset(text, 1)
@@ -108,6 +125,8 @@ fn parse_yaml_with_line_offset<M: DeserializeOwned>(
 }
 
 struct FrontMatterSplit<'a> {
+    /// 先頭から、閉じの `---` の行の終わりまで。
+    head: &'a str,
     yaml: &'a str,
     body: &'a str,
     /// `yaml` の 1 行目が、元のテキスト全体で何行目に当たるか（1 始まり）。
@@ -137,6 +156,7 @@ fn split_front_matter(text: &str) -> Result<Option<FrontMatterSplit<'_>>, YamlEr
             let yaml = &rest[..offset];
             let body = &rest[offset + line.len()..];
             return Ok(Some(FrontMatterSplit {
+                head: &text[..text.len() - body.len()],
                 yaml,
                 body,
                 yaml_start_line: 2,
@@ -221,6 +241,54 @@ mod tests {
         assert_eq!(parsed.meta.title, doc.meta.title);
         assert_eq!(parsed.meta.extra, doc.meta.extra);
         assert_eq!(parsed.body, doc.body);
+    }
+
+    #[test]
+    fn replace_body_keeps_the_front_matter_exactly_as_written() {
+        let front_matter = "---\n# 手で書いたコメント\nz_last: 'quoted'\ntitle:   雨の匂い\nnote: |\n  一行目\n  二行目\n---\n";
+        let text = format!("{front_matter}古い本文\n");
+
+        let replaced = replace_body(&text, "新しい本文\n").unwrap();
+
+        assert_eq!(replaced, format!("{front_matter}新しい本文\n"));
+    }
+
+    #[test]
+    fn replace_body_can_empty_the_body() {
+        let replaced = replace_body("---\ntitle: 題\n---\n古い本文\n", "").unwrap();
+
+        assert_eq!(replaced, "---\ntitle: 題\n---\n");
+    }
+
+    #[test]
+    fn replace_body_does_not_join_the_body_to_a_closing_line_without_newline() {
+        let replaced = replace_body("---\ntitle: 題\n---", "本文\n").unwrap();
+
+        let document: Document<Meta> = parse(&replaced).unwrap();
+        assert_eq!(document.meta.title.as_deref(), Some("題"));
+        assert_eq!(document.body, "本文\n");
+    }
+
+    #[test]
+    fn replace_body_requires_front_matter() {
+        let result = replace_body("front matter の無い本文\n", "新しい本文");
+
+        assert!(matches!(result, Err(YamlError::MissingFrontMatter)));
+    }
+
+    #[test]
+    fn replace_body_rejects_an_unterminated_front_matter() {
+        let result = replace_body("---\ntitle: 開きっぱなし\n本文\n", "新しい本文");
+
+        assert!(matches!(result, Err(YamlError::UnterminatedFrontMatter)));
+    }
+
+    #[test]
+    fn replace_body_does_not_validate_the_yaml() {
+        // 本文だけを直すときに、壊れた YAML まで巻き込んで失敗しないように
+        let replaced = replace_body("---\ntitle: [\n---\n古い\n", "新しい\n").unwrap();
+
+        assert_eq!(replaced, "---\ntitle: [\n---\n新しい\n");
     }
 
     #[derive(Serialize)]

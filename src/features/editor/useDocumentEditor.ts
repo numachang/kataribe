@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { useBackend } from "../../api/context";
+import type { EditableDocument } from "../../api/types";
 import { toErrorMessage } from "../../lib/errorMessage";
 import { findOverviewEntry } from "../../lib/overviewTree";
 import { useEditorStore } from "../../store/editorStore";
@@ -24,7 +25,8 @@ export function useDocumentEditor() {
   const currentPath = useWorkspaceStore((state) => state.currentPath);
 
   const path = useEditorStore((state) => state.path);
-  const content = useEditorStore((state) => state.content);
+  const document = useEditorStore((state) => state.document);
+  const parseError = useEditorStore((state) => state.parseError);
   const status = useEditorStore((state) => state.status);
   const errorMessage = useEditorStore((state) => state.errorMessage);
   const rubyPreview = useEditorStore((state) => state.rubyPreview);
@@ -75,9 +77,9 @@ export function useDocumentEditor() {
           useEditorStore.getState().reset();
           return;
         }
-        return backend.readFile(currentPath).then((file) => {
+        return backend.readDocument(currentPath).then((file) => {
           if (!cancelled) {
-            useEditorStore.getState().loadDocument(currentPath, file.content, file.hash);
+            useEditorStore.getState().loadDocument(currentPath, file);
           }
         });
       })
@@ -93,9 +95,9 @@ export function useDocumentEditor() {
     };
   }, [backend, currentPath, showToast]);
 
-  const handleContentChange = useCallback(
-    (next: string) => {
-      useEditorStore.getState().updateContent(next);
+  const handleDocumentChange = useCallback(
+    (next: EditableDocument) => {
+      useEditorStore.getState().updateDocument(next);
       documentSaveController.notifyChange(backend);
     },
     [backend],
@@ -119,13 +121,14 @@ export function useDocumentEditor() {
 
   return {
     path,
-    content,
+    document,
+    parseError,
     status,
     errorMessage,
     rubyPreview,
     vertical,
     conflict,
-    onContentChange: handleContentChange,
+    onDocumentChange: handleDocumentChange,
     saveNow,
     toggleRubyPreview: () => useEditorStore.getState().toggleRubyPreview(),
     setVertical: (value: boolean) => useEditorStore.getState().setVertical(value),

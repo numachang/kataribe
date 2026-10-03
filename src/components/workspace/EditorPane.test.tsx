@@ -5,6 +5,7 @@ import type { Backend } from "../../api/backend";
 import { createMockBackend } from "../../api/mock";
 import { SAMPLE_PROJECT_FOLDER } from "../../api/mock/sampleProject";
 import { useWorkspaceStore } from "../../store/workspaceStore";
+import { readText, textDocument } from "../../test/documents";
 import { renderWithBackend } from "../../test/renderWithBackend";
 import { resetAllStores } from "../../test/resetStores";
 import { WorkspaceScreen } from "./WorkspaceScreen";
@@ -58,8 +59,7 @@ describe("目次から文書を開いて編集する", () => {
     });
 
     expect(screen.getByText("保存済み")).toBeInTheDocument();
-    const saved = await backend.readFile("concept.md");
-    expect(saved.content).toBe("書き直した企画本文");
+    expect(await readText(backend, "concept.md")).toBe("書き直した企画本文");
   });
 
   it("Ctrl+S で即座に保存する", async () => {
@@ -75,8 +75,7 @@ describe("目次から文書を開いて編集する", () => {
     fireEvent.keyDown(getConceptTextarea(), { key: "s", ctrlKey: true });
 
     await screen.findByText("保存済み");
-    const saved = await backend.readFile("concept.md");
-    expect(saved.content).toBe("Ctrl+S で保存した本文");
+    expect(await readText(backend, "concept.md")).toBe("Ctrl+S で保存した本文");
   });
 });
 
@@ -90,8 +89,12 @@ describe("競合ダイアログ", () => {
     await user.click(await screen.findByRole("button", { name: /^企画/ }));
     await screen.findByRole("textbox", { name: "concept.md" });
 
-    const original = await backend.readFile("concept.md");
-    await backend.writeFile("concept.md", "外部で書き換えられた内容", original.hash);
+    const original = await backend.readDocument("concept.md");
+    await backend.writeDocument(
+      "concept.md",
+      textDocument("外部で書き換えられた内容"),
+      original.hash,
+    );
 
     vi.useFakeTimers();
     fireEvent.change(getConceptTextarea(), { target: { value: "画面上での編集内容" } });
@@ -104,8 +107,7 @@ describe("競合ダイアログ", () => {
     vi.useRealTimers();
     await user.click(screen.getByRole("button", { name: "上書きする" }));
 
-    const overwritten = await backend.readFile("concept.md");
-    expect(overwritten.content).toBe("画面上での編集内容");
+    expect(await readText(backend, "concept.md")).toBe("画面上での編集内容");
   });
 
   it("「再読み込み」を選ぶと外部の内容に置き換わる", async () => {
@@ -117,8 +119,12 @@ describe("競合ダイアログ", () => {
     await user.click(await screen.findByRole("button", { name: /^企画/ }));
     await screen.findByRole("textbox", { name: "concept.md" });
 
-    const original = await backend.readFile("concept.md");
-    await backend.writeFile("concept.md", "外部で書き換えられた内容", original.hash);
+    const original = await backend.readDocument("concept.md");
+    await backend.writeDocument(
+      "concept.md",
+      textDocument("外部で書き換えられた内容"),
+      original.hash,
+    );
 
     vi.useFakeTimers();
     fireEvent.change(getConceptTextarea(), { target: { value: "画面上での編集内容" } });
@@ -153,8 +159,7 @@ describe("作品を閉じる・アンマウント時の保存", () => {
     });
     // 作品を閉じたあとも、保存自体はディスク（偽バックエンドの内部状態）に残っている。
     await backend.openProject(SAMPLE_PROJECT_FOLDER);
-    const saved = await backend.readFile("concept.md");
-    expect(saved.content).toBe("閉じる直前の編集");
+    expect(await readText(backend, "concept.md")).toBe("閉じる直前の編集");
   });
 });
 
@@ -186,8 +191,12 @@ describe("競合ダイアログを閉じる", () => {
     await user.click(await screen.findByRole("button", { name: /^企画/ }));
     await screen.findByRole("textbox", { name: "concept.md" });
 
-    const original = await backend.readFile("concept.md");
-    await backend.writeFile("concept.md", "外部で書き換えられた内容", original.hash);
+    const original = await backend.readDocument("concept.md");
+    await backend.writeDocument(
+      "concept.md",
+      textDocument("外部で書き換えられた内容"),
+      original.hash,
+    );
 
     vi.useFakeTimers();
     fireEvent.change(getConceptTextarea(), { target: { value: "画面上での編集内容" } });

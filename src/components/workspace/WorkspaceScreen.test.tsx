@@ -6,6 +6,7 @@ import { createMockBackend } from "../../api/mock";
 import { SAMPLE_PROJECT_FOLDER } from "../../api/mock/sampleProject";
 import { useUiStore } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
+import { readText } from "../../test/documents";
 import { renderWithBackend } from "../../test/renderWithBackend";
 import { resetAllStores } from "../../test/resetStores";
 import { wrapBackend } from "../../test/wrapBackend";
@@ -32,7 +33,7 @@ afterEach(resetAllStores);
 function backendWithFailingWrites(): Backend {
   const inner = createMockBackend({ delayMs: 0 });
   return wrapBackend(inner, {
-    async writeFile() {
+    async writeDocument() {
       throw new Error("ディスクがいっぱいです");
     },
   });
@@ -88,6 +89,6 @@ describe("保存できていない編集があるときは閉じない", () => {
     });
 
     expect(canClose).toBe(true);
-    expect((await backend.readFile("concept.md")).content).toBe("閉じる直前の編集");
+    expect(await readText(backend, "concept.md")).toBe("閉じる直前の編集");
   });
 });

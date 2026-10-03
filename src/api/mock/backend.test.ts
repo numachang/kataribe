@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readText, textDocument } from "../../test/documents";
 import type { GenerationEvent, LlmSettings } from "../types";
 import { createMockBackend } from "./backend";
 import { SAMPLE_PROJECT_FOLDER } from "./sampleProject";
@@ -44,7 +45,7 @@ describe("createMockBackend / サンプル作品", () => {
 
   it("開いていない状態でファイルを読もうとするとエラーになる", async () => {
     const backend = createMockBackend({ delayMs: 0 });
-    await expect(backend.readFile("concept.md")).rejects.toMatchObject({ kind: "not_found" });
+    await expect(backend.readDocument("concept.md")).rejects.toMatchObject({ kind: "not_found" });
   });
 });
 
@@ -91,7 +92,7 @@ describe("createMockBackend / 作品ごとの設定", () => {
       settings: { provider: "claude_code", claude_model: "haiku" },
       hash: savedHash,
     });
-    expect((await backend.readFile("kataribe.yaml")).content).toContain("provider: claude_code");
+    expect(await readText(backend, "kataribe.yaml")).toContain("provider: claude_code");
   });
 
   it("読んだあとに kataribe.yaml が変わっていれば、conflict で失敗する", async () => {
@@ -165,38 +166,115 @@ describe("createMockBackend / 新規作成", () => {
   });
 });
 
-describe("createMockBackend / ファイルの読み書きと競合", () => {
+describe("createMockBackend / 文書の読み書きと競合", () => {
   it("正しいハッシュで上書きできる", async () => {
     const backend = createMockBackend({ delayMs: 0 });
     await backend.openProject(SAMPLE_PROJECT_FOLDER);
 
-    const file = await backend.readFile("concept.md");
-    const newHash = await backend.writeFile("concept.md", "書き直した企画", file.hash);
+    const file = await backend.readDocument("concept.md");
+    const newHash = await backend.writeDocument(
+      "concept.md",
+      textDocument("書き直した企画"),
+      file.hash,
+    );
     expect(newHash).not.toBe(file.hash);
 
-    const reloaded = await backend.readFile("concept.md");
-    expect(reloaded.content).toBe("書き直した企画");
+    expect(await readText(backend, "concept.md")).toBe("書き直した企画");
   });
 
   it("古いハッシュで上書きしようとすると conflict になる", async () => {
     const backend = createMockBackend({ delayMs: 0 });
     await backend.openProject(SAMPLE_PROJECT_FOLDER);
 
-    const file = await backend.readFile("concept.md");
-    await backend.writeFile("concept.md", "誰かが先に書き換えた", file.hash);
+    const file = await backend.readDocument("concept.md");
+    await backend.writeDocument("concept.md", textDocument("誰かが先に書き換えた"), file.hash);
 
-    await expect(backend.writeFile("concept.md", "自分の変更", file.hash)).rejects.toMatchObject({
-      kind: "conflict",
-    });
+    await expect(
+      backend.writeDocument("concept.md", textDocument("自分の変更"), file.hash),
+    ).rejects.toMatchObject({ kind: "conflict" });
   });
 
   it("新規ファイルのつもりで既存ファイルへ書き込むと conflict になる", async () => {
     const backend = createMockBackend({ delayMs: 0 });
     await backend.openProject(SAMPLE_PROJECT_FOLDER);
 
-    await expect(backend.writeFile("concept.md", "上書き", null)).rejects.toMatchObject({
-      kind: "conflict",
-    });
+    await expect(
+      backend.writeDocument("concept.md", textDocument("上書き"), null),
+    ).rejects.toMatchObject({ kind: "conflict" });
+  });
+
+  it("人物資料は項目に分けて読め、保存して返るハッシュは読み直したハッシュと一致する", async () => {
+    const backend = createMockBackend({ delayMs: 0 });
+    await backend.openProject(SAMPLE_PROJECT_FOLDER);
+    const file = await backend.readDocument("characters/kirishima-rin.md");
+    if (file.document.kind !== "character") {
+      throw new Error("人物資料として読めるはず");
+    }
+
+    const newHash = await backend.writeDocument(
+      "characters/kirishima-rin.md",
+      { ...file.document, meta: { ...file.document.meta, name: "霧島 凛子" } },
+      file.hash,
+    );
+
+    const reloaded = await backend.readDocument("characters/kirishima-rin.md");
+    expect(reloaded.hash).toBe(newHash);
+    expect(reloaded.document).toMatchObject({ meta: { name: "霧島 凛子" } });
+    // 同じ文書を続けて保存しても、返ったハッシュを前提にして競合にならない
+    await expect(
+      backend.writeDocument("characters/kirishima-rin.md", reloaded.document, newHash),
+    ).resolves.toBe(newHash);
+  });
+
+  it("本文を空にした人物資料を保存しても、返るハッシュは読み直したハッシュと一致する", async () => {
+    const backend = createMockBackend({ delayMs: 0 });
+    await backend.openProject(SAMPLE_PROJECT_FOLDER);
+    const file = await backend.readDocument("characters/sato-kenji.md");
+    if (file.document.kind !== "character") {
+      throw new Error("人物資料として読めるはず");
+    }
+
+    const newHash = await backend.writeDocument(
+      "characters/sato-kenji.md",
+      { ...file.document, body: "" },
+      file.hash,
+    );
+
+    expect((await backend.readDocument("characters/sato-kenji.md")).hash).toBe(newHash);
+  });
+
+  it("章立てのシーンを直して保存しても、シーンの本文は残る", async () => {
+    const backend = createMockBackend({ delayMs: 0 });
+    await backend.openProject(SAMPLE_PROJECT_FOLDER);
+    const file = await backend.readDocument("plot/chapters/01.md");
+    if (file.document.kind !== "chapter") {
+      throw new Error("章立てとして読めるはず");
+    }
+    const scenes = (file.document.meta.scenes ?? []).map((scene) =>
+      scene.id === "s01" ? { ...scene, title: "招かれた客" } : scene,
+    );
+
+    const newHash = await backend.writeDocument(
+      "plot/chapters/01.md",
+      { ...file.document, meta: { ...file.document.meta, scenes } },
+      file.hash,
+    );
+
+    expect((await backend.readDocument("plot/chapters/01.md")).hash).toBe(newHash);
+    expect(await readText(backend, "manuscript/01/s01.txt")).toContain("館の扉が開くたび");
+    const overview = await backend.overview();
+    expect(JSON.stringify(overview)).toContain("招かれた客");
+  });
+
+  it("人物資料を、人物資料でないパスへは保存できない", async () => {
+    const backend = createMockBackend({ delayMs: 0 });
+    await backend.openProject(SAMPLE_PROJECT_FOLDER);
+    const character = await backend.readDocument("characters/kirishima-rin.md");
+    const concept = await backend.readDocument("concept.md");
+
+    await expect(
+      backend.writeDocument("concept.md", character.document, concept.hash),
+    ).rejects.toMatchObject({ kind: "invalid_input" });
   });
 });
 
@@ -257,7 +335,9 @@ describe("createMockBackend / 生成", () => {
     await expect(backend.applyChangeSet(changeSet)).rejects.toMatchObject({
       kind: "invalid_input",
     });
-    await expect(backend.readFile("concept.md")).rejects.toMatchObject({ kind: "not_found" });
+    await expect(backend.readDocument("concept.md")).rejects.toMatchObject({
+      kind: "not_found",
+    });
   });
 
   it("生成を中止すると cancelled エラーになる", async () => {
@@ -319,10 +399,20 @@ describe("createMockBackend / 生成", () => {
   it("章の目標文字数は、すべてのシーンに目標があるときだけ合計し、目標 0 は目標なしとする（Rust と同じ）", async () => {
     const backend = createMockBackend({ delayMs: 0 });
     await backend.openProject(SAMPLE_PROJECT_FOLDER);
-    const chapter = await backend.readFile("plot/chapters/01.md");
-    await backend.writeFile(
+    const chapter = await backend.readDocument("plot/chapters/01.md");
+    await backend.writeDocument(
       "plot/chapters/01.md",
-      "---\ntitle: 一部だけ\nscenes:\n  - id: s01\n    title: 一\n    summary: 始まり。\n    target_chars: 1000\n  - id: s02\n    title: 二\n    summary: 続き。\n    target_chars: 0\n---\n",
+      {
+        kind: "chapter",
+        meta: {
+          title: "一部だけ",
+          scenes: [
+            { id: "s01", title: "一", summary: "始まり。", target_chars: 1000 },
+            { id: "s02", title: "二", summary: "続き。", target_chars: 0 },
+          ],
+        },
+        body: "",
+      },
       chapter.hash,
     );
 
@@ -349,14 +439,14 @@ describe("createMockBackend / 生成", () => {
     const backend = createMockBackend({ delayMs: 0 });
     await backend.openProject(SAMPLE_PROJECT_FOLDER);
 
-    const before = await backend.readFile("manuscript/01/s01.txt");
+    const before = await readText(backend, "manuscript/01/s01.txt");
     const changeSet = await backend.generate(
       "job-revise",
       { kind: "revise", path: "manuscript/01/s01.txt", instruction: "もっと不穏な雰囲気にして" },
       () => {},
     );
 
-    expect(changeSet.files[0]?.previous).toBe(before.content);
-    expect(changeSet.files[0]?.content).not.toBe(before.content);
+    expect(changeSet.files[0]?.previous).toBe(before);
+    expect(changeSet.files[0]?.content).not.toBe(before);
   });
 });

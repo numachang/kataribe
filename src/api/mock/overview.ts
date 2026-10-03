@@ -10,10 +10,17 @@ import {
   scenePath,
   WORLD_OVERVIEW_PATH,
 } from "./paths";
-import type { MockScene, ProjectState } from "./state";
+import type { MockCharacter, MockScene, ProjectState } from "./state";
 
 function charsOf(text: string | null): number {
   return text === null ? 0 : computeTextStats(text).chars;
+}
+
+/** 表示順、無ければ id 順で後ろへ並べる（Rust の Project::characters と同じ）。 */
+function compareByOrder(left: MockCharacter, right: MockCharacter): number {
+  const leftOrder = left.order ?? Number.MAX_SAFE_INTEGER;
+  const rightOrder = right.order ?? Number.MAX_SAFE_INTEGER;
+  return leftOrder - rightOrder || left.id.localeCompare(right.id);
 }
 
 function leaf(entry: Omit<OverviewEntry, "children">): OverviewEntry {
@@ -113,19 +120,17 @@ function buildCharactersSection(state: ProjectState): OverviewSection {
       ],
     };
   }
-  const entries = [...state.characters]
-    .sort((left, right) => left.order - right.order)
-    .map((character) =>
-      leaf({
-        path: characterPath(character.id),
-        label: character.name,
-        kind: "character",
-        exists: true,
-        chars: charsOf(character.detail),
-        target_chars: null,
-        error: null,
-      }),
-    );
+  const entries = [...state.characters].sort(compareByOrder).map((character) =>
+    leaf({
+      path: characterPath(character.id),
+      label: character.name,
+      kind: "character",
+      exists: true,
+      chars: charsOf(character.detail),
+      target_chars: null,
+      error: null,
+    }),
+  );
   return { kind: "characters", label: "登場人物", entries };
 }
 

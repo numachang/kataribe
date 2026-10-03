@@ -5,6 +5,8 @@ import { BackendError } from "./backend";
 import type {
   AppSettings,
   ChangeSet,
+  DocumentFile,
+  EditableDocument,
   GenerationEvent,
   GenrePreset,
   LlmSettings,
@@ -17,7 +19,6 @@ import type {
   QualityReport,
   Segment,
   Task,
-  TextFile,
   TextStats,
 } from "./types";
 
@@ -114,12 +115,16 @@ export class TauriBackend implements Backend {
     return invokeCommand<PipelineStep[]>("pipeline");
   }
 
-  async readFile(path: string): Promise<TextFile> {
-    return invokeCommand<TextFile>("read_file", { path });
+  async readDocument(path: string): Promise<DocumentFile> {
+    return invokeCommand<DocumentFile>("read_document", { path });
   }
 
-  async writeFile(path: string, content: string, expectedHash: string | null): Promise<string> {
-    return invokeCommand<string>("write_file", { path, content, expectedHash });
+  async writeDocument(
+    path: string,
+    document: EditableDocument,
+    expectedHash: string | null,
+  ): Promise<string> {
+    return invokeCommand<string>("write_document", { path, document, expectedHash });
   }
 
   async textStats(text: string): Promise<TextStats> {

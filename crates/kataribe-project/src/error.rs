@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use crate::frontmatter::YamlError;
-use crate::model::ModelError;
+use crate::model::{ModelError, SceneId};
 use crate::path::{PathError, RelPath};
 
 /// `kataribe-project` クレートで起こりうるエラー。
@@ -34,6 +34,28 @@ pub enum ProjectError {
     Conflict {
         /// 対象ファイル。
         path: RelPath,
+    },
+
+    /// 人物資料・章立てとして保存しようとしたが、パスがその種類のファイルではなかった。
+    #[error("{path} は{expected}のファイルではないため、{expected}として保存できません")]
+    DocumentKindMismatch {
+        /// 保存先のパス。
+        path: RelPath,
+        /// 保存しようとした文書の種類（「人物資料」など）。
+        expected: &'static str,
+    },
+
+    /// 章立ての `scenes` に、同じ `id` のシーンが複数あった。
+    ///
+    /// 本文ファイルの名前がシーンの `id` なので、重複したまま項目に分けて保存すると別のシーンを上書きしてしまう。
+    #[error(
+        "{path} のシーンの id「{id}」が重複しているため、項目に分けて扱えません。id を直してください。"
+    )]
+    DuplicateSceneId {
+        /// 対象ファイル。
+        path: RelPath,
+        /// 重複していた id。
+        id: SceneId,
     },
 
     /// ファイルが見つからなかった。

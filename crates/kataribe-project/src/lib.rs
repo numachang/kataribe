@@ -5,6 +5,7 @@
 //! ゴミ箱へ移すだけにする（[`store`]）。作品フォルダの外へは、シンボリックリンクを
 //! 使っても出られない（[`path`]、[`store`]）。
 
+mod document;
 mod error;
 pub mod frontmatter;
 pub mod layout;
@@ -13,6 +14,7 @@ pub mod path;
 pub mod project;
 pub mod store;
 
+pub use document::{EditableDocument, LoadedDocument};
 pub use error::ProjectError;
 pub use frontmatter::YamlError;
 pub use model::{

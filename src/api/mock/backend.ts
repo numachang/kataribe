@@ -8,6 +8,8 @@ import { BackendError } from "../backend";
 import type {
   AppSettings,
   ChangeSet,
+  DocumentFile,
+  EditableDocument,
   FileChange,
   GenerationEvent,
   GenrePreset,
@@ -21,9 +23,9 @@ import type {
   QualityReport,
   Segment,
   Task,
-  TextFile,
   TextStats,
 } from "../types";
+import { readMockDocument, writeMockDocument } from "./document";
 import {
   createGenerationJob,
   GenerationCancelled,
@@ -237,20 +239,35 @@ class MockBackend implements Backend {
     return buildPipeline(this.requireProject());
   }
 
-  async readFile(path: string): Promise<TextFile> {
-    const content = readMockFile(this.requireProject(), path);
-    if (content === null) {
+  async readDocument(path: string): Promise<DocumentFile> {
+    const project = this.requireProject();
+    const document = readMockDocument(project, path);
+    const content = readMockFile(project, path);
+    if (document === null || content === null) {
       throw new BackendError("not_found", `「${path}」はまだ生成されていません。`);
     }
-    return { content, hash: hashText(content) };
+    return { document, hash: hashText(content), parse_error: null };
   }
 
-  async writeFile(path: string, content: string, expectedHash: string | null): Promise<string> {
+  /**
+   * 返すハッシュは、保存した後に readDocument で読んだときのハッシュと同じ。
+   * 渡された文書ではなく、状態から組み立て直したファイルの内容で数える
+   * （人物資料・章立ては、保存した文書と書き出される文字列が一致するとは限らないため）。
+   */
+  async writeDocument(
+    path: string,
+    document: EditableDocument,
+    expectedHash: string | null,
+  ): Promise<string> {
     const project = this.requireProject();
     this.checkWriteConflict(project, path, expectedHash);
-    const next = writeMockFile(project, path, content);
+    const next = writeMockDocument(project, path, document);
+    const written = readMockFile(next, path);
+    if (written === null) {
+      throw new BackendError("invalid_input", `「${path}」は偽バックエンドでは保存できません。`);
+    }
     this.setCurrentProject(next);
-    return hashText(content);
+    return hashText(written);
   }
 
   private checkWriteConflict(
