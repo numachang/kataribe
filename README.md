@@ -14,7 +14,7 @@ LLM と一緒に日本語の小説を書くための Windows 向けエディタ�
   そのまま Git で管理できる。上書きの前にはバックアップを取り、外部で変更されたファイルは上書きしない。
 - **縦書き・ルビのプレビュー。** 本文はエディタで縦書きのまま書ける。
 - **LLM は OpenAI 互換 API ならどれでも。** LM Studio・Ollama・KoboldCpp・OpenRouter・OpenAI など。API キーは Windows の資格情報マネージャーに保存する。
-- **Claude Code でも書ける。** Claude Code（`claude -p`）にログインしていれば、API キーなしで Claude に書かせられる。
+- **Claude Code でも書ける。** 自分の PC に入れてログインした Claude Code（`claude -p`）を呼び出して、Claude に書かせられる。
 - **画面なしでも同じことができる。** CLI（`kataribe-cli`）は GUI と同じ執筆エンジンを使う。
 
 ## 状態
@@ -42,8 +42,10 @@ VRAM 12GB の環境で実際に短編ミステリを書かせて比べた結果�
 
 ### Claude Code で書く
 
-Claude Code をインストールしてログインしておけば、
-設定の「LLM」で「Claude Code」を選ぶだけで使える。API キーはいらず、ログインしているアカウントの利用枠を使う。
+自分の PC に Claude Code をインストールしてログインしておけば、設定の「LLM」で「Claude Code」を選ぶだけで使える。
+kataribe はその `claude` コマンドを呼び出すだけで、Claude のアカウントの認証情報には触れない。
+使った分はログインしているアカウントの契約で数えられ、Anthropic の規約（[Claude Code の法的事項](https://code.claude.com/docs/en/legal-and-compliance)）に従う。
+kataribe は Anthropic が作ったものでも、Anthropic と提携しているものでもない。
 
 - モデルは `sonnet`（既定）・`opus`・`haiku` などの別名で選ぶ。
 - `claude` コマンドが PATH に無ければ、設定で実行ファイルの場所を指定する（npm で入れた場合は `claude.cmd`）。
@@ -53,10 +55,12 @@ Claude Code をインストールしてログインしておけば、
 
 ## インストール
 
-リリースはまだ無い。GitHub Actions の「インストーラ」ワークフローを「Run workflow」で手動実行して
-インストーラ（成果物 `kataribe-installer`）を作るか、ソースからインストーラを作る（「開発」を参照）。
+リリースはまだ無いので、ソースからインストーラを作る（必要なものは「開発」を参照）。
+`pnpm install` のあと `pnpm tauri build` を実行すると、`target/release/bundle/nsis/kataribe_<版>_x64-setup.exe` ができる。
+ユーザー単位でインストールされ、管理者権限はいらない。
+
+リポジトリに書き込める人は、GitHub Actions の「インストーラ」ワークフローを「Run workflow」で手動実行しても作れる（成果物 `kataribe-installer`）。
 `v` で始まるタグを付けてプッシュしたときにも、同じワークフローがインストーラを作る。
-`pnpm tauri build` で `target/release/bundle/nsis/kataribe_<版>_x64-setup.exe` ができる。ユーザー単位でインストールされ、管理者権限はいらない。
 
 ## 使い方
 
@@ -144,6 +148,11 @@ my-novel/
 テスト中に撮った画面は `e2e/artifacts/` に保存される。
 CI（GitHub Actions）でも、ランナーの WebView2 と同じ版の msedgedriver を取得して同じテストを動かす。
 CI はアプリを管理者として動かすため WebView2 が環境変数を無視するので、デバッグ用ポートはポリシーで開く。
+
+## 不具合の報告・要望
+
+[issue](https://github.com/numachang/kataribe/issues) で受け付ける。プルリクエストは原則として受け付けていない（[CONTRIBUTING.md](CONTRIBUTING.md)）。
+セキュリティの問題は issue に書かず、[SECURITY.md](SECURITY.md) の方法で知らせてほしい。
 
 ## ライセンス
 

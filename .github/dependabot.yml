@@ -1,0 +1,10 @@
+# ワークフローの外部アクションはコミットの SHA で固定しているので、新しい版が出たら PR で知らせてもらう
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      github-actions:
+        patterns: ["*"]
