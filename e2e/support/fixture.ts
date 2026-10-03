@@ -8,6 +8,15 @@ export const PROJECT_FOLDER_NAME = "e2e-project";
 export const SCENE_TITLE = "雨の夜";
 export const SCENE_PATH = "manuscript/01/s01.txt";
 export const INITIAL_SCENE_TEXT = "　雨が降っていた。\n";
+export const CHAPTER_TITLE = "第一章";
+export const CHARACTER_NAME = "霧島 凛";
+export const CHARACTER_PATH = "characters/kirishima-rin.md";
+/** 人物資料の本文（front matter より後ろ）。 */
+export const CHARACTER_BODY = "## 口調\n一人称は「わたし」。\n";
+/** 手で書いたコメントと、アプリが知らない項目。保存し直しても失われないことを確かめる。 */
+export const HAND_WRITTEN_COMMENT = "# 手で書いたコメント";
+export const UNKNOWN_FIELD = "memo: 手で足した項目";
+export const UNKNOWN_SCENE_FIELD = "mood: 静か";
 
 export interface Fixture {
   root: string;
@@ -28,16 +37,29 @@ const PROJECT_FILES: Record<string, string> = {
   "style.md": "# 文体ガイド\n",
   "plot/chapters/01.md": [
     "---",
-    "title: 第一章",
+    `title: ${CHAPTER_TITLE}`,
     "scenes:",
     "  - id: s01",
     `    title: ${SCENE_TITLE}`,
     "    summary: 雨の夜の場面。",
+    "    pov: 霧島 凛",
+    "    characters: [霧島 凛]",
+    `    ${UNKNOWN_SCENE_FIELD}`,
     "---",
     "雨の夜の章。",
     "",
   ].join("\n"),
   [SCENE_PATH]: INITIAL_SCENE_TEXT,
+  [CHARACTER_PATH]: [
+    "---",
+    HAND_WRITTEN_COMMENT,
+    `name: ${CHARACTER_NAME}`,
+    "role: 主人公",
+    "summary: 盲目の少女探偵。",
+    UNKNOWN_FIELD,
+    "---",
+    CHARACTER_BODY,
+  ].join("\n"),
 };
 
 /** 作品フォルダと、それを「最近の作品」に入れ、縦書きを既定にした設定ファイルを作る。 */
