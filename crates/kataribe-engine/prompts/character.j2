@@ -22,6 +22,11 @@
 【今回の人物】
 {{ character.name }}{% if character.reading %}（{{ character.reading }}）{% endif %}　{{ character.role }}
 {{ character.summary }}
+{% if instruction %}
+
+【作家の指示】
+{{ instruction }}
+{% endif %}
 
 【指示】
 「{{ character.name }}」の人物資料を書いてください。一覧のほかの人物との関係と矛盾させないこと。

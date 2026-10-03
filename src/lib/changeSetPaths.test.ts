@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { ChangeSet, FileChange } from "../api/types";
-import { changeKey, relocatedPath, rewritesPath, touchesPath } from "./changeSetPaths";
+import {
+  changeKey,
+  relocatedPath,
+  renamesOpenDocument,
+  rewritesPath,
+  touchesPath,
+} from "./changeSetPaths";
 
 const WRITE: FileChange = {
   kind: "write",
@@ -114,6 +120,23 @@ describe("relocatedPath", () => {
   it("書き換えるだけの文書と、触れない文書は undefined", () => {
     expect(relocatedPath(CHANGE_SET, "plot/chapters/01.md")).toBeUndefined();
     expect(relocatedPath(CHANGE_SET, "concept.md")).toBeUndefined();
+  });
+});
+
+describe("renamesOpenDocument", () => {
+  it("開いている文書が改名されるなら true", () => {
+    expect(renamesOpenDocument(CHAPTER_REMOVAL, "plot/chapters/03.md")).toBe(true);
+    expect(renamesOpenDocument(CHAPTER_REMOVAL, "manuscript/03/s01.txt")).toBe(true);
+  });
+
+  it("書き換えるだけ・ゴミ箱へ移る・触れない文書は、改名されない", () => {
+    expect(renamesOpenDocument(CHANGE_SET, "plot/chapters/01.md")).toBe(false);
+    expect(renamesOpenDocument(CHANGE_SET, "manuscript/01/s01.txt")).toBe(false);
+    expect(renamesOpenDocument(CHANGE_SET, "concept.md")).toBe(false);
+  });
+
+  it("文書を開いていなければ、改名されるものは無い", () => {
+    expect(renamesOpenDocument(CHAPTER_REMOVAL, null)).toBe(false);
   });
 });
 

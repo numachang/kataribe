@@ -1,4 +1,5 @@
 import { isValidSlug, slugProblem } from "../../lib/slug";
+import type { BackendError } from "../backend";
 import type {
   CharacterMeta,
   FileChange,
@@ -221,19 +222,40 @@ function planMoveCharacter(state: ProjectState, path: string, position: number):
 
 // ---- 世界観の資料 ----
 
+/** 指定されたファイル名を、規則に照らして確かめる。空欄なら null。 */
+function specifiedWorldDocumentName(requested: string | null): string | null {
+  const specified = nonEmpty(requested);
+  if (specified !== null && !isValidWorldDocumentName(specified)) {
+    throw invalidInput(
+      `ファイル名「${specified}」は使えません。小文字の英数字とハイフンだけで、48 文字までにしてください（「overview」も使えません）。`,
+    );
+  }
+  return specified;
+}
+
+function usedWorldDocumentNameError(name: string): BackendError {
+  return invalidInput(`ファイル名「${name}」はもう使われています。`);
+}
+
+/**
+ * 足す前に、指定されたファイル名を確かめる（規則に合わない・使用済みなら `invalid_input`）。
+ * LLM に作らせる前に、待たせずに断るために使う（本物の `check_name` と同じ）。
+ */
+export function checkMockWorldDocumentName(state: ProjectState, requested: string | null): void {
+  const specified = specifiedWorldDocumentName(requested);
+  if (specified !== null && findWorldDocument(state, specified) !== null) {
+    throw usedWorldDocumentNameError(specified);
+  }
+}
+
 /** 資料のファイル名。指定があれば検証して使い、無ければ題から作る（英数字だけの題のときだけ。それ以外は `doc`）。 */
 function resolveWorldDocumentName(
   state: ProjectState,
   requested: string | null,
   title: string,
 ): string {
-  const specified = nonEmpty(requested);
+  const specified = specifiedWorldDocumentName(requested);
   if (specified !== null) {
-    if (!isValidWorldDocumentName(specified)) {
-      throw invalidInput(
-        `ファイル名「${specified}」は使えません。小文字の英数字とハイフンだけで、48 文字までにしてください（「overview」も使えません）。`,
-      );
-    }
     return specified;
   }
   const isAsciiTitle = /^[\x20-\x7e]+$/.test(title);
@@ -263,7 +285,7 @@ function planAddWorldDocument(
   }
   const name = resolveWorldDocumentName(state, requestedName, title);
   if (findWorldDocument(state, name) !== null) {
-    throw invalidInput(`ファイル名「${name}」はもう使われています。`);
+    throw usedWorldDocumentNameError(name);
   }
   const path = worldDocumentPath(name);
   return {

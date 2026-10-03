@@ -88,6 +88,10 @@ kataribe-cli --model google/gemma-4-12b-qat --unit beat run my-novel --until dra
 # Claude Code で書く場合
 kataribe-cli --provider claude-code --model sonnet --context-tokens 100000 run my-novel --until draft
 
+# 指示から人物・世界観の資料を 1 つ作って足す（変更案を見るだけなら --dry-run）
+kataribe-cli generate my-novel add-character --instruction "凛の助手になる、気の優しい青年"
+kataribe-cli generate my-novel add-world --instruction "舞台になる港町の歴史" --name port-town
+
 # 状態・品質を確かめ、本文を 1 つのテキストにまとめる
 kataribe-cli status my-novel
 kataribe-cli quality my-novel
@@ -98,6 +102,8 @@ kataribe-cli export my-novel --output my-novel.txt
 API キーは環境変数 `KATARIBE_API_KEY`、無ければ資格情報マネージャー（`kataribe-cli api-key set` で保存）から読む
 （Claude Code のときは読まない）。`models` でモデルの一覧を出すと、接続できるかも確かめられる。
 1 つの工程だけを生成するときは `generate`（例: `generate my-novel draft:01/s02`）、適用せずに変更案だけ見るときは `--dry-run`。
+`generate add-character` / `add-world` は、`--instruction` に書いた内容から人物・世界観の資料を作って足す（資料のファイル名は `--name`、省略すると題から決める）。
+自分で書いて足すときは `add character` / `add world`（LLM は使わない）。
 `export` は作品フォルダの外にだけ書き出し、既にあるファイルは `--force` を付けたときだけ上書きする。
 `new --length` を省略すると目標は 30,000 字になる。
 ジャンルの一覧は [presets/genres.yaml](crates/kataribe-engine/presets/genres.yaml) にある。

@@ -95,11 +95,27 @@ pub(super) async fn write_document(
     prompt: &Prompt,
     output_tokens: u32,
 ) -> Result<String> {
+    write_checked_document(stage, label, prompt, output_tokens, |_| None).await
+}
+
+/// [`write_document`] に、資料が必ず満たす条件 `requirement` を足したもの。
+///
+/// `requirement` は、満たさない本文について問題の説明を返す。説明が返るあいだは設定の回数まで生成し直し、
+/// それでも満たさなければ、警告で済ませずに失敗にする（満たさない本文は、そのままでは資料として使えないため）。
+pub(super) async fn write_checked_document(
+    stage: &Stage<'_>,
+    label: &str,
+    prompt: &Prompt,
+    output_tokens: u32,
+    requirement: impl Fn(&str) -> Option<String>,
+) -> Result<String> {
     let mut retries_left = stage.settings.quality_retries;
     loop {
         let output = stage.caller.text(label, prompt, output_tokens).await?;
         let body = clean_markdown(&output.text);
-        let Some(problem) = document_problem(&body) else {
+        let unmet = requirement(&body);
+        let problem = document_problem(&body);
+        let Some(reason) = unmet.as_ref().or(problem.as_ref()) else {
             return Ok(body);
         };
         if retries_left == 0 {
@@ -108,17 +124,20 @@ pub(super) async fn write_document(
                     "「{label}」の内容が空でした。"
                 )));
             }
+            if let Some(unmet) = &unmet {
+                return Err(EngineError::InvalidOutput(format!("「{label}」: {unmet}")));
+            }
             notice(
                 stage.caller.sink(),
                 NoticeLevel::Warning,
-                format!("「{label}」: {problem}"),
+                format!("「{label}」: {reason}"),
             );
             return Ok(body);
         }
         notice(
             stage.caller.sink(),
             NoticeLevel::Warning,
-            format!("「{label}」: {problem} 生成し直します。"),
+            format!("「{label}」: {reason} 生成し直します。"),
         );
         stage.caller.expect_steps(1);
         retries_left -= 1;

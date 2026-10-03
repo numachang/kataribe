@@ -76,3 +76,44 @@
   font-size: 12px;
   color: var(--color-ink-soft);
 }
+
+/* 「自分で書く / AI に作らせる」の切り替え。ラジオボタンを 2 つ並べた選択肢の見た目にする */
+.addition-mode-switch {
+  display: flex;
+  gap: 8px;
+}
+
+.addition-mode-switch__option {
+  position: relative;
+  padding: 4px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-raised);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* 選択肢の入力は見えなくするだけで、キーボード（矢印キー）と読み上げからは使える */
+.addition-mode-switch__option input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.addition-mode-switch__option:has(input:checked) {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  font-weight: bold;
+}
+
+.addition-mode-switch__option:has(input:focus-visible) {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.addition-mode-switch__option:has(input:disabled) {
+  opacity: 0.5;
+  cursor: default;
+}

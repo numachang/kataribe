@@ -2,6 +2,7 @@ import { useGenerationSessionContext } from "../../../features/generation/Genera
 import { changeKey } from "../../../lib/changeSetPaths";
 import "./ChangeSetReview.css";
 import { FileChangeCard } from "./change-review/FileChangeCard";
+import { GenerationNotices } from "./GenerationNotices";
 
 /** 生成が終わったあとの変更案。ファイルごとに内容を見せ、適用するか破棄するか選ばせる。 */
 export function ChangeSetReview() {
@@ -15,6 +16,8 @@ export function ChangeSetReview() {
   return (
     <div className="changeset-review">
       <p className="changeset-review__summary">{changeSet.summary}</p>
+
+      <GenerationNotices steps={session.display.steps} />
 
       <div className="changeset-review__files">
         {changeSet.files.map((file) => (

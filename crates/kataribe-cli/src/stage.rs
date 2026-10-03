@@ -37,7 +37,7 @@ impl Stage {
     }
 }
 
-/// 工程が属する段階の序数。[`Task::Revise`] は工程一覧には現れないため扱わない。
+/// 工程が属する段階の序数。[`Task::Revise`] と、足す生成（`AddCharacter`・`AddWorldDocument`）は工程一覧には現れないため扱わない。
 fn task_order(task: &Task) -> u8 {
     match task {
         Task::Concept => 0,
@@ -49,7 +49,7 @@ fn task_order(task: &Task) -> u8 {
         Task::Outline => 6,
         Task::ScenePlan { .. } => 7,
         Task::Draft { .. } => 8,
-        Task::Revise { .. } => u8::MAX,
+        Task::Revise { .. } | Task::AddCharacter { .. } | Task::AddWorldDocument { .. } => u8::MAX,
     }
 }
 

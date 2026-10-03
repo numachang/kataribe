@@ -29,4 +29,14 @@ pub enum Task {
         path: RelPath,
         instruction: String,
     },
+    /// 指示から人物を 1 人作って足す（項目と人物資料の本文まで）。工程の一覧には出ない。
+    AddCharacter {
+        instruction: String,
+    },
+    /// 指示から世界観の資料を 1 つ作って足す。工程の一覧には出ない。
+    AddWorldDocument {
+        /// ファイル名（`world/<name>.md`）。`None` なら、題から決める（`StructureEdit::AddWorldDocument` と同じ）。
+        name: Option<String>,
+        instruction: String,
+    },
 }

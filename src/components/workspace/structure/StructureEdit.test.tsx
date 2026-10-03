@@ -55,6 +55,8 @@ async function openAddDialog(
   return screen.findByRole("dialog", { name: dialogTitle });
 }
 
+const FILE_NAME_LABEL = "ファイル名（英数字。空欄なら自動）";
+
 const openAddCharacterDialog = (user: ReturnType<typeof userEvent.setup>) =>
   openAddDialog(user, "人物を追加", "人物を追加");
 const openAddWorldDocumentDialog = (user: ReturnType<typeof userEvent.setup>) =>
@@ -305,20 +307,54 @@ describe("世界観の資料を追加する", () => {
     await waitFor(() => expect(useWorkspaceStore.getState().currentPath).toBe("world/places.md"));
   });
 
-  it("題が空の間は追加できず、使えない名前なら理由を出す", async () => {
+  it("題が空の間は追加できない", async () => {
     const user = userEvent.setup();
     await renderWorkspace(createMockBackend({ delayMs: 0 }));
     const dialog = await openAddWorldDocumentDialog(user);
     expect(within(dialog).getByRole("button", { name: "追加" })).toBeDisabled();
 
     await user.type(within(dialog).getByRole("textbox", { name: "題" }), "用語集");
-    await user.type(
-      within(dialog).getByRole("textbox", { name: "ファイル名（英数字。空欄なら自動）" }),
-      "overview",
-    );
-    await user.click(within(dialog).getByRole("button", { name: "追加" }));
 
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent("overview");
+    expect(within(dialog).getByRole("button", { name: "追加" })).toBeEnabled();
+  });
+
+  it("使えない名前なら、書いている間に理由を出して追加できず、直すと追加できる", async () => {
+    const user = userEvent.setup();
+    const { backend, planStructureEdit } = planned(createMockBackend({ delayMs: 0 }));
+    await renderWorkspace(backend);
+    const dialog = await openAddWorldDocumentDialog(user);
+    await user.type(within(dialog).getByRole("textbox", { name: "題" }), "用語集");
+    const nameField = within(dialog).getByRole("textbox", { name: FILE_NAME_LABEL });
+
+    await user.type(nameField, "overview");
+
+    expect(within(dialog).getByText(/ファイル名「overview」は使えません。/)).toBeInTheDocument();
+    expect(nameField).toBeInvalid();
+    expect(within(dialog).getByRole("button", { name: "追加" })).toBeDisabled();
+
+    await user.clear(nameField);
+
+    expect(within(dialog).getByRole("button", { name: "追加" })).toBeEnabled();
+    expect(planStructureEdit).not.toHaveBeenCalled();
+  });
+
+  it("すでにある資料の名前も、書いている間に断る", async () => {
+    const user = userEvent.setup();
+    await renderWorkspace(createMockBackend({ delayMs: 0 }));
+    const first = await openAddWorldDocumentDialog(user);
+    await user.type(within(first).getByRole("textbox", { name: "題" }), "地名");
+    await user.type(within(first).getByRole("textbox", { name: FILE_NAME_LABEL }), "places");
+    await user.click(within(first).getByRole("button", { name: "追加" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    const second = await openAddWorldDocumentDialog(user);
+    await user.type(within(second).getByRole("textbox", { name: "題" }), "地名その二");
+    await user.type(within(second).getByRole("textbox", { name: FILE_NAME_LABEL }), "places");
+
+    expect(
+      within(second).getByText("ファイル名「places」は使えません。すでにある資料の名前です。"),
+    ).toBeInTheDocument();
+    expect(within(second).getByRole("button", { name: "追加" })).toBeDisabled();
   });
 });
 

@@ -2,7 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { BackendError } from "../../api/backend";
 import { useBackend } from "../../api/context";
 import type { ChangeSet, Task } from "../../api/types";
-import { relocatedPath, rewritesPath, touchesPath } from "../../lib/changeSetPaths";
+import {
+  relocatedPath,
+  renamesOpenDocument,
+  rewritesPath,
+  touchesPath,
+} from "../../lib/changeSetPaths";
+import { documentCreatedBy } from "../../lib/documentCreatedBy";
 import { toErrorMessage } from "../../lib/errorMessage";
 import { useUiStore } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
@@ -137,12 +143,17 @@ export function useGenerationSession(): GenerationSessionApi {
    * 変更案を適用する。開いている文書との食い違いを防ぐ手順（先に保存を済ませ、適用後に読み直す）は
    * `writeBesideEditor` に任せる。
    * 成功したかどうかを返す。呼び出し側（自動で進めるループ）はこれで止まるべきかを判断する。
+   * 指示から作って足した人物・資料は、適用したあとに開く（`documentCreatedBy`）。
    */
   const applyResult = useCallback(
-    async (result: ChangeSet): Promise<boolean> => {
+    async (result: ChangeSet, task: Task): Promise<boolean> => {
       if (unmountedRef.current) {
         return false;
       }
+      // 開いている文書が改名されるなら、その文書のまま続ける。改名のあとでは現在のパスが変わるので、適用の前に決める。
+      const documentToOpen = renamesOpenDocument(result, useWorkspaceStore.getState().currentPath)
+        ? null
+        : documentCreatedBy(task, result);
       setIsApplying(true);
       setApplyErrorMessage(null);
       try {
@@ -172,6 +183,9 @@ export function useGenerationSession(): GenerationSessionApi {
         setCurrentTask(null);
         setChangeSet(null);
         setDisplay(createEmptyGenerationDisplay());
+        if (documentToOpen !== null) {
+          useWorkspaceStore.getState().openDocument(documentToOpen);
+        }
         showToast(result.summary);
         return true;
       } catch (error) {
@@ -210,11 +224,11 @@ export function useGenerationSession(): GenerationSessionApi {
   }, [backend, showToast]);
 
   const apply = useCallback(async () => {
-    if (!changeSet) {
+    if (!changeSet || !currentTask) {
       return;
     }
-    await applyResult(changeSet);
-  }, [applyResult, changeSet]);
+    await applyResult(changeSet, currentTask);
+  }, [applyResult, changeSet, currentTask]);
 
   const discard = useCallback(() => {
     setPhase("idle");
@@ -248,11 +262,12 @@ export function useGenerationSession(): GenerationSessionApi {
           if (!nextReady) {
             break;
           }
-          const result = await runTask(nextReady.task);
+          const task = nextReady.task;
+          const result = await runTask(task);
           if (!result || autoAdvanceStopRequested.current || unmountedRef.current) {
             break;
           }
-          const applied = await applyResult(result);
+          const applied = await applyResult(result, task);
           if (!applied) {
             // 適用が失敗した工程を無限に生成し続けないよう、ここで止める。
             // 変更案は reviewing のまま残っているので、利用者が見直せる。

@@ -25,7 +25,7 @@ pub async fn run(
     let engine =
         Engine::new(model, settings.generation).context("執筆エンジンを初期化できません")?;
 
-    let task = args.task.clone().into_task(args.instruction.clone());
+    let task = args.to_task().map_err(anyhow::Error::msg)?;
 
     // --dry-run では、流れてくる生成そのものは見せず、最後に変更案だけをまとめて出す
     // （そうしないと、ストリーミング表示と変更案の表示とで同じ内容が二度出てしまう）。

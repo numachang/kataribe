@@ -15,6 +15,12 @@
   font-weight: bold;
 }
 
+.generation-progress__task {
+  margin: -6px 0 0;
+  font-size: 12px;
+  color: var(--color-ink-soft);
+}
+
 .generation-progress__summary {
   display: flex;
   flex-wrap: wrap;

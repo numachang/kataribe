@@ -3,6 +3,8 @@ import { BackendError } from "../backend";
 import type { ChangeSet, GenerationEvent, GenerationSettings, Task } from "../types";
 
 import {
+  generateAddedCharacter,
+  generateAddedWorldDocument,
   generateCastDrafts,
   generateCharacterDetail,
   generateConceptText,
@@ -29,6 +31,8 @@ import {
 import { readMockFile, renderChapterFile, renderCharacterFile } from "./render";
 import type { MockChapter, MockScene, ProjectState } from "./state";
 import { findChapter, findCharacter, findScene } from "./state";
+import { checkMockWorldDocumentName, planMockStructureEdit } from "./structure";
+import { invalidInput } from "./structureSupport";
 
 /** 生成した変更案のうち、作品フォルダ（`project_root`）を付ける前のもの。 */
 export type GeneratedChanges = Omit<ChangeSet, "project_root">;
@@ -423,6 +427,94 @@ async function generateRevision(
   };
 }
 
+const ADDED_CHARACTER_NOTICE =
+  "生成済みのあらすじ・章立て・シーン構成には、この人物はまだ出てきません。必要なら、書き直すか作り直してください。";
+const ADDED_WORLD_DOCUMENT_NOTICE =
+  "この資料は、これからの生成で世界観として使われます（長いと、切り詰められることがあります）。生成済みの文書には反映されません。";
+
+/** 指示が空でないことを確かめ、前後の空白を除いた指示を返す。LLM に作らせる前（文字を流す前）に断る。 */
+function requireInstruction(instruction: string): string {
+  const trimmed = instruction.trim();
+  if (trimmed === "") {
+    throw invalidInput("指示を入力してください。");
+  }
+  return trimmed;
+}
+
+/** 「人物「…」を生成しました（パス）。」の形の要約（本物と同じ）。 */
+function addedSummary(subject: string, createdPath: string | null): string {
+  return createdPath === null
+    ? `${subject}を生成しました。`
+    : `${subject}を生成しました（${createdPath}）。`;
+}
+
+/** 指示から人物を 1 人作る。項目と本文を、2 回に分けて作る（本物と同じ）。変更案は構成の操作の関数で作る。 */
+async function generateAddedCharacterTask(
+  state: ProjectState,
+  rawInstruction: string,
+  job: GenerationJob,
+  delayMs: number,
+  onEvent: (event: GenerationEvent) => void,
+): Promise<GeneratedChanges> {
+  const instruction = requireInstruction(rawInstruction);
+  const character = generateAddedCharacter(instruction, state.characters ?? []);
+  const { name, reading, role, summary, detail } = character;
+  const entryPlan: StepPlan = {
+    label: "人物の項目を生成しています",
+    reasoning: [],
+    chunks: chunkText(JSON.stringify({ name, reading, role, summary }, null, 2)),
+    notices: [],
+  };
+  const profilePlan: StepPlan = {
+    label: `${name}の人物資料を生成しています`,
+    reasoning: [],
+    chunks: chunkText(detail),
+    notices: [{ level: "info", message: ADDED_CHARACTER_NOTICE }],
+  };
+  await runSteps(job, [entryPlan, profilePlan], delayMs, onEvent);
+  const plan = planMockStructureEdit(state, {
+    kind: "add_character",
+    id: null,
+    meta: { name, reading, role, summary, order: null },
+    body: detail,
+  });
+  return {
+    summary: addedSummary(`人物「${name}」`, plan.created),
+    files: plan.change_set.files,
+  };
+}
+
+/** 指示から世界観の資料を 1 つ作る。ファイル名の指定は、LLM に作らせる前に確かめる（本物と同じ）。 */
+async function generateAddedWorldDocumentTask(
+  state: ProjectState,
+  requestedName: string | null,
+  rawInstruction: string,
+  job: GenerationJob,
+  delayMs: number,
+  onEvent: (event: GenerationEvent) => void,
+): Promise<GeneratedChanges> {
+  const instruction = requireInstruction(rawInstruction);
+  checkMockWorldDocumentName(state, requestedName);
+  const { title, body } = generateAddedWorldDocument(instruction);
+  const documentPlan: StepPlan = {
+    label: "世界観の資料を生成しています",
+    reasoning: [],
+    chunks: chunkText(`# ${title}\n\n${body}`),
+    notices: [{ level: "info", message: ADDED_WORLD_DOCUMENT_NOTICE }],
+  };
+  await runSteps(job, [documentPlan], delayMs, onEvent);
+  const plan = planMockStructureEdit(state, {
+    kind: "add_world_document",
+    name: requestedName,
+    title,
+    body,
+  });
+  return {
+    summary: addedSummary(`世界観の資料「${title}」`, plan.created),
+    files: plan.change_set.files,
+  };
+}
+
 /** タスクを実行し、ストリーミングイベントを届けながら変更案を作る。状態そのものは書き換えない。 */
 export async function runGeneration(
   state: ProjectState,
@@ -453,6 +545,17 @@ export async function runGeneration(
       return generateDraft(state, task.chapter, task.scene, settings, job, delayMs, onEvent);
     case "revise":
       return generateRevision(state, task.path, task.instruction, job, delayMs, onEvent);
+    case "add_character":
+      return generateAddedCharacterTask(state, task.instruction, job, delayMs, onEvent);
+    case "add_world_document":
+      return generateAddedWorldDocumentTask(
+        state,
+        task.name,
+        task.instruction,
+        job,
+        delayMs,
+        onEvent,
+      );
     default:
       return task satisfies never;
   }

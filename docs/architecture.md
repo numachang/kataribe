@@ -352,6 +352,12 @@ pub async fn collect(stream, on_event) -> Result<Completion, LlmError>;   // 全
 | `ScenePlan { chapter }` | 章のストーリーライン・前後の章・人物 | その章の `scenes`（JSON Schema） |
 | `Draft { chapter, scene }` | §4.3 の文脈 | `manuscript/<NN>/<scene-id>.txt` |
 | `Revise { path, instruction }` | 対象ファイル・指示 | 書き直した同じファイル |
+| `AddCharacter { instruction }` | 企画・世界観・既存の人物・あらすじの抜粋・指示 | 新しい人物 `characters/<id>.md`（項目と本文。LLM を 2 回呼ぶ） |
+| `AddWorldDocument { name, instruction }` | 企画・世界観の概要と既存の資料・既存の資料の題・人物・指示 | 新しい世界観の資料 `world/<name>.md`（`name` が `None` なら題から決める） |
+
+`Revise`・`AddCharacter`・`AddWorldDocument` は、取りかかれる工程ではないので工程の一覧（`pipeline`）には出ない。
+`AddCharacter` / `AddWorldDocument` は、指示から人物・世界観の資料を 1 つ作って足す（自分で書いて足す構成の操作 §4.8 の、LLM に作らせる版）。
+`stages/addition/` が、LLM の出力を検証して `StructureEdit::AddCharacter` / `AddWorldDocument` に組み立て、`plan_structure_edit` に渡して変更案にする。
 
 どのタスクも **ファイルを直接書き換えず**、変更案 `ChangeSet { summary, files: Vec<FileChange>, project_root }` を返す。
 GUI は変更案を見せてから適用し、CLI は自動で適用する。
@@ -381,7 +387,9 @@ GUI は変更案を見せてから適用し、CLI は自動で適用する。
   | Write | 条件は改名した後の状態に対して確かめる。書き先が Move の行き先なら移動元の今の中身で `base_hash` を照合する。Trash や Move で空いた場所なら「無いこと」として扱う |
 
   書き込みは生成を始めたときの内容のハッシュ（`base_hash`、新規なら存在しないこと）を条件にするので、その後に利用者が
-  編集していれば `Conflict` になる。同じパスへの変更が重なる・`.kataribe/` や `kataribe.yaml` をゴミ箱へ移したり改名したりする・
+  編集していれば `Conflict` になる。ただし `AddCharacter` / `AddWorldDocument` の変更案は、構成の関数が最新の状態を読んで作る
+  ので、条件は「LLM の出力を受け取ったあとの状態」になる（生成している間に保存された手の編集を、古い状態を前提に上書きしない。
+  新規のファイルだけを書くので、そのあとに同じパスができれば適用が `Conflict` になる）。同じパスへの変更が重なる・`.kataribe/` や `kataribe.yaml` をゴミ箱へ移したり改名したりする・
   フォルダを自分の中へ移す・ゴミ箱へ移すフォルダの下へ書く・`Trash` の形が合わない変更案は `InvalidChangeSet`
   （画面から戻ってくる値なので、Rust で必ず検証する）。
 - `project_root` は生成元の作品フォルダ（正規化した絶対パス）。生成中に別の作品を開き直しても、
@@ -500,6 +508,22 @@ Gemma には前者だけ、Qwen には後者だけが効き、両方を指定す
 人物・世界観の資料・章・シーンを、利用者が自分で書いて足したり消したり、人物・章・シーンを並べ替えたりする操作。LLM も設定も要らないので、`Engine` の外の関数
 （`plan_structure_edit` / `suggest_character_id`）にしてあり、GUI と CLI が同じ関数を使う。作品フォルダは直接書き換えず、
 変更案を `StructurePlan` に入れて返す。適用は `ChangeSet::apply`（§4.1）。
+
+人物と世界観の資料は、LLM に作らせて足すときも同じ関数を使う（`Task::AddCharacter` / `AddWorldDocument`、§4.1。`stages/addition/`）。
+流れは、①指示が空でないことと、世界観の資料の `name` の指定（規則に合うか・使用済みでないか。`structure` の確認関数
+`check_world_document_name`）を、LLM を呼ぶ前に確かめる、②文脈を集めて LLM に作らせる、③出力を検証する、④`StructureEdit` にして
+`plan_structure_edit` に渡す、⑤`StructurePlan` の変更案を、要約「人物「霧島 凛」を生成しました（characters/kirishima-rin.md）。」
+の生成の `ChangeSet` にして返す。構成の操作のエラー文は利用者の入力向けなので、LLM の出力の誤りは `stages/addition/` が先に
+`InvalidOutput` にする。
+- 人物（`AddCharacter`）: 項目を JSON `{name, reading, role, summary}` で作らせ、続けて人物資料の本文を `character.j2` で作らせる
+  （LLM を 2 回呼ぶ。ID は LLM に出させず、読みからローマ字で決める）。名前が空・名前にローマ字（全角も）が混ざる・読みがかな以外（空白は半角・全角のみ）・
+  すでにいる人物と同じ名前（空白の違いを無視）のときは、`quality_retries` の回数まで作り直す。それでも残れば警告して使う
+  （名前が空のときは `InvalidOutput`）。`order` は付けず、末尾にする。
+- 世界観の資料（`AddWorldDocument`）: 文章で作らせ、1 行目を `# 題` にさせる（ローカル LLM は長い Markdown を JSON の文字列に
+  入れるのが苦手なため）。見出しが無い・本文が空・すでにある資料と同じ題のときは作り直し、それでも残れば `InvalidOutput`。ファイル名は §2 の規則（`name` の指定があればそれ）。
+- 生成の最後に、古くなった工程の注意書きを Info の `notice` として流す（工程の印は付けない）。人物は、生成済みのあらすじ・章立て・
+  シーン構成には、その人物がまだ出てこないこと（章立てが壊れていても人物は足せるよう、章は一覧で数え、必要な読み込みは LLM を呼ぶ前に済ませる）。世界観の資料は、これからの生成で世界観として使われること（長いと切り詰められる）と、
+  生成済みの文書には反映されないこと。
 
 ```rust
 pub fn plan_structure_edit(project: &Project, edit: &StructureEdit) -> Result<StructurePlan>;
@@ -632,6 +656,12 @@ pub struct StructurePlan {
   slug にし、作れなければ `character`（使用済みなら番号を付ける）。世界観の資料の自動のファイル名も、英数字だけの題なら slug、
   それ以外は `doc`（重なれば `doc-2`, …）になる。かなの変換を画面のテストで確かめるときは、スタブで差し替える。
   壊れた章立てがありえないので、`notices` は常に空。ID・ファイル名が使えないときの文言も本物とは違う。
+  指示から人物・世界観の資料を作って足す生成（`add_character` / `add_world_document`。`mock/generation.ts`）も同じ構成の操作の関数
+  （`planMockStructureEdit`）で変更案を作り、要約は本物と同じ形（「人物「…」を生成しました（characters/…md）。」）にする。
+  指示が空なら、文字を流す前に `invalid_input`。資料のファイル名の指定は、文字を流す前に確かめる（規則に合わない・使用済みなら `invalid_input`）。
+  人物は項目の JSON と本文の 2 回に分けて流し、資料は見出し付きの本文を 1 回で流す。本物との違いは、中身が決まった文であること
+  （名前は既存の人物と重ならない候補から選び、題は指示の 1 行目）、かなをローマ字にしないので人物の ID が `character`・`character-2`、…になること、
+  古くなった文書の注意書きが、実際に何が生成済みかを調べない決まった文であること。
 - 中央のエディタは、文書の種類（`EditableDocument.kind`）で出し分ける。人物資料・章立ては、本文の上に front matter の
   項目のフォームを置き、本文（章はストーリーライン）の欄だけを縦書き・横書きの切り替えの対象にする。
   文字数・品質チェック・ルビのプレビューも本文だけを対象にする。項目に分けない文書（`text`）と、YAML を解釈できず
@@ -686,11 +716,31 @@ pub struct StructurePlan {
     `suggestCharacterId` の提案に追従し（入力が止まって少し待ってから問い合わせ、古い入力への答えは捨てる）、触ったら追従を止める。
     触っていなければ ID は送らず（`null`）、Rust に決めさせる。触って書いた ID は、送る前に Rust と同じ規則で確かめ
     （`Rin`・`霧島` など。`lib/slug.ts`）、使えなければ欄の下に理由を出して「追加」を無効にする（空欄は自動なので有効）。
+    世界観の資料のファイル名の欄（`useWorldDocumentNameField`。自分で書くときも AI に作らせるときも同じ）も同じ形で、
+    前後の空白を除いて、規則（`lib/slug.ts`。小文字の英数字とハイフン）・概要の名前（`overview`）でないこと・目次の世界観の節に
+    ある資料の名前（`world/<name>.md`。小文字にそろえて比べる）との重なりを確かめ、使えなければ理由を出して
+    「追加」「生成を始める」を無効にする。ここで見逃した分（目次が古い場合など）は、本物の確認が最後に断る
+    （自分で書くときはダイアログの中の失敗、AI に作らせるときは AI パネルの失敗）。
     シーンの入力欄は、章立てのシーンのカード（`SceneCard`）と共有する
     （`SceneFields`）。章の追加（`AddChapterDialog`）は、章題・ストーリーライン・位置（既存の章の前か末尾。目次から開いたときは
     その位置を選んである）を入力する。途中に足すときだけ、「第 N 章以降の章は、番号が 1 つ後ろにずれます（本文のフォルダも
     一緒に移ります）」と、「シーン構成の無い章を途中に足すと、それより後ろの本文の工程は、その章のシーン構成ができるまで
     進みません」を出す。
+  - 人物と世界観の資料の追加ダイアログには、上部に「自分で書く / AI に作らせる」の切り替え（`AdditionModeSwitch`。ラジオボタン。
+    矢印キーでも切り替えられる）がある。開くたびに「自分で書く」から始まり、切り替えても、どちらの入力も残る。
+    「AI に作らせる」では、指示の欄（必須）・開始ボタン（`GeneratedAdditionFields`。章・シーンのダイアログにも足せる部品）が出る。
+    世界観の資料はファイル名（任意。自分で書くときと同じ欄・同じ確認）も入れられ、使えない名前のうちは始められない
+    （始めるとダイアログが閉じて、書いた指示を失うため。誤りは始める前に欄の下で知らせる）。開始できるのはボタンだけで、指示の欄の Enter では始めない
+    （日本語入力の確定の Enter で始めないため）。開始の手順（`useGeneratedAddition`）は、始められない理由が無いか確かめ
+    （構成の操作の途中・自動で進め中・生成の途中や確認中・失敗の表示中は始められず、ボタンを押せなくして理由を欄の下に出す。
+    `useStructureEditBlockedReason` と同じ）、開いている文書の保存を済ませ（`documentSaveController.flush`）、
+    生成のセッションを `Task`（`add_character` / `add_world_document`。指示は前後の空白を除く）で始めて、ダイアログを閉じる。
+    進み具合（見出しに「AI に作らせて追加: 人物」と添える。`describeTask`）と変更案の確認は AI パネルで行い、確認では、
+    生成中に出た注意書き（古くなった文書の知らせ・作り直した理由。回をまたいで 1 か所にまとめる。`GenerationNotices`）を
+    要約の下に見せる（工程の生成の注意書きも同じ。確認に切り替わると回ごとの表示は消えるため）。
+    適用したら、作った人物資料・資料を開く（`documentCreatedBy(task, changeSet)`。変更案の、新規の書き込み）。開いている文書が
+    改名される変更案のときは、その文書のまま続けるので開かない（`renamesOpenDocument`。構成の操作の適用 `commitPlan` と共通）。
+    自動で進めるときの工程の生成は、何も開かない。「もう一度生成」は同じ指示で作り直す（指示を変えるには、破棄してダイアログから入れ直す）。
   - 削除は、先に変更案を作り（`planStructureEdit`）、確認のダイアログで、ゴミ箱へ移るもの（本文は「本文 N ファイル（計 X 字）も
     ゴミ箱へ移ります」と強調。章を消すときは本文のフォルダの中のファイル全部）・章を消すときに番号が変わる章（「第 3 章「…」 → 第 2 章」。
     `StructurePlan.renumbered`）・人物を消すときにその人物の名前を挙げているシーン・注意書き・ゴミ箱の場所を見せてから、
@@ -760,7 +810,7 @@ Tauri コマンド名と引数（JS 側の名前。Rust 側は snake_case で受
 | readDocument / writeDocument | `read_document` / `write_document` | `path` / `path, document, expectedHash`（`document` は `EditableDocument`。`kind` が `text`・`character`・`chapter` のどれか。`read_document` は `{ document, hash, parse_error }`、`write_document` は新しいハッシュを返す。パスの種類に合わない文書と、シーンの `id` が重複した章立ては `invalid_input`） |
 | parseDocument | `parse_document` | `path, content`（作品を開いていなくてもよい。ファイルは読み書きしない。`{ document, parse_error }` を返す。分け方は `read_document` と同じ。`path` が作品内の相対パスとして不正なら `invalid_input`） |
 | textStats / parseRuby / analyzeQuality | `text_stats` / `parse_ruby` / `analyze_quality` | `text` / `text` / `text, targetChars` |
-| generate / cancelGeneration | `generate` / `cancel_generation` | `jobId, task, onEvent`（`Channel<GenerationEvent>`）/ `jobId` |
+| generate / cancelGeneration | `generate` / `cancel_generation` | `jobId, task, onEvent`（`Channel<GenerationEvent>`）/ `jobId`（`task` の `kind` に、工程の一覧には出ない `revise`・`add_character`・`add_world_document` がある。`add_character` は `instruction`、`add_world_document` は `instruction` と `name`（文字列か `null`）を持つ） |
 | applyChangeSet | `apply_change_set` | `changeSet`（`files` の各要素は `kind` が `write`・`trash`・`move`・`expect` のどれか。構成の変更もこれで適用する） |
 | planStructureEdit | `plan_structure_edit` | `edit`（`StructureEdit`。`kind` が `add_character`・`remove_character`・`add_world_document`・`remove_world_document`・`add_chapter`・`remove_chapter`・`add_scene`・`remove_scene`・`move_character`・`move_chapter`・`move_scene` のどれか。`add_character` の `id` は文字列か `null`、`remove_character`・`move_character` は ID ではなく `path` で指す。`move_*` の `position` は、並べ替えたあとにその項目が一覧の何番目に来るか（0 始まり）で、範囲外・今と同じ位置は `invalid_input`）。`StructurePlan`（`change_set`・`completed_summary`・`created`・`references`・`renumbered`・`notices`）を返す。作品フォルダは書き換えない（§4.8）。入力の誤り・消せない資料は `invalid_input`、対象が無ければ `not_found` |
 | suggestCharacterId | `suggest_character_id` | `reading, name`。人物の ID の案（文字列）を返す。使用済みの ID は避ける |
@@ -804,10 +854,14 @@ kataribe-cli [グローバルオプション] <サブコマンド>
                [--rating general|r15|r18] [--length <N>] (--idea <TEXT> | --idea-file <PATH>)
       --length は省略でき、既定は 30,000 字（GUI の新規作成と同じ値）
   status <FOLDER> [--json]            工程の状態と文字数
-  generate <FOLDER> <TASK> [--instruction <TEXT>] [--dry-run]
+  generate <FOLDER> <TASK> [--instruction <TEXT>] [--name <SLUG>] [--dry-run]
       TASK = concept | style | world | cast | character:<id> | synopsis | outline
-           | scenes:<NN> | draft:<NN>/<sNN> | revise:<path>
-      --instruction は revise:<path> のときだけ必須。それ以外に付けると使い方の誤りにする
+           | scenes:<NN> | draft:<NN>/<sNN> | revise:<path> | add-character | add-world
+      add-character は指示から人物を 1 人、add-world は指示から世界観の資料を 1 つ作って足す（§4.8）。
+      --instruction は revise:<path>・add-character・add-world のときだけ付けられ（付けないと使い方の誤り）、
+      それ以外に付けると使い方の誤りにする
+      --name は add-world のときだけ付けられる（world/<SLUG>.md のファイル名。省略すると題から決める）。
+      それ以外に付けると使い方の誤りにする
       --dry-run は原稿と資料を書き換えない（要約などの中間データのキャッシュは更新する）
   run <FOLDER> [--until <STAGE>] [--max-steps <N>]
       取りかかれる工程（ready）を順に生成・適用し続ける。ready が無くなるか上限で止まる。
@@ -860,6 +914,8 @@ kataribe-cli [グローバルオプション] <サブコマンド>
   （状態の確認は何も変えないので出さない）。
   適用したあとは、書き込んだファイルを「書き込み: <パス>」、ゴミ箱へ移したものを「ゴミ箱へ: <パス>」、改名したものを
   「移動: A → B」と標準エラー出力に出す（`generate` / `run` も同じ出し分け）。
+- `generate add-character` / `add-world` の注意書き（古くなった工程など）は、ほかの生成と同じく標準エラー出力に出る。
+  適用と `--dry-run` も `generate` のとおり。足す名前の誤り（`--name` が規則に合わない・使用済み）は、LLM を呼ぶ前に失敗にする。
 - API キーは `--api-key-env` の環境変数 → 資格情報マネージャー（GUI と共有、`kataribe_engine::ApiKeyStore`）の順に探す。
   Claude Code のときは API キーを使わないので探さない。
 

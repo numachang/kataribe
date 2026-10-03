@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use kataribe_engine::{DraftUnit, LlmProvider};
+use kataribe_engine::{DraftUnit, LlmProvider, Task};
 use kataribe_project::Rating;
 
 use crate::stage::Stage;
@@ -211,13 +211,20 @@ pub struct GenerateArgs {
     /// 生成する工程。
     ///
     /// concept | style | world | cast | character:<id> | synopsis | outline
-    /// | scenes:<NN> | draft:<NN>/<sNN> | revise:<path>
+    /// | scenes:<NN> | draft:<NN>/<sNN> | revise:<path> | add-character | add-world
+    ///
+    /// add-character・add-world は、指示から人物・世界観の資料を 1 つ作って足す。
     #[arg(value_name = "TASK")]
     pub task: TaskSpec,
 
-    /// `revise:<path>` を書き直す指示（`revise:<path>` のときは必須。それ以外では指定できない）。
+    /// 書き直す指示、または作らせたい内容の指示（`revise:<path>`・add-character・add-world のときは必須。
+    /// それ以外では指定できない）。
     #[arg(long, value_name = "TEXT")]
     pub instruction: Option<String>,
+
+    /// 足す世界観の資料のファイル名（world/<SLUG>.md。add-world のときだけ指定できる。省略すると題から決める）。
+    #[arg(long, value_name = "SLUG")]
+    pub name: Option<String>,
 
     /// 変更案を表示するだけで、原稿と資料は書き換えない（要約などの中間データのキャッシュは更新する）。
     #[arg(long)]
@@ -225,18 +232,16 @@ pub struct GenerateArgs {
 }
 
 impl GenerateArgs {
-    /// `--instruction` は `revise:<path>` のときだけ必須、それ以外では指定できない。
+    /// 引数から生成のタスクを組み立てる。`--instruction`・`--name` の組み合わせの誤りは、使い方の誤りとして返す。
+    pub fn to_task(&self) -> Result<Task, String> {
+        self.task
+            .clone()
+            .into_task(self.instruction.clone(), self.name.clone())
+    }
+
+    /// 組み合わせの誤り（指示が要る種類に無い・要らない種類にある・`--name` を付けられない種類にある）を確かめる。
     fn validate(&self) -> Result<(), String> {
-        let is_revise = matches!(self.task, TaskSpec::Revise(_));
-        match (is_revise, &self.instruction) {
-            (true, None) => {
-                Err("generate revise:<path> には --instruction <TEXT> が必要です。".to_owned())
-            }
-            (false, Some(_)) => {
-                Err("--instruction は revise:<path> のときだけ指定できます。".to_owned())
-            }
-            _ => Ok(()),
-        }
+        self.to_task().map(drop)
     }
 }
 
@@ -456,6 +461,7 @@ mod tests {
             folder: PathBuf::from("folder"),
             task,
             instruction: instruction.map(str::to_owned),
+            name: None,
             dry_run: false,
         }
     }
@@ -485,6 +491,58 @@ mod tests {
     fn validate_accepts_non_revise_tasks_without_instruction() {
         let args = generate_args(TaskSpec::Concept, None);
         assert!(args.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_requires_an_instruction_for_the_generated_additions() {
+        for task in [TaskSpec::AddCharacter, TaskSpec::AddWorld] {
+            assert!(generate_args(task.clone(), None).validate().is_err());
+            assert!(
+                generate_args(task, Some("港町の歴史を足す"))
+                    .validate()
+                    .is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn validate_accepts_a_name_only_for_add_world() {
+        let named = |task| GenerateArgs {
+            name: Some("port-town".to_owned()),
+            ..generate_args(task, Some("指示"))
+        };
+
+        assert!(named(TaskSpec::AddWorld).validate().is_ok());
+        assert!(named(TaskSpec::AddCharacter).validate().is_err());
+        assert!(
+            named(TaskSpec::Revise(RelPath::new("concept.md").unwrap()))
+                .validate()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn generate_add_world_takes_an_instruction_and_a_name() {
+        let cli = parse(&[
+            "generate",
+            "folder",
+            "add-world",
+            "--instruction",
+            "港町の歴史",
+            "--name",
+            "port-town",
+        ])
+        .unwrap();
+        let Command::Generate(args) = cli.command else {
+            panic!("Generate が来るはず");
+        };
+        assert_eq!(
+            args.to_task(),
+            Ok(Task::AddWorldDocument {
+                name: Some("port-town".to_owned()),
+                instruction: "港町の歴史".to_owned(),
+            })
+        );
     }
 
     #[test]
