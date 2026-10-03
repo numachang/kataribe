@@ -55,7 +55,7 @@ function chapterFile(scenes: SceneSpec[], storyline = "雨の夜の物語"): str
 }
 
 function fileChange(path: string, content: string, previous: string | null): FileChange {
-  return { path, content, previous, base_hash: null };
+  return { kind: "write", path, content, previous, base_hash: null };
 }
 
 async function createEmptyProject(backend: Backend): Promise<void> {
@@ -505,5 +505,47 @@ describe("シーンの並び替え", () => {
 
     expect(within(sceneSection(/^s01/)).getByText("順序変更")).toBeInTheDocument();
     expect(screen.getAllByText("順序変更")).toHaveLength(1);
+  });
+});
+
+describe("ゴミ箱へ移す変更案", () => {
+  const trash: FileChange = {
+    kind: "trash",
+    path: "manuscript/01/s02.txt",
+    files: [{ path: "manuscript/01/s02.txt", base_hash: "abcd1234", chars: 4210 }],
+  };
+
+  it("書き込みの変更と並べて、ゴミ箱へ移すファイルを文字数つきで見せる", async () => {
+    await showChangeSet([fileChange("plot/chapters/01.md", chapterFile([]), null), trash]);
+
+    const card = (
+      await screen.findByText("manuscript/01/s02.txt", {
+        selector: ".changeset-review__file-path",
+      })
+    ).closest(".changeset-review__file") as HTMLElement;
+    expect(within(card).getByText("削除")).toBeInTheDocument();
+    expect(within(card).getByText("ゴミ箱へ移すファイル")).toBeInTheDocument();
+    expect(within(card).getByText("4,210 字")).toBeInTheDocument();
+    // 書き込みの変更は、これまでどおり内容を見せる
+    expect(screen.getByText("plot/chapters/01.md")).toBeInTheDocument();
+  });
+
+  it("内容を見せる欄や、変更前を見る切り替えは出さない", async () => {
+    await showChangeSet([trash]);
+
+    await screen.findByText("ゴミ箱へ移すファイル");
+    expect(screen.queryByRole("button", { name: "変更前を見る" })).not.toBeInTheDocument();
+  });
+
+  it("テキストとして読めず、ハッシュの無いファイルは、移せないことを添える", async () => {
+    await showChangeSet([
+      {
+        kind: "trash",
+        path: "manuscript/01/s03.txt",
+        files: [{ path: "manuscript/01/s03.txt", base_hash: null, chars: 0 }],
+      },
+    ]);
+
+    expect(await screen.findByText("テキストとして読めないため、移せません")).toBeInTheDocument();
   });
 });

@@ -10,13 +10,39 @@ use crate::change_set::ChangeSet;
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct StructurePlan {
     /// 作る変更案。作品フォルダを開いている `Project` のものとして印が付いている。
+    /// `summary` は適用する前に見せる説明（「人物「霧島 凛」を追加します。」）。
     pub change_set: ChangeSet,
+    /// 適用したあとに利用者へ知らせる文（「人物「霧島 凛」を追加しました。」）。
+    pub completed_summary: String,
     /// 適用したあとに開く文書。何も開かなければ `None`。
     pub created: Option<RelPath>,
     /// 人物を消すとき、その人物の名前を挙げているシーン。名前は書き換えない（知らせるだけ）。
     pub references: Vec<SceneReference>,
     /// 利用者への注意書き（「第 3 章は読めないため参照を確かめられませんでした」など）。
     pub notices: Vec<String>,
+}
+
+/// 変更の言い回し。適用する前の説明（「〜します。」）と適用したあとの知らせ（「〜しました。」）を、
+/// 同じ言い回しから作って食い違わないようにする。
+pub(super) struct Wording {
+    /// 「ます」「ました」の前まで（例「人物「霧島 凛」を追加し」）。
+    stem: String,
+}
+
+impl Wording {
+    pub(super) fn new(stem: impl Into<String>) -> Self {
+        Self { stem: stem.into() }
+    }
+
+    /// 適用する前の説明。
+    pub(super) fn planned(&self) -> String {
+        format!("{}ます。", self.stem)
+    }
+
+    /// 適用したあとの知らせ。
+    fn completed(&self) -> String {
+        format!("{}ました。", self.stem)
+    }
 }
 
 /// 人物の名前を挙げているシーン。
@@ -39,9 +65,11 @@ pub struct SceneReference {
 
 impl StructurePlan {
     /// 変更案だけの計画。何も開かず、参照も注意書きも無い。
-    pub(super) fn new(change_set: ChangeSet) -> Self {
+    /// `change_set` は `wording.planned()` を説明にして作っておく。
+    pub(super) fn new(change_set: ChangeSet, wording: &Wording) -> Self {
         Self {
             change_set,
+            completed_summary: wording.completed(),
             created: None,
             references: Vec::new(),
             notices: Vec::new(),

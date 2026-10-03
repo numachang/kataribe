@@ -11,6 +11,10 @@ export function characterPath(id: string): string {
   return `characters/${id}.md`;
 }
 
+export function worldDocumentPath(name: string): string {
+  return `world/${name}.md`;
+}
+
 export function chapterPath(chapterId: string): string {
   return `plot/chapters/${chapterId}.md`;
 }
@@ -42,25 +46,36 @@ const WINDOWS_RESERVED_NAMES = new Set([
   ...Array.from({ length: 9 }, (_, index) => `lpt${index + 1}`),
 ]);
 
-const CHARACTER_ID_MAX_LENGTH = 48;
-const CHARACTER_ID_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const SLUG_MAX_LENGTH = 48;
+const SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const CHAPTER_ID_PATTERN = /^\d{2,3}$/;
+const WORLD_FILE_PATTERN = /^world\/([^/]+)\.md$/;
 const CHARACTER_FILE_PATTERN = /^characters\/([^/]+)\.md$/;
 const CHAPTER_FILE_PATTERN = /^plot\/chapters\/([^/]+)\.md$/;
 
-/** 人物 id として有効か（`CharacterId::new` と同じ規則）。小文字の英数字をハイフン 1 つずつでつないだ slug。 */
-function isValidCharacterId(id: string): boolean {
-  return (
-    id.length <= CHARACTER_ID_MAX_LENGTH &&
-    CHARACTER_ID_PATTERN.test(id) &&
-    !WINDOWS_RESERVED_NAMES.has(id)
-  );
+/** 人物 id・世界観の資料のファイル名として有効か（`CharacterId::new` と同じ規則）。小文字の英数字をハイフン 1 つずつでつないだ slug。 */
+export function isValidSlug(id: string): boolean {
+  return id.length <= SLUG_MAX_LENGTH && SLUG_PATTERN.test(id) && !WINDOWS_RESERVED_NAMES.has(id);
+}
+
+/** 世界観の概要（`world/overview.md`）の名前。足す資料には使えない。 */
+const WORLD_OVERVIEW_NAME = "overview";
+
+/** 足す世界観の資料のファイル名として使えるか。slug の規則に合い、概要の名前でないこと。 */
+export function isValidWorldDocumentName(name: string): boolean {
+  return isValidSlug(name) && name !== WORLD_OVERVIEW_NAME;
+}
+
+/** `world/<name>.md`（概要以外）なら name、それ以外は null。 */
+export function worldDocumentNameFromPath(path: string): string | null {
+  const name = WORLD_FILE_PATTERN.exec(path)?.[1];
+  return name !== undefined && name !== WORLD_OVERVIEW_NAME ? name : null;
 }
 
 /** `characters/<有効な id>.md` なら id、それ以外は null（`document_kind` が人物資料と判定する条件）。 */
 export function characterIdFromPath(path: string): string | null {
   const id = CHARACTER_FILE_PATTERN.exec(path)?.[1];
-  return id !== undefined && isValidCharacterId(id) ? id : null;
+  return id !== undefined && isValidSlug(id) ? id : null;
 }
 
 /** `plot/chapters/<NN または NNN>.md` なら章 id、それ以外は null（`ChapterId::new` と同じ規則）。 */

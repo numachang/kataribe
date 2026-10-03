@@ -36,6 +36,8 @@ export function createStubBackend(overrides: Partial<Backend> = {}): Backend {
     generate: notImplemented("generate"),
     cancelGeneration: notImplemented("cancelGeneration"),
     applyChangeSet: notImplemented("applyChangeSet"),
+    planStructureEdit: notImplemented("planStructureEdit"),
+    suggestCharacterId: notImplemented("suggestCharacterId"),
   };
   return { ...base, ...overrides };
 }

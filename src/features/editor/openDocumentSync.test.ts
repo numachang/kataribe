@@ -159,6 +159,67 @@ describe("writeBesideEditor", () => {
     expect(useUiStore.getState().toasts.at(-1)?.message).toContain("一時的に読めません");
   });
 
+  it("開いている文書がゴミ箱へ移るなら、読み直さずに閉じて、そのことを知らせる", async () => {
+    const inner = createMockBackend({ delayMs: 0 });
+    await openConceptInEditor(inner);
+    const readDocument = vi.fn(inner.readDocument.bind(inner));
+    const backend = wrapBackend(inner, { readDocument });
+
+    await writeBesideEditor(backend, {
+      touches: (path) => path === PATH,
+      movesToTrash: (path) => path === PATH,
+      write: async () => "ゴミ箱へ移した",
+      unsavedWorkMessage: "未保存",
+    });
+
+    expect(readDocument).not.toHaveBeenCalled();
+    expect(useEditorStore.getState().path).toBeNull();
+    expect(useEditorStore.getState().document).toBeNull();
+    expect(useWorkspaceStore.getState().currentPath).toBeNull();
+    expect(useUiStore.getState().toasts.at(-1)?.message).toBe(
+      "開いていた「concept.md」はゴミ箱へ移したので、閉じました。",
+    );
+  });
+
+  it("ゴミ箱へ移るのが別の文書なら、開いている文書は閉じない", async () => {
+    const backend = createMockBackend({ delayMs: 0 });
+    await openConceptInEditor(backend);
+
+    await writeBesideEditor(backend, {
+      touches: (path) => path === "style.md",
+      movesToTrash: (path) => path === "style.md",
+      write: async () => "ゴミ箱へ移した",
+      unsavedWorkMessage: "未保存",
+    });
+
+    expect(useWorkspaceStore.getState().currentPath).toBe(PATH);
+    expect(useEditorStore.getState().path).toBe(PATH);
+  });
+
+  it("ゴミ箱へ移す文書に保存できない編集が残っていれば、移さずに止める", async () => {
+    const inner = createMockBackend({ delayMs: 0 });
+    await openConceptInEditor(inner);
+    const backend = wrapBackend(inner, {
+      async writeDocument() {
+        throw new Error("ディスクがいっぱいです");
+      },
+    });
+    editText("保存できていない編集");
+    const write = vi.fn(async () => "ゴミ箱へ移した");
+
+    await expect(
+      writeBesideEditor(backend, {
+        touches: (path) => path === PATH,
+        movesToTrash: (path) => path === PATH,
+        write,
+        unsavedWorkMessage: "保存できていない編集があります",
+      }),
+    ).rejects.toThrow("保存できていない編集があります");
+
+    expect(write).not.toHaveBeenCalled();
+    expect(editorBody()).toBe("保存できていない編集");
+  });
+
   it("書き換えない文書を開いているときは、読み直さない", async () => {
     const inner = createMockBackend({ delayMs: 0 });
     await openConceptInEditor(inner);

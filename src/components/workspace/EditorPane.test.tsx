@@ -4,10 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Backend } from "../../api/backend";
 import { createMockBackend } from "../../api/mock";
 import { SAMPLE_PROJECT_FOLDER } from "../../api/mock/sampleProject";
+import { findOverviewEntry } from "../../lib/overviewTree";
+import { useUiStore } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { readText, textDocument } from "../../test/documents";
 import { renderWithBackend } from "../../test/renderWithBackend";
 import { resetAllStores } from "../../test/resetStores";
+import { wrapBackend } from "../../test/wrapBackend";
 import { WorkspaceScreen } from "./WorkspaceScreen";
 
 beforeEach(resetAllStores);
@@ -174,10 +177,83 @@ describe("未生成の文書を選んだとき", () => {
     await screen.findByRole("textbox", { name: "concept.md" });
 
     // 「消えた甥」はサンプル作品内でまだ本文が生成されていないシーン（exists: false）。
-    await user.click(await screen.findByRole("button", { name: /消えた甥/ }));
+    await user.click(await screen.findByRole("button", { name: /^消えた甥/ }));
 
     expect(await screen.findByText("この文書はまだ生成されていません。")).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "concept.md" })).not.toBeInTheDocument();
+  });
+
+  it("本文のシーンなら「空の本文から書き始める」が出て、押すと空のエディタで書き始められる", async () => {
+    const user = userEvent.setup();
+    const backend = createMockBackend({ delayMs: 0 });
+    await openSampleProject(backend);
+    renderWithBackend(<WorkspaceScreen />, backend);
+
+    await user.click(await screen.findByRole("button", { name: /^消えた甥/ }));
+    await user.click(await screen.findByRole("button", { name: "空の本文から書き始める" }));
+
+    const textarea = await screen.findByRole("textbox", { name: "manuscript/01/s03.txt" });
+    expect(textarea).toHaveValue("");
+    expect(screen.queryByText("この文書はまだ生成されていません。")).not.toBeInTheDocument();
+    // 目次では「まだ無い」印が外れ、工程でも本文は済みになる
+    const entry = findOverviewEntry(useWorkspaceStore.getState().overview, "manuscript/01/s03.txt");
+    expect(entry?.exists).toBe(true);
+    const pipeline = await backend.pipeline();
+    expect(pipeline.find((step) => step.label === "雨の匂い 消えた甥")?.state).toBe("done");
+
+    await user.type(textarea, "霧が出ていた。");
+    fireEvent.keyDown(textarea, { key: "s", ctrlKey: true });
+    await waitFor(async () =>
+      expect(await readText(backend, "manuscript/01/s03.txt")).toBe("霧が出ていた。"),
+    );
+  });
+
+  it("書き始めるボタンは、本文のシーン以外には出さない", async () => {
+    const user = userEvent.setup();
+    const backend = createMockBackend({ delayMs: 0 });
+    const overview = await backend.createProject("C:projectsempty", {
+      title: "空の作品",
+      author: null,
+      genre: "mystery",
+      genre_note: null,
+      rating: "general",
+      target_length: 10000,
+      idea: "雨の夜の探偵の物語",
+    });
+    useWorkspaceStore.getState().openWorkspace(overview);
+    renderWithBackend(<WorkspaceScreen />, backend);
+
+    await user.click(await screen.findByRole("button", { name: /^企画/ }));
+
+    expect(await screen.findByText("この文書はまだ生成されていません。")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "空の本文から書き始める" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("作れなかったときは、理由を知らせ、エディタは出さない", async () => {
+    const user = userEvent.setup();
+    const inner = createMockBackend({ delayMs: 0 });
+    const backend = wrapBackend(inner, {
+      async writeDocument() {
+        throw new Error("ディスクがいっぱいです");
+      },
+    });
+    await openSampleProject(backend);
+    renderWithBackend(<WorkspaceScreen />, backend);
+
+    await user.click(await screen.findByRole("button", { name: /^消えた甥/ }));
+    await user.click(await screen.findByRole("button", { name: "空の本文から書き始める" }));
+
+    await waitFor(() =>
+      expect(
+        useUiStore
+          .getState()
+          .toasts.some((toast) => toast.message.includes("ディスクがいっぱいです")),
+      ).toBe(true),
+    );
+    expect(screen.getByText("この文書はまだ生成されていません。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "空の本文から書き始める" })).toBeEnabled();
   });
 });
 

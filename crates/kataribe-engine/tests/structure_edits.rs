@@ -668,6 +668,10 @@ fn removing_a_world_document_moves_it_to_the_trash() {
         plan.change_set.summary,
         "世界観の資料「用語集」をゴミ箱へ移します。"
     );
+    assert_eq!(
+        plan.completed_summary,
+        "世界観の資料「用語集」をゴミ箱へ移しました。"
+    );
     assert_eq!(read(&project, "world/glossary.md"), None);
 }
 
@@ -903,7 +907,9 @@ fn removing_a_scene_with_text_moves_the_text_to_the_trash_too() {
 
     let plan = plan_structure_edit(&project, &remove_scene(1, "s02")).unwrap();
 
-    assert!(plan.change_set.summary.contains("本文もゴミ箱へ移ります"));
+    // 本文がゴミ箱へ移ることは、要約の文ではなく、ゴミ箱へ移るものの一覧（下）で知らせる
+    assert!(plan.change_set.summary.ends_with("を削除します。"));
+    assert!(plan.completed_summary.ends_with("を削除しました。"));
     let trashed: Vec<&RelPath> = plan
         .change_set
         .files

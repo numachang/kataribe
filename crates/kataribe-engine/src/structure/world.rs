@@ -3,7 +3,7 @@
 use kataribe_project::{MarkdownDoc, Project, ProjectError, RelPath, WorldDocumentName, layout};
 use kataribe_text::romaji::{is_romanizable, to_romaji};
 
-use super::plan::StructurePlan;
+use super::plan::{StructurePlan, Wording};
 use crate::change_set::ChangeSet;
 use crate::error::{EngineError, Result};
 
@@ -35,9 +35,10 @@ pub(super) fn add(
             "ファイル名「{name}」はもう使われています。"
         )));
     }
-    let mut changes = ChangeSet::new(format!("世界観の資料「{title}」を追加します。"));
+    let wording = Wording::new(format!("世界観の資料「{title}」を追加し"));
+    let mut changes = ChangeSet::new(wording.planned());
     changes.put(path.clone(), render(title, body), None);
-    Ok(StructurePlan::new(changes).opening(path))
+    Ok(StructurePlan::new(changes, &wording).opening(path))
 }
 
 /// 足した世界観の資料を消す（ゴミ箱へ移す）変更案。
@@ -55,9 +56,10 @@ pub(super) fn remove(project: &Project, path: &RelPath) -> Result<StructurePlan>
         |_| path.file_stem().to_owned(),
         |document| document.display_title(path.file_stem()),
     );
-    let mut changes = ChangeSet::new(format!("世界観の資料「{label}」をゴミ箱へ移します。"));
+    let wording = Wording::new(format!("世界観の資料「{label}」をゴミ箱へ移し"));
+    let mut changes = ChangeSet::new(wording.planned());
     changes.trash_file(path.clone(), &file);
-    Ok(StructurePlan::new(changes))
+    Ok(StructurePlan::new(changes, &wording))
 }
 
 /// 資料のファイル名を決める。指定があればそれを検証して使い、無ければ題から作る。

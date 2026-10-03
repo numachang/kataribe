@@ -11,7 +11,7 @@ use kataribe_project::{
 };
 
 use super::edit::NewScenePlan;
-use super::plan::StructurePlan;
+use super::plan::{StructurePlan, Wording};
 use crate::change_set::ChangeSet;
 use crate::error::{EngineError, Result};
 use crate::stages::materials::non_empty;
@@ -66,12 +66,13 @@ pub(super) fn add(
     };
     chapter.meta.scenes.insert(position, planned);
 
-    let mut changes = ChangeSet::new(format!(
-        "第{}章にシーン「{title}」を追加します。",
+    let wording = Wording::new(format!(
+        "第{}章にシーン「{title}」を追加し",
         chapter_id.number()
     ));
+    let mut changes = ChangeSet::new(wording.planned());
     put_chapter(&mut changes, chapter)?;
-    Ok(StructurePlan::new(changes).opening(layout::chapter_path(&chapter_id)))
+    Ok(StructurePlan::new(changes, &wording).opening(layout::chapter_path(&chapter_id)))
 }
 
 /// 章のシーンを消す変更案。章立てを書き直し、本文があれば本文をゴミ箱へ移す。
@@ -86,21 +87,17 @@ pub(super) fn remove(
     let text_path = layout::scene_text_path(&chapter_id, &scene_id);
     let text = project.store().read_text_opt(&text_path)?;
 
-    let consequence = if text.is_some() {
-        "（本文もゴミ箱へ移ります）"
-    } else {
-        ""
-    };
-    let mut changes = ChangeSet::new(format!(
-        "第{}章のシーン「{}」を削除します{consequence}。",
+    let wording = Wording::new(format!(
+        "第{}章のシーン「{}」を削除し",
         chapter_id.number(),
         removed.title
     ));
+    let mut changes = ChangeSet::new(wording.planned());
     put_chapter(&mut changes, chapter)?;
     if let Some(text) = &text {
         changes.trash_file(text_path, text);
     }
-    Ok(StructurePlan::new(changes))
+    Ok(StructurePlan::new(changes, &wording))
 }
 
 /// 章立てを、項目に分けて編集できる形で読む。

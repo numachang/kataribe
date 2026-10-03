@@ -25,7 +25,7 @@ describe("この文書タブから書き直す", () => {
     await openSampleProject(backend);
     renderWithBackend(<WorkspaceScreen />, backend);
 
-    await user.click(await screen.findByRole("button", { name: /招かれざる客/ }));
+    await user.click(await screen.findByRole("button", { name: /^招かれざる客/ }));
     await screen.findByRole("textbox", { name: "manuscript/01/s01.txt" });
 
     await user.click(screen.getByRole("tab", { name: "この文書" }));

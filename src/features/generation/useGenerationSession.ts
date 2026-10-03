@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { BackendError } from "../../api/backend";
 import { useBackend } from "../../api/context";
 import type { ChangeSet, Task } from "../../api/types";
+import { relocatedPath, touchesPath } from "../../lib/changeSetPaths";
 import { toErrorMessage } from "../../lib/errorMessage";
 import { useUiStore } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
@@ -45,10 +46,6 @@ function createJobId(): string {
 
 const UNSAVED_WORK_BLOCKS_APPLY =
   "開いている文書に保存できていない編集があるため、適用しませんでした。保存してから、もう一度適用してください。";
-
-function touchesDocument(changeSet: ChangeSet, path: string): boolean {
-  return changeSet.files.some((file) => file.path === path);
-}
 
 /**
  * 「工程」タブと「この文書」タブが共有する、生成 1 回分のセッション。
@@ -150,7 +147,8 @@ export function useGenerationSession(): GenerationSessionApi {
       setApplyErrorMessage(null);
       try {
         const applied = await writeBesideEditor(backend, {
-          touches: (path) => touchesDocument(result, path),
+          touches: (path) => touchesPath(result, path),
+          movesToTrash: (path) => relocatedPath(result, path) === null,
           unsavedWorkMessage: UNSAVED_WORK_BLOCKS_APPLY,
           write: async () => {
             // 保存を待つ間に画面が閉じられた（作品を閉じたなど）なら、適用しない

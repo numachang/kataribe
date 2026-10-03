@@ -25,6 +25,7 @@ export function createEmptyProjectState(folder: string, project: NewProject): Pr
     concept: null,
     style: null,
     world: null,
+    worldDocuments: [],
     characters: null,
     synopsis: null,
     chapters: null,
@@ -67,6 +68,7 @@ export function createSampleProjectState(folder: string): ProjectState {
       "凛は杖の先で床を叩いた。返ってきたのは、湿った絨毯を吸い込むような、鈍い音だけだった。",
       "けれど確かに、呼吸の気配がひとつ、暗がりの奥でわずかに乱れていた。",
     ].join("\n"),
+    worldDocuments: [],
     world: [
       "舞台は本州北端、断崖に囲まれた岬に建つ洋館「水無月館」。かつては灯台守の詰め所があったが、",
       "資産家・水無月家がこれを買い取り、三代にわたって手を加えてきた。",

@@ -9,8 +9,13 @@ import type { SceneReference } from "./SceneReference";
 export type StructurePlan = { 
 /**
  * 作る変更案。作品フォルダを開いている `Project` のものとして印が付いている。
+ * `summary` は適用する前に見せる説明（「人物「霧島 凛」を追加します。」）。
  */
 change_set: ChangeSet, 
+/**
+ * 適用したあとに利用者へ知らせる文（「人物「霧島 凛」を追加しました。」）。
+ */
+completed_summary: string, 
 /**
  * 適用したあとに開く文書。何も開かなければ `None`。
  */

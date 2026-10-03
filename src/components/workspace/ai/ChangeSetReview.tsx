@@ -1,4 +1,5 @@
 import { useGenerationSessionContext } from "../../../features/generation/GenerationSessionProvider";
+import { changeKey } from "../../../lib/changeSetPaths";
 import "./ChangeSetReview.css";
 import { FileChangeCard } from "./change-review/FileChangeCard";
 
@@ -17,7 +18,7 @@ export function ChangeSetReview() {
 
       <div className="changeset-review__files">
         {changeSet.files.map((file) => (
-          <FileChangeCard key={file.path} file={file} />
+          <FileChangeCard key={changeKey(file)} file={file} />
         ))}
       </div>
 

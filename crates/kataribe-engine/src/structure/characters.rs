@@ -3,7 +3,7 @@
 use kataribe_project::{Character, CharacterId, CharacterMeta, Project, layout};
 use kataribe_text::romaji::to_romaji;
 
-use super::plan::StructurePlan;
+use super::plan::{StructurePlan, Wording};
 use super::references;
 use crate::change_set::ChangeSet;
 use crate::error::{EngineError, Result};
@@ -43,9 +43,10 @@ pub(super) fn add(
         meta,
         body: body.to_owned(),
     };
-    let mut changes = ChangeSet::new(format!("人物「{name}」を追加します。"));
+    let wording = Wording::new(format!("人物「{name}」を追加し"));
+    let mut changes = ChangeSet::new(wording.planned());
     changes.put(path.clone(), character.render()?, None);
-    Ok(StructurePlan::new(changes).opening(path))
+    Ok(StructurePlan::new(changes, &wording).opening(path))
 }
 
 /// 人物を消す（ゴミ箱へ移す）変更案。
@@ -74,12 +75,13 @@ pub(super) fn remove(project: &Project, id: &CharacterId) -> Result<StructurePla
             id.to_string()
         }
     };
-    let mut changes = ChangeSet::new(format!("人物「{label}」をゴミ箱へ移します。"));
+    let wording = Wording::new(format!("人物「{label}」をゴミ箱へ移し"));
+    let mut changes = ChangeSet::new(wording.planned());
     changes.trash_file(path, &file);
     Ok(StructurePlan {
         references: plan_references,
         notices,
-        ..StructurePlan::new(changes)
+        ..StructurePlan::new(changes, &wording)
     })
 }
 

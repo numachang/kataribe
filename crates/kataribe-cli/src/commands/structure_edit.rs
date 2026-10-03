@@ -35,6 +35,7 @@ pub(super) async fn run(
     }
     apply_change_set(&plan.change_set, &project, apply_guard, console).await?;
     report_applied_changes(console, &plan.change_set, "")?;
+    console.eprint(&format!("{}\n", plan.completed_summary))?;
     Ok(Outcome::Success)
 }
 
@@ -127,6 +128,7 @@ mod tests {
         });
         let plan = StructurePlan {
             change_set,
+            completed_summary: String::new(),
             created: None,
             references: vec![reference(false, true)],
             notices: vec!["第3章は読めません。".to_owned()],
@@ -147,6 +149,7 @@ mod tests {
     fn nothing_is_said_when_a_plan_has_nothing_to_warn_about() {
         let plan = StructurePlan {
             change_set: ChangeSet::new("追加"),
+            completed_summary: String::new(),
             created: None,
             references: Vec::new(),
             notices: Vec::new(),

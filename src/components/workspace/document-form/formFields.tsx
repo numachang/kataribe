@@ -29,15 +29,20 @@ export function TextField({ label, value, onChange }: TextFieldProps) {
   );
 }
 
+interface TextAreaFieldProps extends TextFieldProps {
+  /** 見せる行数。省くと 3 行。 */
+  rows?: number;
+}
+
 /** 必須の複数行の項目。 */
-export function TextAreaField({ label, value, onChange }: TextFieldProps) {
+export function TextAreaField({ label, value, onChange, rows = 3 }: TextAreaFieldProps) {
   function handleChange(event: ChangeEvent<HTMLTextAreaElement>): void {
     onChange(event.target.value);
   }
   return (
     <label className="app-field">
       <span>{label}</span>
-      <textarea rows={3} value={value} onChange={handleChange} spellCheck={false} />
+      <textarea rows={rows} value={value} onChange={handleChange} spellCheck={false} />
     </label>
   );
 }

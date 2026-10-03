@@ -50,6 +50,13 @@ export interface OverviewEntry {
   path: string | null;
   label: string;
   kind: EntryKind;
+  /**
+   * 章に属する項目（章立て・本文の章見出し・シーンの本文）の章。
+   * 本文の章見出しにはパスが無いので、画面が章を知るために持つ。
+   */
+  chapter: string | null;
+  /** シーンの本文の項目のシーン。 */
+  scene: string | null;
   exists: boolean;
   /** 本文の文字数（ルビの読み・空白を除く）。 */
   chars: number;
@@ -298,18 +305,109 @@ export type GenerationEvent =
     }
   | { kind: "notice"; level: "info" | "warning"; message: string };
 
-export interface FileChange {
+/** ゴミ箱へ移すファイル。 */
+export interface TrashedFile {
   path: string;
-  content: string;
-  /** 変更前の内容。新規ファイルなら null。 */
-  previous: string | null;
-  /** 変更前の内容のハッシュ。適用時に競合を検出するために使う。 */
+  /** 移す前の内容のハッシュ。適用時に競合を検出するために使う。テキストとして読めなかったファイルは null（適用できない）。 */
   base_hash: string | null;
+  /** 内容の文字数（ルビの読み・空白を除く）。何が失われるかを利用者に見せるため。 */
+  chars: number;
 }
+
+/** 作品フォルダのファイルへの 1 つの変更。 */
+export type FileChange =
+  | {
+      kind: "write";
+      path: string;
+      content: string;
+      /** 変更前の内容。新規ファイルなら null。 */
+      previous: string | null;
+      /** 変更前の内容のハッシュ。適用時に競合を検出するために使う。 */
+      base_hash: string | null;
+    }
+  | {
+      kind: "trash";
+      path: string;
+      /** 移すファイルの一覧。今は path のファイル 1 つだけ。 */
+      files: TrashedFile[];
+    };
+
+/** 変更案のうち、ファイルの新規作成・上書き。 */
+export type WriteFileChange = Extract<FileChange, { kind: "write" }>;
+
+/** 変更案のうち、ゴミ箱へ移す変更。 */
+export type TrashFileChange = Extract<FileChange, { kind: "trash" }>;
 
 export interface ChangeSet {
   summary: string;
+  /** ファイルへの変更。適用の順は並び順に頼らず、ゴミ箱へ移す → 書く。 */
   files: FileChange[];
   /** この変更案を作った作品フォルダ。別の作品を開き直したあとに適用すると拒否される。 */
   project_root: string;
+}
+
+// ---- 構成の操作（人物・世界観の資料・シーンの追加と削除） ----
+
+/** 足すシーンの設計。ScenePlan から、足すときに決まる項目（id・ビート）を除いたもの。 */
+export interface NewScenePlan {
+  title: string;
+  summary: string;
+  pov: string | null;
+  characters: string[];
+  place: string | null;
+  time: string | null;
+  target_chars: number | null;
+}
+
+/** 構成に対する 1 つの操作。 */
+export type StructureEdit =
+  | {
+      kind: "add_character";
+      /** ID（ファイル名）。null なら、読み（無ければ名前）からローマ字で決める。 */
+      id: string | null;
+      meta: CharacterMeta;
+      body: string;
+    }
+  | { kind: "remove_character"; id: string }
+  | {
+      kind: "add_world_document";
+      /** ファイル名（英小文字・数字・ハイフン。拡張子なし）。null なら題から決める。 */
+      name: string | null;
+      title: string;
+      body: string;
+    }
+  | { kind: "remove_world_document"; path: string }
+  | {
+      kind: "add_scene";
+      chapter: string;
+      /** このシーンの前に足す。null なら章の末尾。 */
+      before: string | null;
+      scene: NewScenePlan;
+    }
+  | { kind: "remove_scene"; chapter: string; scene: string };
+
+/** 人物の名前を挙げているシーン。 */
+export interface SceneReference {
+  chapter: string;
+  chapter_title: string;
+  scene: string;
+  scene_title: string;
+  /** 視点人物として挙げている。 */
+  as_pov: boolean;
+  /** 登場人物として挙げている。 */
+  as_character: boolean;
+}
+
+/** 構成の操作の変更案と、利用者に見せる材料。 */
+export interface StructurePlan {
+  /** 作る変更案。summary は適用する前に見せる説明（「人物「霧島 凛」を追加します。」）。 */
+  change_set: ChangeSet;
+  /** 適用したあとに利用者へ知らせる文（「人物「霧島 凛」を追加しました。」）。 */
+  completed_summary: string;
+  /** 適用したあとに開く文書。何も開かなければ null。 */
+  created: string | null;
+  /** 人物を消すとき、その人物の名前を挙げているシーン。 */
+  references: SceneReference[];
+  /** 利用者への注意書き。 */
+  notices: string[];
 }

@@ -1,0 +1,74 @@
+.structure-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.structure-dialog__lead {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-ink-soft);
+}
+
+.structure-dialog__hint {
+  margin: -6px 0 0;
+  font-size: 12px;
+  color: var(--color-ink-faint);
+}
+
+.structure-dialog__error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-error);
+}
+
+.structure-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.structure-dialog__section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.structure-dialog__section h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.structure-dialog__summary {
+  margin: 0;
+  font-size: 14px;
+  font-weight: bold;
+}
+
+.structure-dialog__emphasis {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  font-size: 13px;
+  font-weight: bold;
+}
+
+.structure-dialog__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding-left: 1.4em;
+  font-size: 13px;
+}
+
+.structure-dialog__notices {
+  color: var(--color-warning);
+}
+
+.structure-dialog__note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-ink-soft);
+}

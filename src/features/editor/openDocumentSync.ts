@@ -13,8 +13,13 @@ export async function flushIfOpen(backend: Backend, path: string): Promise<void>
 }
 
 interface WriteBesideEditorOptions<T> {
-  /** 書き換えるファイルに、パス `path` の文書が含まれるか。 */
+  /** 書き換えるファイルに、パス `path` の文書が含まれるか（ゴミ箱へ移すものも含む）。 */
   touches: (path: string) => boolean;
+  /**
+   * 書き換えで、パス `path` の文書がゴミ箱へ移るか。移るなら、読み直さずに文書を閉じて知らせる
+   * （移ったあとのファイルは読めないため）。
+   */
+  movesToTrash?: (path: string) => boolean;
   /** 実際の書き換え（変更案の適用・作品の設定の保存など）。 */
   write: () => Promise<T>;
   /** 開いている文書に保存できない編集が残っていて、書き換えを止めるときのエラー文。 */
@@ -32,11 +37,13 @@ interface WriteBesideEditorOptions<T> {
  *    競合になって、書き換えた内容を利用者が上書きで消しかねない。書き換えの間にエディタへ入力されていたら
  *    読み直さない（その編集の基準は古いハッシュのままなので、次の保存で競合として知らせる）。
  *
+ * 開いている文書がゴミ箱へ移ったときは、読み直さずに文書を閉じて、そのことを知らせる。
+ *
  * 読み直しに失敗しても、書き換えそのものは済んでいるので、失敗を知らせたうえで `write` の結果を返す。
  */
 export async function writeBesideEditor<T>(
   backend: Backend,
-  { touches, write, unsavedWorkMessage }: WriteBesideEditorOptions<T>,
+  { touches, movesToTrash, write, unsavedWorkMessage }: WriteBesideEditorOptions<T>,
 ): Promise<T> {
   await documentSaveController.flush(backend);
   const openPath = useWorkspaceStore.getState().currentPath;
@@ -45,8 +52,20 @@ export async function writeBesideEditor<T>(
   }
   const revisionBeforeWrite = useEditorStore.getState().revision;
   const result = await write();
+  const openPathAfterWrite = useWorkspaceStore.getState().currentPath;
+  if (openPathAfterWrite !== null && movesToTrash?.(openPathAfterWrite)) {
+    closeTrashedDocument(openPathAfterWrite);
+    return result;
+  }
   await reloadOpenDocumentIfUntouched(backend, touches, revisionBeforeWrite);
   return result;
+}
+
+/** ゴミ箱へ移った文書を、エディタから外す。残すと、次の保存が存在しないファイルへの競合になる。 */
+function closeTrashedDocument(path: string): void {
+  useEditorStore.getState().reset();
+  useWorkspaceStore.getState().clearCurrentDocument();
+  useUiStore.getState().showToast(`開いていた「${path}」はゴミ箱へ移したので、閉じました。`);
 }
 
 async function reloadOpenDocumentIfUntouched(

@@ -107,7 +107,7 @@ describe("人物資料", () => {
 
     expect(screen.getByText("保存済み")).toBeInTheDocument();
     expect((await readCharacter(backend)).document.meta.name).toBe("霧島 凛子");
-    expect(await screen.findByRole("button", { name: /霧島 凛子/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /^霧島 凛子/ })).toBeInTheDocument();
   });
 
   it("触らずに本文だけ直して保存すると、送る項目は読んだときと同じ（null も空文字にならない）", async () => {

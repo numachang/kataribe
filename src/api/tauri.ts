@@ -19,6 +19,8 @@ import type {
   ProjectSettingsFile,
   QualityReport,
   Segment,
+  StructureEdit,
+  StructurePlan,
   Task,
   TextStats,
 } from "./types";
@@ -160,5 +162,13 @@ export class TauriBackend implements Backend {
 
   async applyChangeSet(changeSet: ChangeSet): Promise<ProjectOverview> {
     return invokeCommand<ProjectOverview>("apply_change_set", { changeSet });
+  }
+
+  async planStructureEdit(edit: StructureEdit): Promise<StructurePlan> {
+    return invokeCommand<StructurePlan>("plan_structure_edit", { edit });
+  }
+
+  async suggestCharacterId(reading: string, name: string): Promise<string> {
+    return invokeCommand<string>("suggest_character_id", { reading, name });
   }
 }

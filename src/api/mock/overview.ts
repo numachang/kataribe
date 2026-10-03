@@ -9,8 +9,10 @@ import {
   SYNOPSIS_PATH,
   scenePath,
   WORLD_OVERVIEW_PATH,
+  worldDocumentPath,
 } from "./paths";
 import type { MockCharacter, MockScene, ProjectState } from "./state";
+import { worldDocumentTitle } from "./state";
 
 function charsOf(text: string | null): number {
   return text === null ? 0 : computeTextStats(text).chars;
@@ -23,8 +25,12 @@ function compareByOrder(left: MockCharacter, right: MockCharacter): number {
   return leftOrder - rightOrder || left.id.localeCompare(right.id);
 }
 
-function leaf(entry: Omit<OverviewEntry, "children">): OverviewEntry {
-  return { ...entry, children: [] };
+/** 章・シーンに属さない項目は、`chapter` と `scene` を省いてよい。 */
+type LeafEntry = Omit<OverviewEntry, "children" | "chapter" | "scene"> &
+  Partial<Pick<OverviewEntry, "chapter" | "scene">>;
+
+function leaf(entry: LeafEntry): OverviewEntry {
+  return { chapter: null, scene: null, ...entry, children: [] };
 }
 
 /** シーンの目標文字数。0 は目標なしとして扱う（Rust の overview と同じ）。 */
@@ -98,6 +104,17 @@ function buildWorldSection(state: ProjectState): OverviewSection {
         target_chars: null,
         error: null,
       }),
+      ...state.worldDocuments.map((document) =>
+        leaf({
+          path: worldDocumentPath(document.name),
+          label: worldDocumentTitle(document),
+          kind: "other",
+          exists: true,
+          chars: charsOf(document.content),
+          target_chars: null,
+          error: null,
+        }),
+      ),
     ],
   };
 }
@@ -167,6 +184,7 @@ function buildPlotSection(state: ProjectState): OverviewSection {
       path: chapterPath(chapter.id),
       label: chapter.title,
       kind: "chapter",
+      chapter: chapter.id,
       exists: true,
       chars: charsOf(chapter.storyline),
       target_chars: null,
@@ -200,6 +218,8 @@ function buildManuscriptSection(state: ProjectState): OverviewSection {
         path: null,
         label: chapter.title,
         kind: "chapter",
+        chapter: chapter.id,
+        scene: null,
         exists: true,
         chars: 0,
         target_chars: null,
@@ -222,6 +242,8 @@ function buildManuscriptSection(state: ProjectState): OverviewSection {
         path: scenePath(chapter.id, scene.id),
         label: scene.title,
         kind: "scene",
+        chapter: chapter.id,
+        scene: scene.id,
         exists: scene.draft !== null,
         chars: charsOf(scene.draft),
         target_chars: sceneTargetChars(scene),
@@ -232,6 +254,8 @@ function buildManuscriptSection(state: ProjectState): OverviewSection {
       path: null,
       label: chapter.title,
       kind: "chapter",
+      chapter: chapter.id,
+      scene: null,
       exists: true,
       chars: sceneEntries.reduce((sum, entry) => sum + entry.chars, 0),
       target_chars: chapterTargetChars(chapter.scenes),
