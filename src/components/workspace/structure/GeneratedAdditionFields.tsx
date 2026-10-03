@@ -10,6 +10,8 @@ interface GeneratedAdditionFieldsProps {
   instructionPlaceholder: string;
   /** 指示の欄の下に足す入力欄（世界観の資料のファイル名など）。 */
   children?: ReactNode;
+  /** `children` の入力に誤りが無いか。誤りがあれば始められない（誤りの理由は `children` 側が出す）。 */
+  areExtraFieldsValid?: boolean;
   addition: GeneratedAdditionApi;
   onStart: () => void;
   onCancel: () => void;
@@ -17,7 +19,8 @@ interface GeneratedAdditionFieldsProps {
 
 /**
  * 追加のダイアログで「AI に作らせる」を選んだときの入力欄と、生成を始めるボタン。
- * 指示は必須で、始められない理由（生成の途中など）があればボタンを押せなくして理由を添える。
+ * 指示は必須で、足した入力欄に誤りがあるときと、始められない理由（生成の途中など）があるときは、ボタンを押せなくする
+ * （後者は理由を添える）。生成を始めるとダイアログが閉じて書いた指示を失うので、誤りは始める前に知らせる。
  * 始められるのは「生成を始める」ボタンだけにする（入力欄の Enter では始めない。日本語入力の確定の Enter で始めてしまうため）。
  */
 export function GeneratedAdditionFields({
@@ -25,6 +28,7 @@ export function GeneratedAdditionFields({
   onInstructionChange,
   instructionPlaceholder,
   children,
+  areExtraFieldsValid = true,
   addition,
   onStart,
   onCancel,
@@ -55,7 +59,9 @@ export function GeneratedAdditionFields({
         submitLabel="生成を始める"
         submittingLabel="始めています…"
         isSubmitting={addition.isStarting}
-        canSubmit={instruction.trim() !== "" && addition.blockedReason === null}
+        canSubmit={
+          instruction.trim() !== "" && areExtraFieldsValid && addition.blockedReason === null
+        }
         errorMessage={addition.errorMessage}
         onSubmit={onStart}
         onCancel={onCancel}

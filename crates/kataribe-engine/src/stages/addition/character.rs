@@ -2,7 +2,7 @@
 //!
 //! 人物の ID は LLM に出させず、読みからローマ字で決める（利用者が自分で足すときと同じ）。
 
-use kataribe_project::{Character, CharacterMeta, layout};
+use kataribe_project::{Character, CharacterMeta, Project, layout};
 use minijinja::context;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -65,6 +65,8 @@ pub(in crate::stages) async fn add_character(
     let cast = stage.project.characters()?;
     let background = Background::gather(stage.project)?;
     let synopsis = document_body(stage.project, layout::SYNOPSIS)?;
+    // 人物を足すのに要らない読み込みは、LLM を待ったあとに失敗しないよう、先に済ませる
+    let outdated = outdated_documents(stage.project, &synopsis)?;
     // 項目と本文で、LLM を 2 回呼ぶ
     stage.caller.expect_steps(1);
 
@@ -91,7 +93,7 @@ pub(in crate::stages) async fn add_character(
         body,
     };
     let changes = plan_generated_addition(stage, &edit, &subject)?;
-    announce_outdated_documents(stage, &synopsis)?;
+    announce_outdated_documents(stage, &outdated);
     Ok(changes)
 }
 
@@ -143,7 +145,7 @@ fn entry_problems(entry: &NewCharacter, cast: &[Character]) -> Vec<String> {
     if entry.name.is_empty() {
         problems.push("人物の名前が空です。".to_owned());
     } else {
-        if entry.name.chars().any(|c| c.is_ascii_alphabetic()) {
+        if entry.name.chars().any(is_latin_letter) {
             problems.push(format!(
                 "人物の名前にローマ字が混ざっています（{}）。",
                 entry.name
@@ -169,13 +171,19 @@ fn entry_problems(entry: &NewCharacter, cast: &[Character]) -> Vec<String> {
     problems
 }
 
-/// 読みとして使える文字（かな・長音・「・」・空白）だけで書かれているか。空は使えない。
+/// 半角・全角どちらかのローマ字か。
+fn is_latin_letter(character: char) -> bool {
+    character.is_ascii_alphabetic() || matches!(character, 'Ａ'..='Ｚ' | 'ａ'..='ｚ')
+}
+
+/// 読みとして使える文字（かな・長音・「・」・半角か全角の空白）だけで書かれているか。空は使えない。
+///
+/// 改行やタブは読みに入れない（項目は 1 行の値で、ID を作るときにも邪魔になる）。
 fn is_kana_reading(reading: &str) -> bool {
     !reading.is_empty()
-        && reading.chars().all(|character| {
-            matches!(character, 'ぁ'..='ゖ' | 'ァ'..='ヺ' | 'ー' | '・')
-                || character.is_whitespace()
-        })
+        && reading.chars().all(
+            |character| matches!(character, 'ぁ'..='ゖ' | 'ァ'..='ヺ' | 'ー' | '・' | ' ' | '　'),
+        )
 }
 
 /// 人物資料の本文を書く。一覧には、いま足す人物も入れる（一覧のほかの人物との関係を書かせるため）。
@@ -205,32 +213,40 @@ async fn write_profile(
     write_document(stage, &label, &prompt, output_tokens).await
 }
 
-/// 作った人物が出てこない、生成済みの文書があれば知らせる（工程の印は付けず、注意書きだけにする）。
-fn announce_outdated_documents(stage: &Stage<'_>, synopsis: &str) -> Result<()> {
-    let chapters = stage.project.chapters()?;
-    let outdated: Vec<&str> = [
+/// 作った人物がまだ出てこない、生成済みの文書の呼び名。
+///
+/// 章立てが 1 つ壊れていても人物は足せるので、章は一覧（ファイルの中身を読まない）で数え、
+/// シーン構成は読める章立てだけで調べる。これは注意書きのための調べものなので、読めない章立ては飛ばす。
+fn outdated_documents(project: &Project, synopsis: &str) -> Result<Vec<&'static str>> {
+    let chapter_ids = project.chapter_ids()?;
+    let has_scenes = chapter_ids.iter().any(|id| {
+        matches!(
+            project.chapter(id),
+            Ok(Some(chapter)) if !chapter.meta.scenes.is_empty()
+        )
+    });
+    Ok([
         (!synopsis.is_empty(), "あらすじ"),
-        (!chapters.is_empty(), "章立て"),
-        (
-            chapters
-                .iter()
-                .any(|chapter| !chapter.meta.scenes.is_empty()),
-            "シーン構成",
-        ),
+        (!chapter_ids.is_empty(), "章立て"),
+        (has_scenes, "シーン構成"),
     ]
     .into_iter()
     .filter_map(|(exists, label)| exists.then_some(label))
-    .collect();
-    if !outdated.is_empty() {
-        announce(
-            stage,
-            format!(
-                "生成済みの{}には、この人物はまだ出てきません。必要なら、書き直すか作り直してください。",
-                outdated.join("・")
-            ),
-        );
+    .collect())
+}
+
+/// 作った人物が出てこない文書があれば知らせる（工程の印は付けず、注意書きだけにする）。
+fn announce_outdated_documents(stage: &Stage<'_>, outdated: &[&str]) {
+    if outdated.is_empty() {
+        return;
     }
-    Ok(())
+    announce(
+        stage,
+        format!(
+            "生成済みの{}には、この人物はまだ出てきません。必要なら、書き直すか作り直してください。",
+            outdated.join("・")
+        ),
+    );
 }
 
 #[cfg(test)]
@@ -295,13 +311,39 @@ mod tests {
     }
 
     #[test]
+    fn a_name_with_full_width_latin_letters_is_a_problem() {
+        for name in ["佐藤 Ｋｅｎｊｉ", "佐藤 ｋｅｎｊｉ"] {
+            let problems = entry_problems(&entry(name, "さとう けんじ"), &[]);
+            assert_eq!(problems.len(), 1, "{name}: {problems:?}");
+            assert!(problems[0].contains("ローマ字"), "{problems:?}");
+        }
+    }
+
+    #[test]
     fn a_reading_must_be_made_of_kana() {
-        for reading in ["さとう けんじ", "サトウ・ケンジ", "ゆうこ", "らーめん"]
-        {
+        for reading in [
+            "さとう けんじ",
+            "さとう　けんじ",
+            "サトウ・ケンジ",
+            "ゆうこ",
+            "らーめん",
+        ] {
             assert!(is_kana_reading(reading), "{reading}");
         }
         for reading in ["", "佐藤 健二", "sato kenji", "さとう Kenji"] {
             assert!(!is_kana_reading(reading), "{reading}");
+        }
+    }
+
+    #[test]
+    fn a_reading_with_a_line_break_or_tab_is_not_a_kana_reading() {
+        for reading in [
+            "さとう\nけんじ",
+            "さとう\r\nけんじ",
+            "さとう\tけんじ",
+            "さとう\u{a0}けんじ",
+        ] {
+            assert!(!is_kana_reading(reading), "{reading:?}");
         }
     }
 

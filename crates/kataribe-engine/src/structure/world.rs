@@ -144,12 +144,7 @@ mod tests {
         let path = RelPath::new(&format!("world/{name}.md")).unwrap();
         project
             .store()
-            .write_text(
-                &path,
-                "# 資料
-",
-                WriteOptions::default(),
-            )
+            .write_text(&path, "# 資料\n", WriteOptions::default())
             .unwrap();
         project
     }
@@ -160,17 +155,7 @@ mod tests {
         let project = project_with_world_document(folder.path(), "glossary");
 
         assert_eq!(check_name(&project, None).unwrap(), None);
-        assert_eq!(
-            check_name(
-                &project,
-                Some(
-                    " 
-"
-                )
-            )
-            .unwrap(),
-            None
-        );
+        assert_eq!(check_name(&project, Some(" \n")).unwrap(), None);
     }
 
     #[test]

@@ -34,9 +34,22 @@ async function openAddDialog(user: User, buttonName: string, dialogTitle: string
   return screen.findByRole("dialog", { name: dialogTitle });
 }
 
+const FILE_NAME_LABEL = "ファイル名（英数字。空欄なら自動）";
+
 const openAddCharacterDialog = (user: User) => openAddDialog(user, "人物を追加", "人物を追加");
 const openAddWorldDocumentDialog = (user: User) =>
   openAddDialog(user, "資料を追加", "世界観の資料を追加");
+
+/** 画面を通さずに、世界観の資料を足す。足したあとの目次を返す。 */
+async function addWorldDocumentBehindTheScenes(inner: Backend, name: string) {
+  const plan = await inner.planStructureEdit({
+    kind: "add_world_document",
+    name,
+    title: "地名",
+    body: "",
+  });
+  return inner.applyChangeSet(plan.change_set);
+}
 
 async function chooseGenerated(user: User, dialog: HTMLElement) {
   await user.click(within(dialog).getByRole("radio", { name: "AI に作らせる" }));
@@ -207,20 +220,89 @@ describe("世界観の資料を AI に作らせる", () => {
     });
   });
 
-  it("使えない名前なら、AI パネルに失敗が出て、ダイアログは閉じている", async () => {
+  it("前後の空白を除いたファイル名で始まる", async () => {
     const user = userEvent.setup();
-    await renderWorkspace(createMockBackend({ delayMs: 0 }));
+    const { backend, generate } = recordingGenerate(createMockBackend({ delayMs: 0 }));
+    await renderWorkspace(backend);
     const dialog = await openAddWorldDocumentDialog(user);
     await chooseGenerated(user, dialog);
-    await user.type(
-      within(dialog).getByRole("textbox", { name: "ファイル名（英数字。空欄なら自動）" }),
-      "overview",
-    );
+    await user.type(within(dialog).getByRole("textbox", { name: FILE_NAME_LABEL }), " weather ");
     await user.type(within(dialog).getByRole("textbox", { name: "指示" }), "天気の言い伝え");
+
+    await user.click(within(dialog).getByRole("button", { name: "生成を始める" }));
+
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+    expect(generatedTasks(generate)[0]).toMatchObject({ name: "weather" });
+  });
+
+  it.each([
+    ["大文字を含む名前", "Port Town", "大文字は使えません。"],
+    ["概要の名前", "overview", "「overview」は世界観の概要の名前なので使えません。"],
+    ["Windows の予約名", "con", "Windows が予約している名前なので使えません。"],
+  ])(
+    "%sなら、ダイアログを開いたまま理由を出して、始められない（指示は残る）",
+    async (_, name, reason) => {
+      const user = userEvent.setup();
+      const { backend, generate } = recordingGenerate(createMockBackend({ delayMs: 0 }));
+      await renderWorkspace(backend);
+      const dialog = await openAddWorldDocumentDialog(user);
+      await chooseGenerated(user, dialog);
+      await user.type(within(dialog).getByRole("textbox", { name: "指示" }), "天気の言い伝え");
+
+      await user.type(within(dialog).getByRole("textbox", { name: FILE_NAME_LABEL }), name);
+
+      expect(
+        within(dialog).getByText(new RegExp(`ファイル名「${name}」は使えません。.*${reason}`)),
+      ).toBeInTheDocument();
+      expect(within(dialog).getByRole("textbox", { name: FILE_NAME_LABEL })).toBeInvalid();
+      expect(within(dialog).getByRole("button", { name: "生成を始める" })).toBeDisabled();
+      expect(within(dialog).getByRole("textbox", { name: "指示" })).toHaveValue("天気の言い伝え");
+      expect(generate).not.toHaveBeenCalled();
+    },
+  );
+
+  it("すでにある資料の名前なら、理由を出して始められず、直すと始められる", async () => {
+    const user = userEvent.setup();
+    const inner = createMockBackend({ delayMs: 0 });
+    const { backend, generate } = recordingGenerate(inner);
+    await renderWorkspace(backend);
+    const overview = await addWorldDocumentBehindTheScenes(inner, "places");
+    act(() => useWorkspaceStore.getState().setOverview(overview));
+    const dialog = await openAddWorldDocumentDialog(user);
+    await chooseGenerated(user, dialog);
+    await user.type(within(dialog).getByRole("textbox", { name: "指示" }), "地名の由来");
+    const nameField = within(dialog).getByRole("textbox", { name: FILE_NAME_LABEL });
+
+    await user.type(nameField, "places");
+
+    expect(
+      within(dialog).getByText("ファイル名「places」は使えません。すでにある資料の名前です。"),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "生成を始める" })).toBeDisabled();
+
+    await user.clear(nameField);
+    await user.type(nameField, "places-2");
+
+    expect(within(dialog).getByRole("button", { name: "生成を始める" })).toBeEnabled();
+    expect(within(dialog).queryByText(/は使えません/)).not.toBeInTheDocument();
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("目次が古くて見逃した名前は、本物の確認が断り、AI パネルに失敗が出る", async () => {
+    const user = userEvent.setup();
+    const inner = createMockBackend({ delayMs: 0 });
+    await renderWorkspace(inner);
+    // 画面の目次に載らないまま、同じ名前の資料ができた状態にする
+    await addWorldDocumentBehindTheScenes(inner, "places");
+    const dialog = await openAddWorldDocumentDialog(user);
+    await chooseGenerated(user, dialog);
+    await user.type(within(dialog).getByRole("textbox", { name: FILE_NAME_LABEL }), "places");
+    await user.type(within(dialog).getByRole("textbox", { name: "指示" }), "地名の由来");
+
     await user.click(within(dialog).getByRole("button", { name: "生成を始める" }));
 
     expect(await screen.findByText("生成に失敗しました")).toBeInTheDocument();
-    expect(screen.getByText(/ファイル名「overview」は使えません/)).toBeInTheDocument();
+    expect(screen.getByText(/ファイル名「places」はもう使われています/)).toBeInTheDocument();
   });
 });
 

@@ -48,10 +48,10 @@ pub(in crate::stages) async fn add_world_document(
     )?;
     let output_tokens = stage.output_tokens(&prompt, DOCUMENT_OUTPUT_TOKENS)?;
     let written = write_checked_document(stage, DOCUMENT_LABEL, &prompt, output_tokens, |text| {
-        split_title(text).err()
+        split_title(text, &existing_titles).err()
     })
     .await?;
-    let document = split_title(&written).map_err(EngineError::InvalidOutput)?;
+    let document = split_title(&written, &existing_titles).map_err(EngineError::InvalidOutput)?;
 
     let subject = format!("世界観の資料「{}」", document.title);
     let edit = StructureEdit::AddWorldDocument {
@@ -76,8 +76,13 @@ struct TitledDocument {
 }
 
 /// 資料の先頭の行（`# 題`）を題として取り出し、残りを本文にする。
-/// 題が無い（先頭が見出しでない・節の見出し `##` だった・題が空）ときは、その理由を返す。
-fn split_title(text: &str) -> std::result::Result<TitledDocument, String> {
+///
+/// 作り直す理由になるときは、その説明を返す。題が無い（先頭が見出しでない・節の見出し `##` だった・題が空）、
+/// 本文が空、題が `existing_titles` のどれかと同じ（目次に同じ名前が 2 つ並んでしまう）のどれか。
+fn split_title(
+    text: &str,
+    existing_titles: &[String],
+) -> std::result::Result<TitledDocument, String> {
     let text = text.trim_start();
     let (first_line, rest) = text.split_once('\n').unwrap_or((text, ""));
     let title = first_line
@@ -87,9 +92,19 @@ fn split_title(text: &str) -> std::result::Result<TitledDocument, String> {
         .map(str::trim)
         .filter(|title| !title.is_empty())
         .ok_or_else(|| "1 行目が「# 題」の形になっていません。".to_owned())?;
+    let body = rest.trim();
+    if body.is_empty() {
+        return Err("題の下に本文がありません。".to_owned());
+    }
+    if existing_titles
+        .iter()
+        .any(|existing| existing.trim() == title)
+    {
+        return Err(format!("すでにある資料と同じ題「{title}」です。"));
+    }
     Ok(TitledDocument {
         title: title.to_owned(),
-        body: rest.trim().to_owned(),
+        body: body.to_owned(),
     })
 }
 
@@ -100,7 +115,7 @@ mod tests {
     #[test]
     fn the_first_heading_becomes_the_title_and_the_rest_the_body() {
         let document =
-            split_title("\n# 港町の歴史\n\n## 成り立ち\n江戸の頃に開かれた。\n").unwrap();
+            split_title("\n# 港町の歴史\n\n## 成り立ち\n江戸の頃に開かれた。\n", &[]).unwrap();
         assert_eq!(
             document,
             TitledDocument {
@@ -111,10 +126,21 @@ mod tests {
     }
 
     #[test]
-    fn a_document_with_only_a_title_has_an_empty_body() {
-        let document = split_title("# 用語集").unwrap();
-        assert_eq!(document.title, "用語集");
-        assert_eq!(document.body, "");
+    fn a_document_with_only_a_title_is_refused_for_lack_of_a_body() {
+        for text in ["# 用語集", "# 用語集\n", "# 用語集\n\n  \n　\n"] {
+            let reason = split_title(text, &[]).unwrap_err();
+            assert!(reason.contains("本文"), "{text:?}: {reason}");
+        }
+    }
+
+    #[test]
+    fn a_title_that_an_existing_document_already_has_is_refused() {
+        let existing = ["世界観".to_owned(), "港町の歴史".to_owned()];
+
+        let reason = split_title("# 港町の歴史\n江戸の頃。", &existing).unwrap_err();
+
+        assert!(reason.contains("港町の歴史"), "{reason}");
+        assert!(split_title("# 港町の暮らし\n漁が盛ん。", &existing).is_ok());
     }
 
     #[test]
@@ -126,7 +152,7 @@ mod tests {
             "# \n本文",
             "",
         ] {
-            assert!(split_title(text).is_err(), "{text:?}");
+            assert!(split_title(text, &[]).is_err(), "{text:?}");
         }
     }
 }

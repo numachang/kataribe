@@ -501,6 +501,36 @@ async fn cancelling_a_character_generation_writes_nothing() {
     assert_eq!(project.character_ids().unwrap(), Vec::<CharacterId>::new());
 }
 
+const BROKEN_CHAPTER: &str = "---\ntitle: [壊れた\n---\n本文\n";
+
+#[tokio::test]
+async fn a_broken_chapter_does_not_stop_a_character_from_being_added() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path());
+    put(&project, "plot/chapters/01.md", BROKEN_CHAPTER);
+    let (engine, model) = engine_with(
+        [Script::reply([SATO_ENTRY]), Script::reply([SATO_PROFILE])],
+        0,
+    );
+    let events = RecordEvents::default();
+
+    let changes = engine
+        .generate(
+            &project,
+            &add_character(INSTRUCTION),
+            &events,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(only_new_file(&changes).0, "characters/sato-kenji.md");
+    assert_eq!(model.requests().len(), 2);
+    let notices = events.notices();
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert!(notices[0].1.contains("章立て"), "{notices:?}");
+}
+
 // ---- 世界観の資料 ----
 
 const PORT_TOWN: &str = "承知しました。\n# 港町の歴史\n\n## 成り立ち\n江戸の頃に開かれた漁港。\n";
@@ -648,6 +678,97 @@ async fn a_world_document_that_never_gets_a_heading_fails() {
 
     assert!(matches!(error, EngineError::InvalidOutput(_)), "{error:?}");
     assert_eq!(model.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn a_world_document_with_only_a_heading_is_generated_again() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path());
+    let (engine, model) = engine_with(
+        [
+            Script::reply(["# 港町の歴史\n"]),
+            Script::reply([PORT_TOWN]),
+        ],
+        1,
+    );
+
+    let changes = generate(
+        &engine,
+        &project,
+        &add_world_document(None, WORLD_INSTRUCTION),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(model.requests().len(), 2);
+    assert!(only_new_file(&changes).1.contains("江戸の頃"));
+}
+
+#[tokio::test]
+async fn a_world_document_that_stays_without_a_body_fails() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path());
+    let (engine, model) = engine_with(
+        [
+            Script::reply(["# 港町の歴史\n"]),
+            Script::reply(["# 港町の歴史\n\n"]),
+        ],
+        1,
+    );
+
+    let error = generate(
+        &engine,
+        &project,
+        &add_world_document(None, WORLD_INSTRUCTION),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(matches!(error, EngineError::InvalidOutput(_)), "{error:?}");
+    assert_eq!(model.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn a_world_document_with_the_title_of_an_existing_one_is_generated_again() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path());
+    put(&project, "world/port.md", "# 港町の歴史\n\n古い資料。\n");
+    let (engine, model) = engine_with(
+        [
+            Script::reply([PORT_TOWN]),
+            Script::reply(["# 港町の暮らし\n\n漁が盛ん。\n"]),
+        ],
+        1,
+    );
+
+    let changes = generate(
+        &engine,
+        &project,
+        &add_world_document(None, WORLD_INSTRUCTION),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(model.requests().len(), 2);
+    assert!(only_new_file(&changes).1.starts_with("# 港町の暮らし"));
+}
+
+#[tokio::test]
+async fn a_broken_chapter_does_not_stop_a_world_document_from_being_added() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path());
+    put(&project, "plot/chapters/01.md", BROKEN_CHAPTER);
+    let (engine, _model) = engine_with([Script::reply([PORT_TOWN])], 0);
+
+    let changes = generate(
+        &engine,
+        &project,
+        &add_world_document(None, WORLD_INSTRUCTION),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(only_new_file(&changes).0, "world/doc.md");
 }
 
 #[tokio::test]

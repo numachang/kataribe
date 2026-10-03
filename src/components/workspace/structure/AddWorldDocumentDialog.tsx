@@ -1,9 +1,13 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useGeneratedAddition } from "../../../features/structure/useGeneratedAddition";
 import { useStructureEdit } from "../../../features/structure/useStructureEdit";
 import { useSubmission } from "../../../features/structure/useSubmission";
+import {
+  useWorldDocumentNameField,
+  type WorldDocumentNameField,
+} from "../../../features/structure/useWorldDocumentNameField";
 import { Dialog } from "../../Dialog";
-import { OptionalTextField, TextAreaField, TextField } from "../document-form/formFields";
+import { TextAreaField, TextField } from "../document-form/formFields";
 import { type AdditionMode, AdditionModeSwitch } from "./AdditionModeSwitch";
 import { GeneratedAdditionFields } from "./GeneratedAdditionFields";
 import { SubmitActions } from "./SubmitActions";
@@ -25,12 +29,12 @@ export function AddWorldDocumentDialog({ onClose }: AddWorldDocumentDialogProps)
   const [mode, setMode] = useState<AdditionMode>("manual");
   const [instruction, setInstruction] = useState("");
   const [title, setTitle] = useState("");
-  const [name, setName] = useState<string | null>(null);
+  const nameField = useWorldDocumentNameField();
   const [body, setBody] = useState("");
 
   async function submit(): Promise<void> {
     const succeeded = await submission.run(() =>
-      structure.apply({ kind: "add_world_document", name, title, body }),
+      structure.apply({ kind: "add_world_document", name: nameField.nameToSend, title, body }),
     );
     if (succeeded) {
       onClose();
@@ -38,7 +42,11 @@ export function AddWorldDocumentDialog({ onClose }: AddWorldDocumentDialogProps)
   }
 
   function startGeneration(): void {
-    void addition.start({ kind: "add_world_document", name, instruction: instruction.trim() });
+    void addition.start({
+      kind: "add_world_document",
+      name: nameField.nameToSend,
+      instruction: instruction.trim(),
+    });
   }
 
   const isBusy = submission.isSubmitting || addition.isStarting;
@@ -52,22 +60,23 @@ export function AddWorldDocumentDialog({ onClose }: AddWorldDocumentDialogProps)
             instruction={instruction}
             onInstructionChange={setInstruction}
             instructionPlaceholder={INSTRUCTION_PLACEHOLDER}
+            areExtraFieldsValid={nameField.problem === null}
             addition={addition}
             onStart={startGeneration}
             onCancel={onClose}
           >
-            <FileNameField name={name} onChange={setName} />
+            <FileNameField field={nameField} />
           </GeneratedAdditionFields>
         ) : (
           <>
             <TextField label="題" value={title} onChange={setTitle} />
-            <FileNameField name={name} onChange={setName} />
+            <FileNameField field={nameField} />
             <TextAreaField label="本文" rows={10} value={body} onChange={setBody} />
             <SubmitActions
               submitLabel="追加"
               submittingLabel="追加しています…"
               isSubmitting={submission.isSubmitting}
-              canSubmit={title.trim() !== ""}
+              canSubmit={title.trim() !== "" && nameField.problem === null}
               errorMessage={submission.errorMessage}
               onSubmit={() => void submit()}
               onCancel={onClose}
@@ -80,22 +89,35 @@ export function AddWorldDocumentDialog({ onClose }: AddWorldDocumentDialogProps)
 }
 
 interface FileNameFieldProps {
-  name: string | null;
-  onChange: (name: string | null) => void;
+  field: WorldDocumentNameField;
 }
 
-/** 資料のファイル名の欄と、その説明。自分で書くときも AI に作らせるときも同じ（題は書かれる資料の先頭の見出し）。 */
-function FileNameField({ name, onChange }: FileNameFieldProps) {
+/**
+ * 資料のファイル名の欄と、その説明。自分で書くときも AI に作らせるときも同じ（題は書かれる資料の先頭の見出し）。
+ * 使えない名前なら、説明の代わりに理由を出す。
+ */
+function FileNameField({ field }: FileNameFieldProps) {
+  const noteElementId = useId();
   return (
     <>
-      <OptionalTextField
-        label="ファイル名（英数字。空欄なら自動）"
-        value={name}
-        onChange={onChange}
-      />
-      <p className="structure-dialog__hint">
-        world/ の下に、この名前の .md ファイルで保存します。空欄なら、題から自動で決めます。
-      </p>
+      <label className="app-field">
+        <span>ファイル名（英数字。空欄なら自動）</span>
+        <input
+          value={field.nameText}
+          aria-invalid={field.problem !== null}
+          aria-describedby={noteElementId}
+          onChange={(event) => field.changeName(event.target.value)}
+        />
+      </label>
+      {field.problem !== null ? (
+        <p id={noteElementId} className="structure-dialog__hint structure-dialog__hint--error">
+          ファイル名「{field.nameToSend}」は使えません。{field.problem}
+        </p>
+      ) : (
+        <p id={noteElementId} className="structure-dialog__hint">
+          world/ の下に、この名前の .md ファイルで保存します。空欄なら、題から自動で決めます。
+        </p>
+      )}
     </>
   );
 }

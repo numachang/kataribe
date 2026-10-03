@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  additionalWorldDocumentNameOfPath,
   characterIdOfPath,
   isAdditionalWorldDocumentPath,
   isCharacterDocumentPath,
@@ -46,5 +47,18 @@ describe("isAdditionalWorldDocumentPath", () => {
     expect(isAdditionalWorldDocumentPath("world/Overview.md")).toBe(false);
     expect(isAdditionalWorldDocumentPath("world/sub/x.md")).toBe(false);
     expect(isAdditionalWorldDocumentPath("concept.md")).toBe(false);
+  });
+});
+
+describe("additionalWorldDocumentNameOfPath", () => {
+  it("足した資料のパスから name を取り出す", () => {
+    expect(additionalWorldDocumentNameOfPath("world/glossary.md")).toBe("glossary");
+  });
+
+  it("概要・サブフォルダの下・ほかの場所は null", () => {
+    expect(additionalWorldDocumentNameOfPath("world/overview.md")).toBeNull();
+    expect(additionalWorldDocumentNameOfPath("world/Overview.md")).toBeNull();
+    expect(additionalWorldDocumentNameOfPath("world/sub/glossary.md")).toBeNull();
+    expect(additionalWorldDocumentNameOfPath("characters/glossary.md")).toBeNull();
   });
 });

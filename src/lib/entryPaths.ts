@@ -24,3 +24,11 @@ export function characterIdOfPath(path: string): string | null {
 export function isAdditionalWorldDocumentPath(path: string): boolean {
   return ADDITIONAL_WORLD_DOCUMENT_PATTERN.test(path) && path.toLowerCase() !== WORLD_OVERVIEW_PATH;
 }
+
+/** 利用者が足した世界観の資料のパス（`world/<name>.md`）の name。足した資料のパスでなければ null。 */
+export function additionalWorldDocumentNameOfPath(path: string): string | null {
+  if (!isAdditionalWorldDocumentPath(path)) {
+    return null;
+  }
+  return path.slice("world/".length, -".md".length);
+}
