@@ -53,6 +53,20 @@
   overflow-y: auto;
 }
 
+.changeset-review__notice {
+  margin: 0;
+  padding: 8px 12px 0;
+  color: var(--color-warning);
+  font-size: 12px;
+}
+
+.changeset-review__comparison-note {
+  margin: 0;
+  padding: 8px 12px 0;
+  color: var(--color-ink-soft);
+  font-size: 12px;
+}
+
 .changeset-review__error {
   margin: 0;
   color: var(--color-error);

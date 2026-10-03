@@ -1,11 +1,10 @@
-import { useState } from "react";
 import { useGenerationSessionContext } from "../../../features/generation/GenerationSessionProvider";
 import "./ChangeSetReview.css";
+import { FileChangeCard } from "./change-review/FileChangeCard";
 
 /** 生成が終わったあとの変更案。ファイルごとに内容を見せ、適用するか破棄するか選ばせる。 */
 export function ChangeSetReview() {
   const session = useGenerationSessionContext();
-  const [showPreviousFor, setShowPreviousFor] = useState<Record<string, boolean>>({});
   const changeSet = session.changeSet;
 
   if (!changeSet) {
@@ -17,33 +16,9 @@ export function ChangeSetReview() {
       <p className="changeset-review__summary">{changeSet.summary}</p>
 
       <div className="changeset-review__files">
-        {changeSet.files.map((file) => {
-          const showingPrevious = showPreviousFor[file.path] ?? false;
-          return (
-            <div key={file.path} className="changeset-review__file">
-              <div className="changeset-review__file-header">
-                <span className="changeset-review__file-path">{file.path}</span>
-                {file.previous !== null && (
-                  <button
-                    type="button"
-                    className="app-button"
-                    onClick={() =>
-                      setShowPreviousFor((current) => ({
-                        ...current,
-                        [file.path]: !showingPrevious,
-                      }))
-                    }
-                  >
-                    {showingPrevious ? "変更後を見る" : "変更前を見る"}
-                  </button>
-                )}
-              </div>
-              <pre className="changeset-review__content">
-                {showingPrevious ? file.previous : file.content}
-              </pre>
-            </div>
-          );
-        })}
+        {changeSet.files.map((file) => (
+          <FileChangeCard key={file.path} file={file} />
+        ))}
       </div>
 
       {session.applyErrorMessage && (

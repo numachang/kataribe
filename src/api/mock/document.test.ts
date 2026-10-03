@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readMockDocument, writeMockDocument } from "./document";
+import { parseMockDocument, readMockDocument, writeMockDocument } from "./document";
 import { buildPipeline } from "./pipeline";
 import { PLACEHOLDER_CHARACTER_BODY, readMockFile } from "./render";
 import { createSampleProjectState, SAMPLE_PROJECT_FOLDER } from "./sampleProject";
@@ -234,5 +234,78 @@ describe("writeMockDocument", () => {
         body: "",
       }),
     ).toThrowError(expect.objectContaining({ kind: "invalid_input" }));
+  });
+});
+
+describe("parseMockDocument", () => {
+  const state = createSampleProjectState(SAMPLE_PROJECT_FOLDER);
+
+  function fileContent(path: string): string {
+    const content = readMockFile(state, path);
+    if (content === null) {
+      throw new Error(`サンプルの作品に「${path}」があるはず`);
+    }
+    return content;
+  }
+
+  it.each(["characters/kirishima-rin.md", "plot/chapters/01.md", "plot/chapters/02.md"])(
+    "「%s」を、読み込んだときと同じ項目と本文に分ける",
+    (path) => {
+      const parsed = parseMockDocument(path, fileContent(path));
+
+      expect(parsed).toEqual({ document: readMockDocument(state, path), parse_error: null });
+    },
+  );
+
+  it("front matter に無い人物の順番は null にする", () => {
+    const parsed = parseMockDocument("characters/rin.md", "---\nname: 凛\nrole: 探偵\n---\n本文\n");
+
+    expect(parsed.document).toMatchObject({
+      kind: "character",
+      meta: { name: "凛", role: "探偵", order: null },
+      body: "本文\n",
+    });
+  });
+
+  it("front matter の無い人物資料・章立ては、文字列のまま理由を添えて返す", () => {
+    const character = parseMockDocument("characters/rin.md", "本文だけ\n");
+    const chapter = parseMockDocument("plot/chapters/01.md", "本文だけ\n");
+
+    expect(character.document).toEqual({ kind: "text", content: "本文だけ\n" });
+    expect(character.parse_error).toContain("characters/rin.md");
+    expect(chapter.parse_error).toContain("plot/chapters/01.md");
+  });
+
+  it("必須の項目（人物の name、章の title）が無い内容は、本物と同じく文字列のまま理由を添えて返す", () => {
+    const character = parseMockDocument("characters/rin.md", "---\nrole: 探偵\n---\n本文\n");
+    const chapter = parseMockDocument("plot/chapters/01.md", "---\nscenes:\n---\n本文\n");
+
+    expect(character.document).toEqual({ kind: "text", content: "---\nrole: 探偵\n---\n本文\n" });
+    expect(character.parse_error).toContain("「name」");
+    expect(chapter.document).toEqual({ kind: "text", content: "---\nscenes:\n---\n本文\n" });
+    expect(chapter.parse_error).toContain("「title」");
+  });
+
+  it.each(["", PLACEHOLDER_CHARACTER_BODY])("人物の本文「%s」を、書かれたまま返す", (body) => {
+    const parsed = parseMockDocument("characters/rin.md", `---\nname: 凛\n---\n${body}`);
+
+    expect(parsed.document).toMatchObject({ kind: "character", body });
+  });
+
+  it("シーンの id が重複した章立ては、文字列のまま理由を添えて返す", () => {
+    const content = fileContent("plot/chapters/01.md").replace("id: s02", "id: s01");
+
+    const parsed = parseMockDocument("plot/chapters/01.md", content);
+
+    expect(parsed.document).toEqual({ kind: "text", content });
+    expect(parsed.parse_error).toContain("「s01」");
+    expect(parsed.parse_error).toContain("重複");
+  });
+
+  it("人物資料・章立て以外のパスは、理由なしで文字列のまま返す", () => {
+    expect(parseMockDocument("concept.md", "---\nname: 凛\n---\n")).toEqual({
+      document: { kind: "text", content: "---\nname: 凛\n---\n" },
+      parse_error: null,
+    });
   });
 });

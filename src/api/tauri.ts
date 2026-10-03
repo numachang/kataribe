@@ -12,6 +12,7 @@ import type {
   LlmSettings,
   ModelInfo,
   NewProject,
+  ParsedDocument,
   PipelineStep,
   ProjectOverview,
   ProjectSettings,
@@ -125,6 +126,10 @@ export class TauriBackend implements Backend {
     expectedHash: string | null,
   ): Promise<string> {
     return invokeCommand<string>("write_document", { path, document, expectedHash });
+  }
+
+  async parseDocument(path: string, content: string): Promise<ParsedDocument> {
+    return invokeCommand<ParsedDocument>("parse_document", { path, content });
   }
 
   async textStats(text: string): Promise<TextStats> {

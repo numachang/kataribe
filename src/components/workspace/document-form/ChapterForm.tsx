@@ -1,4 +1,5 @@
 import type { ChapterMeta, ScenePlan } from "../../../api/types";
+import { CHAPTER_FIELD_LABELS, SCENES_HEADING } from "./fieldLabels";
 import { TextField } from "./formFields";
 import { SceneCard } from "./SceneCard";
 
@@ -22,13 +23,13 @@ export function ChapterForm({ meta, onChange }: ChapterFormProps) {
   return (
     <div className="document-form">
       <TextField
-        label="章題"
+        label={CHAPTER_FIELD_LABELS.title}
         value={meta.title}
         onChange={(title) => onChange({ ...meta, title })}
       />
       {scenes.length > 0 && (
         <div className="document-form__scenes">
-          <p className="document-form__heading">シーン</p>
+          <p className="document-form__heading">{SCENES_HEADING}</p>
           {scenes.map((scene, index) => (
             <SceneCard
               // biome-ignore lint/suspicious/noArrayIndexKey: 手で書いた章立てには同じ id のシーンが並びうる。ここではシーンを並べ替えないので、位置が安定した識別子になる

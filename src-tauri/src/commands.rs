@@ -12,7 +12,7 @@ use kataribe_engine::{
     ProjectOverview, ProjectSettings, Task,
 };
 use kataribe_llm::ModelInfo;
-use kataribe_project::EditableDocument;
+use kataribe_project::{EditableDocument, ParsedDocument};
 use kataribe_text::count::TextStats;
 use kataribe_text::quality::{QualityOptions, QualityReport};
 use kataribe_text::ruby::Segment;
@@ -180,6 +180,13 @@ pub async fn write_document(
 ) -> Result<String, CommandError> {
     let project = state.require_project()?;
     files::write_document(&project, &path, &document, expected_hash.as_deref())
+}
+
+/// 文字列を、パスの種類に応じて画面で編集する形に分ける。作品を開いていなくても使える。
+#[tauri::command(async)]
+#[allow(clippy::needless_pass_by_value)]
+pub fn parse_document(path: String, content: String) -> Result<ParsedDocument, CommandError> {
+    files::parse_document(&path, &content)
 }
 
 // ---- テキスト ----

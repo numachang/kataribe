@@ -1,4 +1,5 @@
 import type { CharacterMeta } from "../../../api/types";
+import { CHARACTER_FIELD_LABELS } from "./fieldLabels";
 import { IntegerField, OptionalTextField, TextAreaField, TextField } from "./formFields";
 
 interface CharacterFormProps {
@@ -12,30 +13,30 @@ export function CharacterForm({ meta, onChange }: CharacterFormProps) {
     <div className="document-form">
       <div className="document-form__row">
         <TextField
-          label="名前"
+          label={CHARACTER_FIELD_LABELS.name}
           value={meta.name}
           onChange={(name) => onChange({ ...meta, name })}
         />
         <OptionalTextField
-          label="読み"
+          label={CHARACTER_FIELD_LABELS.reading}
           value={meta.reading}
           onChange={(reading) => onChange({ ...meta, reading })}
         />
       </div>
       <div className="document-form__row">
         <TextField
-          label="役割"
+          label={CHARACTER_FIELD_LABELS.role}
           value={meta.role}
           onChange={(role) => onChange({ ...meta, role })}
         />
         <IntegerField
-          label="順番"
+          label={CHARACTER_FIELD_LABELS.order}
           value={meta.order}
           onChange={(order) => onChange({ ...meta, order })}
         />
       </div>
       <TextAreaField
-        label="概要"
+        label={CHARACTER_FIELD_LABELS.summary}
         value={meta.summary}
         onChange={(summary) => onChange({ ...meta, summary })}
       />

@@ -19,6 +19,19 @@ export function scenePath(chapterId: string, sceneId: string): string {
   return `manuscript/${chapterId}/${sceneId}.txt`;
 }
 
+const DRIVE_PREFIX_PATTERN = /^[A-Za-z]:/;
+
+/**
+ * 作品フォルダ内の相対パスとして成り立つか。`RelPath::new` のうち、絶対パス・ドライブ指定・`\`・
+ * `.` / `..` / 空の区間を拒む部分だけを再現する（偽実装が作品の外を指すパスを受け付けないため）。
+ */
+export function isProjectRelativePath(path: string): boolean {
+  if (path === "" || path.includes("\\") || DRIVE_PREFIX_PATTERN.test(path)) {
+    return false;
+  }
+  return path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
+}
+
 // Windows が予約しているファイル名（kataribe-project の `RESERVED_STEMS` と同じ）。
 const WINDOWS_RESERVED_NAMES = new Set([
   "con",
