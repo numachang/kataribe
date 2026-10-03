@@ -1,6 +1,6 @@
-//! 作品フォルダ内の文書の読み書き。`read_document` / `write_document` コマンドの中身。
+//! 作品フォルダ内の文書の読み書きと分解。`read_document` / `write_document` / `parse_document` コマンドの中身。
 
-use kataribe_project::{ContentHash, EditableDocument, Project, RelPath};
+use kataribe_project::{ContentHash, EditableDocument, ParsedDocument, Project, RelPath};
 
 use crate::error::{CommandError, CommandErrorKind};
 use crate::hashed_file::DocumentFile;
@@ -13,6 +13,15 @@ pub fn read_document(project: &Project, path: &str) -> Result<DocumentFile, Comm
     let path = RelPath::new(path)?;
     let file = project.read_document(&path)?;
     Ok(DocumentFile::from(file))
+}
+
+/// 文字列を、`path` の種類に応じて画面で編集する形に分ける。作品もファイルも使わない。
+///
+/// 生成した変更案のように、まだ書いていない内容を [`read_document`] と同じ分け方で見せるために使う。
+/// パスが作品内の相対パスとして不正なら `invalid_input`。
+pub fn parse_document(path: &str, content: &str) -> Result<ParsedDocument, CommandError> {
+    let path = RelPath::new(path)?;
+    Ok(kataribe_project::parse_document(&path, content))
 }
 
 /// 画面で編集した文書を書き込み、新しい内容のハッシュを返す。
@@ -131,6 +140,39 @@ mod tests {
         );
         let reason = file.parse_error.expect("解釈できなかった理由が付くはず");
         assert!(reason.contains("characters/rin.md"), "reason: {reason}");
+    }
+
+    #[test]
+    fn parse_document_splits_a_character_without_a_project() {
+        let parsed = parse_document("characters/rin.md", CHARACTER_TEXT).unwrap();
+
+        let EditableDocument::Character { meta, body } = parsed.document else {
+            panic!("人物資料として分けられるはず");
+        };
+        assert_eq!(meta.name, "霧島 凛");
+        assert_eq!(body, "古い本文\n");
+        assert_eq!(parsed.parse_error, None);
+    }
+
+    #[test]
+    fn parse_document_returns_broken_yaml_as_text_with_the_reason() {
+        let parsed = parse_document("characters/rin.md", "---\nname: [\n---\n").unwrap();
+
+        assert_eq!(
+            parsed.document,
+            EditableDocument::Text {
+                content: "---\nname: [\n---\n".to_owned()
+            }
+        );
+        let reason = parsed.parse_error.expect("解釈できなかった理由が付くはず");
+        assert!(reason.contains("characters/rin.md"), "reason: {reason}");
+    }
+
+    #[test]
+    fn parse_document_rejects_an_invalid_path_as_invalid_input() {
+        let error = parse_document("../characters/rin.md", CHARACTER_TEXT).unwrap_err();
+
+        assert_eq!(error.kind, CommandErrorKind::InvalidInput);
     }
 
     #[test]

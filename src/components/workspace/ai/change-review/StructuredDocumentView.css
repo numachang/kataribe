@@ -1,0 +1,140 @@
+.structured-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  max-height: 420px;
+  overflow-y: auto;
+  font-size: 13px;
+}
+
+.structured-view__heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  font-weight: normal;
+  color: var(--color-ink-soft);
+}
+
+.structured-view__scenes,
+.structured-view__body-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.structured-view__body {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: var(--font-mincho);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.field-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+}
+
+.field-list__item {
+  display: flex;
+  gap: 10px;
+  padding: 2px 6px;
+  border-left: 3px solid transparent;
+}
+
+.field-list__item--changed {
+  border-left-color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+}
+
+.field-list__label {
+  flex: 0 0 6.5em;
+  color: var(--color-ink-soft);
+}
+
+.field-list__value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.field-list__empty {
+  color: var(--color-ink-faint);
+}
+
+.field-list__extra {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.field-list__extra-heading {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--color-ink-soft);
+}
+
+.field-list__beats {
+  margin: 0;
+  padding-left: 1.6em;
+}
+
+.scene-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+}
+
+.scene-section--removed {
+  border-style: dashed;
+  color: var(--color-ink-soft);
+}
+
+.scene-section__heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.change-mark {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.change-mark--changed {
+  color: var(--color-warning);
+}
+
+.change-mark--added {
+  color: var(--color-success);
+}
+
+.change-mark--removed {
+  color: var(--color-error);
+}
+
+.change-mark--moved {
+  color: var(--color-focus);
+}

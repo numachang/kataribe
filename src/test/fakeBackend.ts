@@ -29,6 +29,7 @@ export function createStubBackend(overrides: Partial<Backend> = {}): Backend {
     pipeline: notImplemented("pipeline"),
     readDocument: notImplemented("readDocument"),
     writeDocument: notImplemented("writeDocument"),
+    parseDocument: notImplemented("parseDocument"),
     textStats: notImplemented("textStats"),
     parseRuby: notImplemented("parseRuby"),
     analyzeQuality: notImplemented("analyzeQuality"),

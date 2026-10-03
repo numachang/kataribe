@@ -8,6 +8,7 @@ import type {
   LlmSettings,
   ModelInfo,
   NewProject,
+  ParsedDocument,
   PipelineStep,
   ProjectOverview,
   ProjectSettings,
@@ -69,6 +70,13 @@ export interface Backend {
     document: EditableDocument,
     expectedHash: string | null,
   ): Promise<string>;
+
+  /**
+   * 文字列を、パスの種類に応じて画面で編集する形に分ける。作品もファイルも使わない。
+   * 生成した変更案のように、まだ書いていない内容を readDocument と同じ分け方で見せるために使う。
+   * 解釈できない人物資料・章立ては文字列のまま返し、理由を parse_error に入れる。パスが不正なら kind = "invalid_input" で失敗する。
+   */
+  parseDocument(path: string, content: string): Promise<ParsedDocument>;
 
   // テキスト
   textStats(text: string): Promise<TextStats>;

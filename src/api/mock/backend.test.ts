@@ -278,6 +278,31 @@ describe("createMockBackend / 文書の読み書きと競合", () => {
   });
 });
 
+describe("createMockBackend / parseDocument", () => {
+  it("作品を開いていなくても、人物資料を項目と本文に分けられる", async () => {
+    const backend = createMockBackend({ delayMs: 0 });
+
+    const parsed = await backend.parseDocument(
+      "characters/rin.md",
+      "---\nname: 霧島 凛\nrole: 主人公\n---\n本文\n",
+    );
+
+    expect(parsed.parse_error).toBeNull();
+    expect(parsed.document).toMatchObject({ kind: "character", meta: { name: "霧島 凛" } });
+  });
+
+  it.each(["../characters/rin.md", "/characters/rin.md", "C:/rin.md", "characters\\rin.md", ""])(
+    "作品内の相対パスでない「%s」は invalid_input で失敗する",
+    async (path) => {
+      const backend = createMockBackend({ delayMs: 0 });
+
+      await expect(backend.parseDocument(path, "内容")).rejects.toMatchObject({
+        kind: "invalid_input",
+      });
+    },
+  );
+});
+
 describe("createMockBackend / 生成", () => {
   it("企画を生成すると ChangeSet が返り、適用すると目次に反映される", async () => {
     const backend = createMockBackend({

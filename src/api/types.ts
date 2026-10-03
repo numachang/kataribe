@@ -123,6 +123,12 @@ export interface DocumentFile {
   parse_error: string | null;
 }
 
+/** 文字列を、画面で編集する形に分けた結果。`parse_error` は `DocumentFile` と同じ意味。 */
+export interface ParsedDocument {
+  document: EditableDocument;
+  parse_error: string | null;
+}
+
 // ---- テキスト ----
 
 export interface TextStats {

@@ -27,6 +27,7 @@ import type { ModelInfo as GeneratedModelInfo } from "../bindings/ModelInfo";
 import type { NewProject as GeneratedNewProject } from "../bindings/NewProject";
 import type { OverviewEntry as GeneratedOverviewEntry } from "../bindings/OverviewEntry";
 import type { OverviewSection as GeneratedOverviewSection } from "../bindings/OverviewSection";
+import type { ParsedDocument as GeneratedParsedDocument } from "../bindings/ParsedDocument";
 import type { PipelineStep as GeneratedPipelineStep } from "../bindings/PipelineStep";
 import type { ProjectOverview as GeneratedProjectOverview } from "../bindings/ProjectOverview";
 import type { ProjectSettings as GeneratedProjectSettings } from "../bindings/ProjectSettings";
@@ -66,6 +67,7 @@ export type BindingsContract = [
   Expect<Equal<Api.ChapterMeta, GeneratedChapterMeta>>,
   Expect<Equal<Api.EditableDocument, GeneratedEditableDocument>>,
   Expect<Equal<Api.DocumentFile, GeneratedDocumentFile>>,
+  Expect<Equal<Api.ParsedDocument, GeneratedParsedDocument>>,
   Expect<Equal<Api.TextStats, GeneratedTextStats>>,
   Expect<Equal<Api.Segment, GeneratedSegment>>,
   Expect<Equal<Api.Severity, GeneratedSeverity>>,

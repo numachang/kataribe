@@ -205,7 +205,7 @@ pub async fn collect(stream, on_event) -> Result<Completion, LlmError>;   // 全
 | `frontmatter` | `Document<M> { meta, body }`、`parse`、`render`、`replace_body(text, body)` | YAML front matter の分解・合成（未知の項目を保持）。`replace_body` は front matter を書かれたまま残して本文だけを差し替える |
 | `layout` | パス定数と `character_path(id)` などの関数、`document_kind(&RelPath) -> DocumentKind` | §2 のフォルダ構成の唯一の定義。`document_kind` は `characters/<有効な id>.md` を人物資料、`plot/chapters/<有効な NN>.md` を章立て、それ以外（サブフォルダの下・id として無効な名前・ほかのファイル）を「その他」と判定する。`Project::characters` / `chapters` が拾うファイルと同じ条件 |
 | `model` | `Manifest`・`Rating`・`MarkdownDoc`・`Character`/`CharacterMeta`・`Chapter`/`ChapterMeta`・`ScenePlan`・`ChapterId`・`SceneId`・`CharacterId` | 各ファイルの型。`render()` でファイル内容を生成 |
-| （crate 直下） | `EditableDocument`、`LoadedDocument { document, hash, parse_error }` | 画面で編集する文書と、読み込んだ結果。人物資料と章立ては front matter を項目に分け、それ以外は文字列のまま扱う。実装は非公開の `document` モジュールにあり、型を `lib.rs` から公開している（`Project::read_document` / `write_document` から使う） |
+| （crate 直下） | `EditableDocument`、`LoadedDocument { document, hash, parse_error }`、`ParsedDocument { document, parse_error }`、`parse_document(&RelPath, &str) -> ParsedDocument` | 画面で編集する文書と、読み込んだ結果。人物資料と章立ては front matter を項目に分け、それ以外は文字列のまま扱う。実装は非公開の `document` モジュールにあり、型と関数を `lib.rs` から公開している（`Project::read_document` / `write_document` から使う） |
 | `project` | `Project` | 作品の作成・読み込み・型付きの取得。`update_manifest` で作品情報（`kataribe.yaml`）を書き換える。`read_document` / `write_document` で画面で編集する文書を読み書きする |
 
 - `ProjectStore::write_text(path, content, WriteOptions { condition, backup })`
@@ -226,6 +226,11 @@ pub async fn collect(stream, on_event) -> Result<Completion, LlmError>;   // 全
   「シーンの id「s01」が重複しているため…」という理由を `parse_error` に入れて `Text { content }` で返す。
   利用者が `id` を直して文字列のまま保存し、開き直せばフォームで開ける。それ以外のパスは `Text { content }`。
   `hash` は正規化したファイル全体のハッシュで、`read_text` と同じもの。
+- `parse_document(path, content) -> ParsedDocument` は、ファイルを読まずに文字列を同じ分け方で項目に分ける
+  （`read_document` の中身もこの関数）。`path` は種類（人物資料・章立て・それ以外）を決めるためだけに使い、
+  ファイルの有無は問わない。解釈できない・シーンの `id` が重複しているときは `Text { content }` と理由、
+  それ以外のパスは理由なしの `Text { content }`。生成した変更案のように、まだ書いていない内容を画面で見せるために公開している。
+  `content` は BOM と CRLF を正規化済みのものを渡す。
 - `Project::write_document(path, &EditableDocument, expected) -> ContentHash` の `expected` は `write_text` の条件に対応する
   （`Some` なら今のハッシュと一致するときだけ、`None` なら新規作成だけ。違えば `Conflict`）。バックアップは `Throttled`。
   - `Text` はパスの種類を問わずそのまま書く（YAML が壊れた人物資料を文字列のまま直せるように）。
@@ -385,11 +390,34 @@ Gemma には前者だけ、Qwen には後者だけが効き、両方を指定す
   id は本物と同じ規則で判定し（人物は小文字の英数字とハイフンの slug、章は 2〜3 桁の数字）、合わないパスに保存すると
   `invalid_input` にする。人物の本文は保存したまま読み直せる（空にしても空のまま。生成していないときのプレースホルダー
   の文は、本文として保存しない）。ただし項目の「無い」と空文字は区別せず、空文字は `null` で返す（本物の `reading: ""`
-  との違い）。
+  との違い）。`parseDocument` も、作品を開かずに、偽の front matter の書式（`render.ts` が作るもの）から同じ形に分ける
+  （ビートと、アプリが知らない項目は書式に無いので分けられない）。本物と同じく、front matter が無い、または必須の項目
+  （人物の `name`、章の `title`。id では補わない）が無い人物資料・章立ては、`text` のまま `parse_error` を添えて返し、
+  本文は書かれたまま（空やプレースホルダーの文も、そのまま）返す。
 - 中央のエディタは、文書の種類（`EditableDocument.kind`）で出し分ける。人物資料・章立ては、本文の上に front matter の
   項目のフォームを置き、本文（章はストーリーライン）の欄だけを縦書き・横書きの切り替えの対象にする。
   文字数・品質チェック・ルビのプレビューも本文だけを対象にする。項目に分けない文書（`text`）と、YAML を解釈できず
   文字列で開いた人物資料・章立てはファイル全体を 1 つの欄で編集し、後者には理由を添える。
+- AI パネルの変更案は、ファイルごとに内容を見せる。人物資料・章立ての変更案は、YAML を画面で解釈せず、
+  `parse_document`（§3.3）で分けた結果を、読むだけの項目の一覧と本文で見せる（入力欄にはしない。項目名はフォームと
+  共有の定数 `document-form/fieldLabels.ts`。章立てのシーンはシーンごとのまとまり）。
+  アプリが知らない項目（利用者が足した項目。Rust の `extra`。JSON の meta 直下に載って届く）は、人物・章・シーンごとに
+  「その他の項目」としてキー名と値（文字列以外は JSON）で見せる。書き直しの工程は人物資料・章立ての全文を LLM が
+  書き直すので、足した項目が落ちたり変わったりしたことに気付けるようにするため。
+  変更前（`previous`）が同じ種類の文書として分けられたときは、変わった項目と、変わった本文に「変更」の印を付ける。
+  比べる項目は両側の和集合で、片方にしか無い項目（変更後に消えたビート、落ちた知らない項目）は、無い側で「（なし）」として
+  見せて印を付ける。章立てのシーンは `id` で突き合わせ、変更前に無いシーンは「追加」、変更後に無いシーンは「削除」とする
+  （変更後を見ているときは、削除されたシーンを末尾に足す）。両方にあるシーンは、並びを保ったまま残る最長の列に入らない
+  ものに「順序変更」の印を付ける（1 つを移したときに、間のシーンまで動いたことにしない）。シーンは項目が変わっても
+  並びが変わっても印が付き、両方なら両方の印が付く。
+  「変更前を見る / 変更後を見る」で切り替えられ、変更前も同じ形で見せる（印は、もう一方との比較）。
+  印は色だけでなく文字でも伝える。変更前があるのに比べられないとき（相手が `text`・分けている途中・分解に失敗）は、
+  「変更前と比べられないため、印は付けていません」と一行添えて、印が無いことを「変更なし」と取り違えさせない
+  （分けている途中は、終われば消える）。
+  項目に分けない文書（`text`）と、分けられなかった文書（理由を添える）は、書かれたままの文字列で見せる。
+  分けている間と、`parse_document` の呼び出し自体が失敗したときも、同じく書かれたままの内容を見せる
+  （何も見えない時間を作らず、分けられないことで変更案を見失わない）。失敗は握りつぶさず、
+  「項目に分けられませんでした（理由）」と添える（IPC の失敗やコマンドの登録漏れに気付けるように）。
 - フォームは、利用者が触っていない項目を読んだままの値で送り返す（Rust が項目の変更を見分けて YAML を書き直すかを決めるため）。
   編集中の文書には版番号（`revision`）を付け、保存中や、変更案の適用・設定の保存による書き換えの間に編集されたかを、
   文書の中身の比較ではなく版番号で判定する。
@@ -420,6 +448,7 @@ Tauri コマンド名と引数（JS 側の名前。Rust 側は snake_case で受
 | createProject / openProject / closeProject | `create_project` / `open_project` / `close_project` | `folder, project` / `folder` / — |
 | overview / pipeline | `overview` / `pipeline` | — |
 | readDocument / writeDocument | `read_document` / `write_document` | `path` / `path, document, expectedHash`（`document` は `EditableDocument`。`kind` が `text`・`character`・`chapter` のどれか。`read_document` は `{ document, hash, parse_error }`、`write_document` は新しいハッシュを返す。パスの種類に合わない文書と、シーンの `id` が重複した章立ては `invalid_input`） |
+| parseDocument | `parse_document` | `path, content`（作品を開いていなくてもよい。ファイルは読み書きしない。`{ document, parse_error }` を返す。分け方は `read_document` と同じ。`path` が作品内の相対パスとして不正なら `invalid_input`） |
 | textStats / parseRuby / analyzeQuality | `text_stats` / `parse_ruby` / `analyze_quality` | `text` / `text` / `text, targetChars` |
 | generate / cancelGeneration | `generate` / `cancel_generation` | `jobId, task, onEvent`（`Channel<GenerationEvent>`）/ `jobId` |
 | applyChangeSet | `apply_change_set` | `changeSet` |

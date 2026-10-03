@@ -16,6 +16,7 @@ import type {
   LlmSettings,
   ModelInfo,
   NewProject,
+  ParsedDocument,
   PipelineStep,
   ProjectOverview,
   ProjectSettings,
@@ -25,7 +26,7 @@ import type {
   Task,
   TextStats,
 } from "../types";
-import { readMockDocument, writeMockDocument } from "./document";
+import { parseMockDocument, readMockDocument, writeMockDocument } from "./document";
 import {
   createGenerationJob,
   GenerationCancelled,
@@ -34,7 +35,7 @@ import {
 } from "./generation";
 import { GENRE_PRESETS } from "./genres";
 import { buildOverview } from "./overview";
-import { MANIFEST_PATH } from "./paths";
+import { isProjectRelativePath, MANIFEST_PATH } from "./paths";
 import { buildPipeline } from "./pipeline";
 import { readMockFile } from "./render";
 import {
@@ -283,6 +284,14 @@ class MockBackend implements Backend {
         "この文書は外部で変更されています。再読み込みするか、上書きしてください。",
       );
     }
+  }
+
+  /** 作品を開いていなくても使える。本物の RelPath と同じく、作品の外を指すパスは invalid_input にする。 */
+  async parseDocument(path: string, content: string): Promise<ParsedDocument> {
+    if (!isProjectRelativePath(path)) {
+      throw new BackendError("invalid_input", `「${path}」は作品内の相対パスではありません。`);
+    }
+    return parseMockDocument(path, content);
   }
 
   async textStats(text: string): Promise<TextStats> {

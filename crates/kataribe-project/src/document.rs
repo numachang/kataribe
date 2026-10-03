@@ -63,6 +63,36 @@ pub struct LoadedDocument {
     pub parse_error: Option<String>,
 }
 
+/// 文字列を、画面で編集する形に分けた結果。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+pub struct ParsedDocument {
+    /// 分けた文書。
+    pub document: EditableDocument,
+    /// 人物資料・章立てなのに項目に分けられず、[`EditableDocument::Text`] にしたときの理由
+    /// （[`LoadedDocument::parse_error`] と同じ）。
+    pub parse_error: Option<String>,
+}
+
+/// 文字列を、`path` の種類に応じて画面で編集する形に分ける。ファイルには触れない。
+///
+/// 人物資料・章立てのパスなら front matter を項目に分ける。解釈できない（YAML の誤り、
+/// 章立てのシーンの `id` の重複）ときと、それ以外のパスは [`EditableDocument::Text`] のまま返し、
+/// 前者には理由を添える。`content` は BOM と CRLF を正規化済みの内容を渡す。
+/// 保存前の内容や生成した変更案を、ファイルに書かずに同じ分け方で見せるために公開している。
+#[must_use]
+pub fn parse_document(path: &RelPath, content: &str) -> ParsedDocument {
+    let (document, parse_error) = match parse_structured(path, content) {
+        Ok(Some(document)) => (document, None),
+        Ok(None) => (text_document(content), None),
+        Err(reason) => (text_document(content), Some(reason.to_string())),
+    };
+    ParsedDocument {
+        document,
+        parse_error,
+    }
+}
+
 /// ファイルを読み、画面で編集する形にする。
 ///
 /// 項目に分けられない人物資料・章立ては、直して保存できるよう文字列のまま返す。
@@ -71,15 +101,11 @@ pub(crate) fn read_document(
     path: &RelPath,
 ) -> Result<LoadedDocument, ProjectError> {
     let file = store.read_text(path)?;
-    let (document, parse_error) = match parse_structured(path, &file.content) {
-        Ok(Some(document)) => (document, None),
-        Ok(None) => (text_document(file.content), None),
-        Err(reason) => (text_document(file.content), Some(reason.to_string())),
-    };
+    let parsed = parse_document(path, &file.content);
     Ok(LoadedDocument {
-        document,
+        document: parsed.document,
         hash: file.hash,
-        parse_error,
+        parse_error: parsed.parse_error,
     })
 }
 
@@ -125,8 +151,10 @@ pub(crate) fn write_document(
     )
 }
 
-fn text_document(content: String) -> EditableDocument {
-    EditableDocument::Text { content }
+fn text_document(content: &str) -> EditableDocument {
+    EditableDocument::Text {
+        content: content.to_owned(),
+    }
 }
 
 /// 人物資料・章立てのパスなら項目に分けた文書にする。それ以外のパスは `None`。
@@ -603,6 +631,75 @@ scenes:
             EditableDocument::Chapter { .. }
         ));
         assert_eq!(reopened.parse_error, None);
+    }
+
+    #[test]
+    fn parse_document_splits_a_character_without_touching_any_file() {
+        let parsed = parse_document(&rel(CHARACTER_PATH), CHARACTER_TEXT);
+
+        let EditableDocument::Character { meta, body } = parsed.document else {
+            panic!("人物資料に分けられるはず");
+        };
+        assert_eq!(meta.name, "霧島 凛");
+        assert_eq!(meta.role, "主人公");
+        assert_eq!(body, "## 外見\n古い本文\n");
+        assert_eq!(parsed.parse_error, None);
+    }
+
+    #[test]
+    fn parse_document_splits_a_chapter_into_scenes_and_storyline() {
+        let parsed = parse_document(&rel(CHAPTER_PATH), CHAPTER_TEXT);
+
+        let EditableDocument::Chapter { meta, body } = parsed.document else {
+            panic!("章立てに分けられるはず");
+        };
+        assert_eq!(meta.title, "雨の匂い");
+        assert_eq!(meta.scenes.len(), 2);
+        assert_eq!(body, "古いストーリーライン\n");
+        assert_eq!(parsed.parse_error, None);
+    }
+
+    #[test]
+    fn parse_document_keeps_other_paths_as_text_without_a_reason() {
+        let parsed = parse_document(&rel("concept.md"), "---\nname: 霧島 凛\n---\n企画\n");
+
+        assert_eq!(
+            parsed.document,
+            text_document("---\nname: 霧島 凛\n---\n企画\n")
+        );
+        assert_eq!(parsed.parse_error, None);
+    }
+
+    #[test]
+    fn parse_document_returns_broken_yaml_as_text_with_the_reason() {
+        let parsed = parse_document(&rel(CHARACTER_PATH), "---\nname: [\n---\n");
+
+        assert_eq!(parsed.document, text_document("---\nname: [\n---\n"));
+        let reason = parsed.parse_error.expect("解釈できなかった理由が付くはず");
+        assert!(reason.contains(CHARACTER_PATH), "reason: {reason}");
+    }
+
+    #[test]
+    fn parse_document_returns_duplicate_scene_ids_as_text_with_the_reason() {
+        let parsed = parse_document(&rel(CHAPTER_PATH), DUPLICATE_SCENE_CHAPTER_TEXT);
+
+        assert_eq!(parsed.document, text_document(DUPLICATE_SCENE_CHAPTER_TEXT));
+        let reason = parsed.parse_error.expect("開けなかった理由が付くはず");
+        assert!(reason.contains("「s01」"), "reason: {reason}");
+        assert!(reason.contains("重複"), "reason: {reason}");
+    }
+
+    #[test]
+    fn parse_document_agrees_with_read_document_on_the_same_content() {
+        let dir = TempDir::new().unwrap();
+        let project = open_project(&dir);
+        put_file(&dir, CHAPTER_PATH, CHAPTER_TEXT);
+
+        let loaded = project.read_document(&rel(CHAPTER_PATH)).unwrap();
+        let parsed = parse_document(&rel(CHAPTER_PATH), CHAPTER_TEXT);
+
+        assert_eq!(loaded.document, parsed.document);
+        assert_eq!(loaded.parse_error, parsed.parse_error);
     }
 
     #[test]

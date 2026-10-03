@@ -37,8 +37,30 @@ function parseSimpleFields(lines: string[]): Map<string, string> {
   return fields;
 }
 
-/** characters/<id>.md を解析し、既存の人物情報へマージする。 */
-export function parseCharacterFile(content: string, id: string, order: number): MockCharacter {
+/** front matter の最上位にある項目名と、その後ろの本文（そのまま）。 */
+export interface FrontMatterShape {
+  keys: Set<string>;
+  body: string;
+}
+
+/**
+ * front matter（`---` で囲んだ先頭の項目）の外形。front matter が無ければ null。
+ * 本物は、人物資料・章立てに front matter や必須の項目が無ければ解釈できない。それを見分けるために使う。
+ */
+export function readFrontMatterShape(content: string): FrontMatterShape | null {
+  const document = splitFrontMatter(content);
+  if (!document) {
+    return null;
+  }
+  return { keys: new Set(parseSimpleFields(document.fields).keys()), body: document.body };
+}
+
+/** characters/<id>.md を解析し、既存の人物情報へマージする。`order` は front matter に無いときの値。 */
+export function parseCharacterFile(
+  content: string,
+  id: string,
+  order: number | null,
+): MockCharacter {
   const document = splitFrontMatter(content);
   if (!document) {
     return { id, name: id, reading: "", role: "", summary: "", order, detail: content };

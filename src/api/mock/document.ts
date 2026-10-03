@@ -1,6 +1,17 @@
 import { BackendError } from "../backend";
-import type { ChapterMeta, CharacterMeta, EditableDocument, ScenePlan } from "../types";
-import { mergeSceneDrafts } from "./parse";
+import type {
+  ChapterMeta,
+  CharacterMeta,
+  EditableDocument,
+  ParsedDocument,
+  ScenePlan,
+} from "../types";
+import {
+  mergeSceneDrafts,
+  parseChapterFile,
+  parseCharacterFile,
+  readFrontMatterShape,
+} from "./parse";
 import { chapterIdFromPath, characterIdFromPath } from "./paths";
 import { characterDetailFromBody, PLACEHOLDER_CHARACTER_BODY, readMockFile } from "./render";
 import type { MockChapter, MockCharacter, MockScene, ProjectState } from "./state";
@@ -71,6 +82,74 @@ export function readMockDocument(state: ProjectState, path: string): EditableDoc
   }
   const content = readMockFile(state, path);
   return content === null ? null : { kind: "text", content };
+}
+
+function textDocument(content: string, parseError: string | null): ParsedDocument {
+  return { document: { kind: "text", content }, parse_error: parseError };
+}
+
+function missingFrontMatter(path: string): string {
+  return `${path} の front matter がありません（'---' で始まる YAML が必要です）`;
+}
+
+function missingRequiredField(path: string, key: string): string {
+  return `${path} の front matter に必須の項目「${key}」がありません`;
+}
+
+function duplicateSceneIdMessage(path: string, id: string): string {
+  return `${path} のシーンの id「${id}」が重複しているため、項目に分けて扱えません。id を直してください。`;
+}
+
+function findDuplicateSceneId(scenes: MockScene[]): string | null {
+  const seen = new Set<string>();
+  for (const scene of scenes) {
+    if (seen.has(scene.id)) {
+      return scene.id;
+    }
+    seen.add(scene.id);
+  }
+  return null;
+}
+
+/**
+ * 文字列を、パスの種類に応じて画面で編集する形に分ける（作品の状態は使わない）。
+ * 本物と同じく、front matter や必須の項目が無い・シーンの id が重複した人物資料・章立ては文字列のまま返して
+ * 理由を添え、それ以外のパスは理由なしで文字列のまま返す。本文は書かれたままで返す。
+ */
+export function parseMockDocument(path: string, content: string): ParsedDocument {
+  const characterId = characterIdFromPath(path);
+  if (characterId !== null) {
+    const frontMatter = readFrontMatterShape(content);
+    if (frontMatter === null) {
+      return textDocument(content, missingFrontMatter(path));
+    }
+    if (!frontMatter.keys.has("name")) {
+      return textDocument(content, missingRequiredField(path, "name"));
+    }
+    const character = parseCharacterFile(content, characterId, null);
+    return {
+      document: { kind: "character", meta: toCharacterMeta(character), body: frontMatter.body },
+      parse_error: null,
+    };
+  }
+  const chapterId = chapterIdFromPath(path);
+  if (chapterId !== null) {
+    const frontMatter = readFrontMatterShape(content);
+    if (frontMatter === null) {
+      return textDocument(content, missingFrontMatter(path));
+    }
+    if (!frontMatter.keys.has("title")) {
+      return textDocument(content, missingRequiredField(path, "title"));
+    }
+    const { title, storyline, parsedScenes } = parseChapterFile(content, chapterId);
+    const duplicateId = findDuplicateSceneId(parsedScenes ?? []);
+    if (duplicateId !== null) {
+      return textDocument(content, duplicateSceneIdMessage(path, duplicateId));
+    }
+    const meta = toChapterMeta({ id: chapterId, title, storyline, scenes: parsedScenes });
+    return { document: { kind: "chapter", meta, body: storyline }, parse_error: null };
+  }
+  return textDocument(content, null);
 }
 
 function writeCharacter(
