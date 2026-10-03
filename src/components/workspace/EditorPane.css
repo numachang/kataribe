@@ -36,12 +36,64 @@
 .editor-pane__body {
   flex: 1 1 auto;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
   background: var(--color-bg);
 }
 
+/* フォームは横書きで本文の上に置く。長くなったらフォームの欄だけスクロールし、本文の欄を押し出さない。 */
+.editor-pane__form {
+  flex: 0 1 auto;
+  max-height: 55%;
+  overflow-y: auto;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-raised);
+}
+
+.editor-pane__text {
+  flex: 1 1 0;
+  min-height: 160px;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-pane__heading {
+  margin: 0;
+  padding: 8px 16px 0;
+  font-size: 12px;
+  font-weight: normal;
+  color: var(--color-ink-soft);
+}
+
+.editor-pane__notice {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-sunken);
+  font-size: 13px;
+}
+
+.editor-pane__notice p {
+  margin: 0;
+}
+
+.editor-pane__notice-reason {
+  margin-top: 2px;
+  color: var(--color-error);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.editor-pane__text > .ruby-preview {
+  flex: 1 1 0;
+  height: auto;
+  min-height: 0;
+}
+
 .editor-pane__textarea {
+  flex: 1 1 0;
   width: 100%;
-  height: 100%;
+  min-height: 0;
   border: none;
   resize: none;
   padding: 32px 40px;

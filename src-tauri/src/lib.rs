@@ -13,12 +13,12 @@ mod engine_client;
 mod error;
 mod files;
 mod generation;
+mod hashed_file;
 mod launch_options;
 mod logging;
 mod projects;
 mod settings;
 mod state;
-mod text_file;
 
 use tauri::Manager;
 
@@ -48,8 +48,6 @@ pub fn run() {
             commands::close_project,
             commands::overview,
             commands::pipeline,
-            commands::read_file,
-            commands::write_file,
             commands::read_document,
             commands::write_document,
             commands::text_stats,

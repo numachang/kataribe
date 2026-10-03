@@ -1,45 +1,9 @@
-//! 作品フォルダ内のファイルの読み書き。`read_file` / `write_file` コマンドの中身。
+//! 作品フォルダ内の文書の読み書き。`read_document` / `write_document` コマンドの中身。
 
-use kataribe_project::{
-    BackupMode, ContentHash, EditableDocument, Project, RelPath, WriteCondition, WriteOptions,
-};
+use kataribe_project::{ContentHash, EditableDocument, Project, RelPath};
 
 use crate::error::{CommandError, CommandErrorKind};
-use crate::text_file::{DocumentFile, TextFile};
-
-/// 作品フォルダ内のファイルを読み込む。存在しなければ `not_found`。
-pub fn read_file(project: &Project, path: &str) -> Result<TextFile, CommandError> {
-    let path = RelPath::new(path)?;
-    let file = project.store().read_text(&path)?;
-    Ok(TextFile::from(file))
-}
-
-/// 作品フォルダ内のファイルを書き込み、新しい内容のハッシュを返す。
-///
-/// `expected_hash` が `None` なら新規作成としてのみ許可し、既にファイルがあれば競合になる。
-/// `Some` なら、そのハッシュから内容が変わっていなければ上書きを許可する。
-/// バックアップは間引きながら作る（[`BackupMode::Throttled`]）。
-pub fn write_file(
-    project: &Project,
-    path: &str,
-    content: &str,
-    expected_hash: Option<&str>,
-) -> Result<String, CommandError> {
-    let path = RelPath::new(path)?;
-    let condition = match expected_hash {
-        None => WriteCondition::Absent,
-        Some(hash) => WriteCondition::Matches(parse_content_hash(hash)?),
-    };
-    let hash = project.store().write_text(
-        &path,
-        content,
-        WriteOptions {
-            condition,
-            backup: BackupMode::Throttled,
-        },
-    )?;
-    Ok(hash.to_string())
-}
+use crate::hashed_file::DocumentFile;
 
 /// 作品フォルダ内のファイルを、画面で編集する形（人物資料・章立ては front matter を項目に分けた形）で
 /// 読み込む。存在しなければ `not_found`。
@@ -53,8 +17,9 @@ pub fn read_document(project: &Project, path: &str) -> Result<DocumentFile, Comm
 
 /// 画面で編集した文書を書き込み、新しい内容のハッシュを返す。
 ///
-/// `expected_hash` の意味は [`write_file`] と同じ。パスの種類に合わない人物資料・章立ては `invalid_input`。
-/// バックアップは間引きながら作る（[`BackupMode::Throttled`]）。
+/// `expected_hash` が `None` なら新規作成としてのみ許可し、既にファイルがあれば競合になる。
+/// `Some` なら、そのハッシュから内容が変わっていなければ上書きを許可する。
+/// パスの種類に合わない人物資料・章立ては `invalid_input`。バックアップは間引きながら作る。
 pub fn write_document(
     project: &Project,
     path: &str,
@@ -81,7 +46,10 @@ pub(crate) fn parse_content_hash(raw: &str) -> Result<ContentHash, CommandError>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kataribe_project::{FORMAT_VERSION, Manifest, Project, Rating};
+    use kataribe_project::{
+        BackupMode, FORMAT_VERSION, Manifest, Project, Rating, TextFile, WriteCondition,
+        WriteOptions,
+    };
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
@@ -105,71 +73,27 @@ mod tests {
         Project::open(dir.path()).unwrap()
     }
 
-    #[test]
-    fn write_file_creates_a_new_file_when_expected_hash_is_absent() {
-        let dir = TempDir::new().unwrap();
-        let project = open_project(&dir);
-
-        let hash = write_file(&project, "concept.md", "本文", None).unwrap();
-
-        let read = read_file(&project, "concept.md").unwrap();
-        assert_eq!(read.content, "本文");
-        assert_eq!(read.hash, hash);
+    /// 画面を介さずに、作品フォルダへファイルを置く（テストの準備）。置いた内容のハッシュを返す。
+    fn put(project: &Project, path: &str, content: &str) -> String {
+        project
+            .store()
+            .write_text(
+                &RelPath::new(path).unwrap(),
+                content,
+                WriteOptions {
+                    condition: WriteCondition::Any,
+                    backup: BackupMode::Never,
+                },
+            )
+            .unwrap()
+            .to_string()
     }
 
-    #[test]
-    fn write_file_conflicts_when_creating_over_an_existing_file() {
-        let dir = TempDir::new().unwrap();
-        let project = open_project(&dir);
-        write_file(&project, "concept.md", "初回", None).unwrap();
-
-        let error = write_file(&project, "concept.md", "二回目", None).unwrap_err();
-
-        assert_eq!(error.kind, CommandErrorKind::Conflict);
-    }
-
-    #[test]
-    fn write_file_conflicts_when_expected_hash_is_stale() {
-        let dir = TempDir::new().unwrap();
-        let project = open_project(&dir);
-        let hash = write_file(&project, "concept.md", "初回", None).unwrap();
-        write_file(&project, "concept.md", "更新", Some(&hash)).unwrap();
-
-        let error = write_file(&project, "concept.md", "さらに更新", Some(&hash)).unwrap_err();
-
-        assert_eq!(error.kind, CommandErrorKind::Conflict);
-    }
-
-    #[test]
-    fn write_file_succeeds_when_expected_hash_matches() {
-        let dir = TempDir::new().unwrap();
-        let project = open_project(&dir);
-        let hash = write_file(&project, "concept.md", "初回", None).unwrap();
-
-        let new_hash = write_file(&project, "concept.md", "更新後", Some(&hash)).unwrap();
-
-        assert_ne!(hash, new_hash);
-        assert_eq!(read_file(&project, "concept.md").unwrap().content, "更新後");
-    }
-
-    #[test]
-    fn write_file_rejects_a_malformed_expected_hash() {
-        let dir = TempDir::new().unwrap();
-        let project = open_project(&dir);
-
-        let error = write_file(&project, "concept.md", "内容", Some("not-a-hash")).unwrap_err();
-
-        assert_eq!(error.kind, CommandErrorKind::InvalidInput);
-    }
-
-    #[test]
-    fn read_file_reports_not_found_for_a_missing_file() {
-        let dir = TempDir::new().unwrap();
-        let project = open_project(&dir);
-
-        let error = read_file(&project, "concept.md").unwrap_err();
-
-        assert_eq!(error.kind, CommandErrorKind::NotFound);
+    fn read_text(project: &Project, path: &str) -> TextFile {
+        project
+            .store()
+            .read_text(&RelPath::new(path).unwrap())
+            .unwrap()
     }
 
     const CHARACTER_TEXT: &str = "---\n# 手で足したコメント\nname: 霧島 凛\nrole: 主人公\nsecret: 実は依頼人の妹\n---\n古い本文\n";
@@ -178,7 +102,7 @@ mod tests {
     fn read_document_splits_a_character_into_meta_and_body() {
         let dir = TempDir::new().unwrap();
         let project = open_project(&dir);
-        let hash = write_file(&project, "characters/rin.md", CHARACTER_TEXT, None).unwrap();
+        let hash = put(&project, "characters/rin.md", CHARACTER_TEXT);
 
         let file = read_document(&project, "characters/rin.md").unwrap();
 
@@ -195,7 +119,7 @@ mod tests {
     fn read_document_returns_a_broken_character_as_text_with_the_reason() {
         let dir = TempDir::new().unwrap();
         let project = open_project(&dir);
-        write_file(&project, "characters/rin.md", "---\nname: [\n---\n", None).unwrap();
+        put(&project, "characters/rin.md", "---\nname: [\n---\n");
 
         let file = read_document(&project, "characters/rin.md").unwrap();
 
@@ -223,7 +147,7 @@ mod tests {
     fn write_document_keeps_the_yaml_when_only_the_body_changes() {
         let dir = TempDir::new().unwrap();
         let project = open_project(&dir);
-        let hash = write_file(&project, "characters/rin.md", CHARACTER_TEXT, None).unwrap();
+        let hash = put(&project, "characters/rin.md", CHARACTER_TEXT);
         let EditableDocument::Character { meta, .. } = read_document(&project, "characters/rin.md")
             .unwrap()
             .document
@@ -238,20 +162,20 @@ mod tests {
         let new_hash =
             write_document(&project, "characters/rin.md", &document, Some(&hash)).unwrap();
 
-        let read = read_file(&project, "characters/rin.md").unwrap();
+        let read = read_text(&project, "characters/rin.md");
         assert_eq!(
             read.content,
             CHARACTER_TEXT.replace("古い本文", "新しい本文")
         );
-        assert_eq!(read.hash, new_hash);
+        assert_eq!(read.hash.to_string(), new_hash);
     }
 
     #[test]
     fn write_document_conflicts_when_expected_hash_is_stale() {
         let dir = TempDir::new().unwrap();
         let project = open_project(&dir);
-        let hash = write_file(&project, "concept.md", "初回", None).unwrap();
-        write_file(&project, "concept.md", "外での更新", Some(&hash)).unwrap();
+        let hash = put(&project, "concept.md", "初回");
+        put(&project, "concept.md", "外での更新");
         let document = EditableDocument::Text {
             content: "画面の内容".to_owned(),
         };
@@ -259,10 +183,7 @@ mod tests {
         let error = write_document(&project, "concept.md", &document, Some(&hash)).unwrap_err();
 
         assert_eq!(error.kind, CommandErrorKind::Conflict);
-        assert_eq!(
-            read_file(&project, "concept.md").unwrap().content,
-            "外での更新"
-        );
+        assert_eq!(read_text(&project, "concept.md").content, "外での更新");
     }
 
     #[test]
@@ -275,7 +196,22 @@ mod tests {
 
         let hash = write_document(&project, "concept.md", &document, None).unwrap();
 
-        assert_eq!(read_file(&project, "concept.md").unwrap().hash, hash);
+        assert_eq!(read_text(&project, "concept.md").hash.to_string(), hash);
+    }
+
+    #[test]
+    fn write_document_conflicts_when_creating_over_an_existing_file() {
+        let dir = TempDir::new().unwrap();
+        let project = open_project(&dir);
+        put(&project, "concept.md", "既にある企画");
+        let document = EditableDocument::Text {
+            content: "新規のつもりの企画".to_owned(),
+        };
+
+        let error = write_document(&project, "concept.md", &document, None).unwrap_err();
+
+        assert_eq!(error.kind, CommandErrorKind::Conflict);
+        assert_eq!(read_text(&project, "concept.md").content, "既にある企画");
     }
 
     #[test]
@@ -315,16 +251,6 @@ mod tests {
         };
 
         let error = write_document(&project, "../escape.md", &document, None).unwrap_err();
-
-        assert_eq!(error.kind, CommandErrorKind::InvalidInput);
-    }
-
-    #[test]
-    fn write_file_rejects_a_path_that_escapes_the_project() {
-        let dir = TempDir::new().unwrap();
-        let project = open_project(&dir);
-
-        let error = write_file(&project, "../escape.md", "内容", None).unwrap_err();
 
         assert_eq!(error.kind, CommandErrorKind::InvalidInput);
     }

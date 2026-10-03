@@ -376,6 +376,13 @@ Gemma には前者だけ、Qwen には後者だけが効き、両方を指定す
   残す場合は、`src/api/bindingsContract.ts` で生成物と完全に一致することを型検査で保証する。
   生成物が Rust の型と一致していることは、CI で `cargo test --all-features` の後に `src/bindings` に差分が無いことで確かめる。
 - ブラウザ単体（`pnpm dev`）では、メモリ上の偽バックエンドで動く（画面の開発とテスト用）。
+- 中央のエディタは、文書の種類（`EditableDocument.kind`）で出し分ける。人物資料・章立ては、本文の上に front matter の
+  項目のフォームを置き、本文（章はストーリーライン）の欄だけを縦書き・横書きの切り替えの対象にする。
+  文字数・品質チェック・ルビのプレビューも本文だけを対象にする。項目に分けない文書（`text`）と、YAML を解釈できず
+  文字列で開いた人物資料・章立てはファイル全体を 1 つの欄で編集し、後者には理由を添える。
+- フォームは、利用者が触っていない項目を読んだままの値で送り返す（Rust が項目の変更を見分けて YAML を書き直すかを決めるため）。
+  編集中の文書には版番号（`revision`）を付け、保存中や、変更案の適用・設定の保存による書き換えの間に編集されたかを、
+  文書の中身の比較ではなく版番号で判定する。人物資料・章立てを保存したあとは、目次と工程を読み直す。
 - 起動オプション `--settings=<PATH>`（`--settings <PATH>` も可）で、既定の場所の代わりに使う設定ファイルを指定できる
   （設定ファイルの場所を指定する点は CLI と同じ。ただし指定したファイルが無い場合、CLI はエラーにするのに対し、
   GUI は既定値から始める）。E2E テストが利用者の設定に触れずに動くためにも使う。
@@ -393,7 +400,6 @@ Tauri コマンド名と引数（JS 側の名前。Rust 側は snake_case で受
 | listModels / listGenres | `list_models` / `list_genres` | `llm`（省略可。保存前の接続先で試す）/ — |
 | createProject / openProject / closeProject | `create_project` / `open_project` / `close_project` | `folder, project` / `folder` / — |
 | overview / pipeline | `overview` / `pipeline` | — |
-| readFile / writeFile | `read_file` / `write_file` | `path` / `path, content, expectedHash` |
 | readDocument / writeDocument | `read_document` / `write_document` | `path` / `path, document, expectedHash`（`document` は `EditableDocument`。`kind` が `text`・`character`・`chapter` のどれか。`read_document` は `{ document, hash, parse_error }`、`write_document` は新しいハッシュを返す。パスの種類に合わない文書は `invalid_input`） |
 | textStats / parseRuby / analyzeQuality | `text_stats` / `parse_ruby` / `analyze_quality` | `text` / `text` / `text, targetChars` |
 | generate / cancelGeneration | `generate` / `cancel_generation` | `jobId, task, onEvent`（`Channel<GenerationEvent>`）/ `jobId` |

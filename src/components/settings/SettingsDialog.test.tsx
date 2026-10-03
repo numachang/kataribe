@@ -6,9 +6,9 @@ import { createMockBackend } from "../../api/mock";
 import { SAMPLE_PROJECT_FOLDER } from "../../api/mock/sampleProject";
 import type { ModelInfo, ProjectSettings } from "../../api/types";
 import { documentSaveController } from "../../features/editor/documentSaveController";
-import { useEditorStore } from "../../store/editorStore";
 import { useSettingsStore } from "../../store/settingsStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
+import { editorBody, editText, loadIntoEditor } from "../../test/documents";
 import { renderWithBackend } from "../../test/renderWithBackend";
 import { resetAllStores } from "../../test/resetStores";
 import { wrapBackend } from "../../test/wrapBackend";
@@ -332,16 +332,15 @@ describe("作品ごとの設定", () => {
     const backend = createMockBackend({ delayMs: 0 });
     await backend.openProject(SAMPLE_PROJECT_FOLDER);
     await renderWithOpenProject(backend);
-    const manifest = await backend.readFile("kataribe.yaml");
     useWorkspaceStore.getState().openDocument("kataribe.yaml");
-    useEditorStore.getState().loadDocument("kataribe.yaml", manifest.content, manifest.hash);
+    await loadIntoEditor(backend, "kataribe.yaml");
 
     await user.click(await screen.findByRole("tab", { name: "この作品（月霧の館）" }));
     await user.click(await screen.findByRole("checkbox", { name: "生成単位をこの作品で変える" }));
     await user.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => {
-      expect(useEditorStore.getState().content).toContain("draft_unit: beat");
+      expect(editorBody()).toContain("draft_unit: beat");
     });
   });
 
@@ -361,11 +360,10 @@ describe("作品ごとの設定", () => {
     const backend = createMockBackend({ delayMs: 0 });
     await useSettingsStore.getState().load(backend);
     useWorkspaceStore.getState().openWorkspace(await backend.openProject(SAMPLE_PROJECT_FOLDER));
-    const manifest = await backend.readFile("kataribe.yaml");
     useWorkspaceStore.getState().openDocument("kataribe.yaml");
-    useEditorStore.getState().loadDocument("kataribe.yaml", manifest.content, manifest.hash);
+    await loadIntoEditor(backend, "kataribe.yaml");
     // 入力したときと同じく、内容を変えて保存の予約をする（まだ保存されていない）
-    useEditorStore.getState().updateContent(`${manifest.content}# 手で足したメモ
+    editText(`${editorBody()}# 手で足したメモ
 `);
     documentSaveController.notifyChange(backend);
     renderWithBackend(

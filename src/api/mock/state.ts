@@ -11,7 +11,8 @@ export interface MockCharacter {
   reading: string;
   role: string;
   summary: string;
-  order: number;
+  /** 表示順。null なら順番を決めていない（目次では最後に並ぶ）。 */
+  order: number | null;
   /** 「外見」「口調」などの本文。null なら Cast 工程が作った骨組みのまま。 */
   detail: string | null;
 }

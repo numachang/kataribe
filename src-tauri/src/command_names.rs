@@ -21,8 +21,6 @@ pub const COMMAND_NAMES: &[&str] = &[
     "close_project",
     "overview",
     "pipeline",
-    "read_file",
-    "write_file",
     "read_document",
     "write_document",
     "text_stats",

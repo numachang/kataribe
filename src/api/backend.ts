@@ -1,6 +1,8 @@
 import type {
   AppSettings,
   ChangeSet,
+  DocumentFile,
+  EditableDocument,
   GenerationEvent,
   GenrePreset,
   LlmSettings,
@@ -13,7 +15,6 @@ import type {
   QualityReport,
   Segment,
   Task,
-  TextFile,
   TextStats,
 } from "./types";
 
@@ -52,13 +53,22 @@ export interface Backend {
   overview(): Promise<ProjectOverview>;
   pipeline(): Promise<PipelineStep[]>;
 
-  // ファイル
-  readFile(path: string): Promise<TextFile>;
+  // 文書
   /**
-   * ファイルを保存し、新しいハッシュを返す。
-   * expectedHash が現在の内容と一致しなければ kind = "conflict" で失敗する。新規作成なら null。
+   * 作品フォルダ内の文書を、画面で編集する形で読む。人物資料と章立ては front matter を項目に分けて返す。
+   * front matter を解釈できなければ、直して保存できるよう文字列のまま返し、理由を parse_error に入れる。
    */
-  writeFile(path: string, content: string, expectedHash: string | null): Promise<string>;
+  readDocument(path: string): Promise<DocumentFile>;
+  /**
+   * 文書を保存し、新しいハッシュ（ファイル全体のもの）を返す。
+   * expectedHash が現在の内容と一致しなければ kind = "conflict" で失敗する。新規作成なら null。
+   * 人物資料・章立ては、画面が知らない項目を保存されている側から引き継ぐ。
+   */
+  writeDocument(
+    path: string,
+    document: EditableDocument,
+    expectedHash: string | null,
+  ): Promise<string>;
 
   // テキスト
   textStats(text: string): Promise<TextStats>;

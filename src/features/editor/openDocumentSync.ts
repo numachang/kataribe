@@ -43,27 +43,28 @@ export async function writeBesideEditor<T>(
   if (openPath !== null && touches(openPath) && documentSaveController.hasUnsavedWork()) {
     throw new Error(unsavedWorkMessage);
   }
-  const contentBeforeWrite = useEditorStore.getState().content;
+  const revisionBeforeWrite = useEditorStore.getState().revision;
   const result = await write();
-  await reloadOpenDocumentIfUntouched(backend, touches, contentBeforeWrite);
+  await reloadOpenDocumentIfUntouched(backend, touches, revisionBeforeWrite);
   return result;
 }
 
 async function reloadOpenDocumentIfUntouched(
   backend: Backend,
   touches: (path: string) => boolean,
-  contentBeforeWrite: string,
+  revisionBeforeWrite: number,
 ): Promise<void> {
   const openPath = useWorkspaceStore.getState().currentPath;
   if (openPath === null || !touches(openPath)) {
     return;
   }
   try {
-    const file = await backend.readFile(openPath);
+    const file = await backend.readDocument(openPath);
     const editor = useEditorStore.getState();
-    const isUntouchedSinceWrite = editor.path === openPath && editor.content === contentBeforeWrite;
+    const isUntouchedSinceWrite =
+      editor.path === openPath && editor.revision === revisionBeforeWrite;
     if (useWorkspaceStore.getState().currentPath === openPath && isUntouchedSinceWrite) {
-      editor.loadDocument(openPath, file.content, file.hash);
+      editor.loadDocument(openPath, file);
     }
   } catch (error) {
     useUiStore

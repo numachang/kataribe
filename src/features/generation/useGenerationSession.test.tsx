@@ -6,8 +6,8 @@ import { BackendProvider } from "../../api/context";
 import { createMockBackend } from "../../api/mock";
 import { SAMPLE_PROJECT_FOLDER } from "../../api/mock/sampleProject";
 import type { NewProject, Task } from "../../api/types";
-import { useEditorStore } from "../../store/editorStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
+import { editorBody, readText, textDocument } from "../../test/documents";
 import { resetAllStores } from "../../test/resetStores";
 import { wrapBackend } from "../../test/wrapBackend";
 import { documentSaveController } from "../editor/documentSaveController";
@@ -41,23 +41,23 @@ async function reviewRevisionOfOpenConcept(backend: Backend) {
 it("開いている文書の保存に失敗しているときは、その文書への変更案を適用しない", async () => {
   const inner = createMockBackend({ delayMs: 0 });
   useWorkspaceStore.getState().openWorkspace(await inner.openProject(SAMPLE_PROJECT_FOLDER));
-  const conceptBefore = await inner.readFile("concept.md");
+  const conceptBefore = await readText(inner, "concept.md");
   const backend = wrapBackend(inner, {
-    async writeFile() {
+    async writeDocument() {
       throw new Error("ディスクがいっぱいです");
     },
   });
   const { result } = await reviewRevisionOfOpenConcept(backend);
 
-  act(() => result.current.editor.onContentChange("保存できていない大事な編集"));
+  act(() => result.current.editor.onDocumentChange(textDocument("保存できていない大事な編集")));
   await act(async () => {
     await result.current.session.apply();
   });
 
   expect(result.current.session.phase).toBe("reviewing");
   expect(result.current.session.applyErrorMessage).toContain("保存できていない編集");
-  expect(useEditorStore.getState().content).toBe("保存できていない大事な編集");
-  expect((await inner.readFile("concept.md")).content).toBe(conceptBefore.content);
+  expect(editorBody()).toBe("保存できていない大事な編集");
+  expect(await readText(inner, "concept.md")).toBe(conceptBefore);
 });
 
 it("適用の間にエディタへ入力した文字は、適用後の読み直しで消さず、次の保存で競合として知らせる", async () => {
@@ -85,13 +85,13 @@ it("適用の間にエディタへ入力した文字は、適用後の読み直�
     applying = result.current.session.apply();
   });
   await applyStarted;
-  act(() => result.current.editor.onContentChange("適用中に打った文章"));
+  act(() => result.current.editor.onDocumentChange(textDocument("適用中に打った文章")));
   releaseApply();
   await act(async () => {
     await applying;
   });
 
-  expect(useEditorStore.getState().content).toBe("適用中に打った文章");
+  expect(editorBody()).toBe("適用中に打った文章");
   // 基準のハッシュは適用前のままなので、次の保存は競合になり、利用者が選べる
   act(() => result.current.editor.saveNow());
   await waitFor(() => expect(documentSaveController.getConflict()?.path).toBe("concept.md"));

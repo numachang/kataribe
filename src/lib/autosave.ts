@@ -1,6 +1,6 @@
 // 自動保存のデバウンス処理だけを切り出した、保存先に依存しない純粋なロジック。
 // 「入力が止まって 1 秒後に保存」「Ctrl+S やファイル切り替えでは即座に保存」を
-// タイマーの組み立てとして表現する。実際に保存する処理（backend.writeFile 呼び出し）は
+// タイマーの組み立てとして表現する。実際に保存する処理（backend.writeDocument 呼び出し）は
 // 呼び出し側が `onDue` に渡す。
 
 export interface AutosaveScheduler {

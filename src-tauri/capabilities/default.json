@@ -20,8 +20,6 @@
     "allow-close-project",
     "allow-overview",
     "allow-pipeline",
-    "allow-read-file",
-    "allow-write-file",
     "allow-read-document",
     "allow-write-document",
     "allow-text-stats",

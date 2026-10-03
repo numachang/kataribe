@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Backend } from "../../api/backend";
 import { createMockBackend } from "../../api/mock";
 import { SAMPLE_PROJECT_FOLDER } from "../../api/mock/sampleProject";
-import { useEditorStore } from "../../store/editorStore";
 import { useUiStore } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
+import { editorBody, editText, loadIntoEditor, readText, textDocument } from "../../test/documents";
 import { resetAllStores } from "../../test/resetStores";
 import { wrapBackend } from "../../test/wrapBackend";
 import { writeBesideEditor } from "./openDocumentSync";
@@ -17,17 +17,16 @@ const PATH = "concept.md";
 /** サンプル作品を開き、`concept.md` をエディタで開いた状態にする。 */
 async function openConceptInEditor(backend: Backend): Promise<string> {
   useWorkspaceStore.getState().openWorkspace(await backend.openProject(SAMPLE_PROJECT_FOLDER));
-  const file = await backend.readFile(PATH);
   useWorkspaceStore.getState().openDocument(PATH);
-  useEditorStore.getState().loadDocument(PATH, file.content, file.hash);
-  return file.content;
+  await loadIntoEditor(backend, PATH);
+  return readText(backend, PATH);
 }
 
 /** エディタを通さずに `concept.md` を書き換える。 */
 function rewriteConcept(backend: Backend, content: string) {
   return async () => {
-    const { hash } = await backend.readFile(PATH);
-    return backend.writeFile(PATH, content, hash);
+    const { hash } = await backend.readDocument(PATH);
+    return backend.writeDocument(PATH, textDocument(content), hash);
   };
 }
 
@@ -42,18 +41,18 @@ describe("writeBesideEditor", () => {
       unsavedWorkMessage: "未保存",
     });
 
-    expect(useEditorStore.getState().content).toBe("書き換えた企画");
+    expect(editorBody()).toBe("書き換えた企画");
   });
 
   it("保存できない編集が残っていれば、書き換えずに止める", async () => {
     const inner = createMockBackend({ delayMs: 0 });
     const original = await openConceptInEditor(inner);
     const backend = wrapBackend(inner, {
-      async writeFile() {
+      async writeDocument() {
         throw new Error("ディスクがいっぱいです");
       },
     });
-    useEditorStore.getState().updateContent("保存できていない編集");
+    editText("保存できていない編集");
     const write = vi.fn(rewriteConcept(inner, "書き換えた企画"));
 
     await expect(
@@ -65,8 +64,8 @@ describe("writeBesideEditor", () => {
     ).rejects.toThrow("保存できていない編集があります");
 
     expect(write).not.toHaveBeenCalled();
-    expect((await inner.readFile(PATH)).content).toBe(original);
-    expect(useEditorStore.getState().content).toBe("保存できていない編集");
+    expect(await readText(inner, PATH)).toBe(original);
+    expect(editorBody()).toBe("保存できていない編集");
   });
 
   it("書き換えの間にエディタへ入力されていたら、読み直さない", async () => {
@@ -77,12 +76,29 @@ describe("writeBesideEditor", () => {
       touches: (path) => path === PATH,
       write: async () => {
         await rewriteConcept(backend, "書き換えた企画")();
-        useEditorStore.getState().updateContent("書き換えの間に入力した内容");
+        editText("書き換えの間に入力した内容");
       },
       unsavedWorkMessage: "未保存",
     });
 
-    expect(useEditorStore.getState().content).toBe("書き換えの間に入力した内容");
+    expect(editorBody()).toBe("書き換えの間に入力した内容");
+  });
+
+  it("書き換えの間の入力が、書き換え前と同じ内容に戻っていても、読み直さない", async () => {
+    const backend = createMockBackend({ delayMs: 0 });
+    const original = await openConceptInEditor(backend);
+
+    await writeBesideEditor(backend, {
+      touches: (path) => path === PATH,
+      write: async () => {
+        await rewriteConcept(backend, "書き換えた企画")();
+        editText("途中の入力");
+        editText(original);
+      },
+      unsavedWorkMessage: "未保存",
+    });
+
+    expect(editorBody()).toBe(original);
   });
 
   it("読み直しに失敗しても、書き換えの結果を返し、失敗を知らせる", async () => {
@@ -90,13 +106,13 @@ describe("writeBesideEditor", () => {
     await openConceptInEditor(inner);
     let reads = 0;
     const backend = wrapBackend(inner, {
-      async readFile(path) {
+      async readDocument(path) {
         reads += 1;
         // 1 回目は書き換えの中の読み込み、2 回目が読み直し
         if (reads > 1) {
           throw new Error("一時的に読めません");
         }
-        return inner.readFile(path);
+        return inner.readDocument(path);
       },
     });
 
@@ -113,8 +129,8 @@ describe("writeBesideEditor", () => {
   it("書き換えない文書を開いているときは、読み直さない", async () => {
     const inner = createMockBackend({ delayMs: 0 });
     await openConceptInEditor(inner);
-    const readFile = vi.fn(inner.readFile.bind(inner));
-    const backend = wrapBackend(inner, { readFile });
+    const readDocument = vi.fn(inner.readDocument.bind(inner));
+    const backend = wrapBackend(inner, { readDocument });
 
     await writeBesideEditor(backend, {
       touches: (path) => path === "style.md",
@@ -122,6 +138,6 @@ describe("writeBesideEditor", () => {
       unsavedWorkMessage: "未保存",
     });
 
-    expect(readFile).not.toHaveBeenCalled();
+    expect(readDocument).not.toHaveBeenCalled();
   });
 });

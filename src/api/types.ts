@@ -73,10 +73,54 @@ export interface ProjectOverview {
   sections: OverviewSection[];
 }
 
-export interface TextFile {
-  content: string;
-  /** 読み込んだ時点の内容のハッシュ。上書き時の競合検出に使う。 */
+/** `characters/<id>.md` の front matter。 */
+export interface CharacterMeta {
+  name: string;
+  reading?: string | null;
+  role: string;
+  summary: string;
+  order?: number | null;
+}
+
+/** 1 シーンぶんの設計（`plot/chapters/<NN>.md` の `scenes` の要素）。 */
+export interface ScenePlan {
+  /** シーン id。本文ファイル名にも使う。 */
+  id: string;
+  title: string;
+  summary: string;
+  /** 視点人物（人物の id ではなく名前）。 */
+  pov?: string | null;
+  /** 登場人物の名前の一覧。 */
+  characters?: string[];
+  place?: string | null;
+  time?: string | null;
+  target_chars?: number | null;
+  /** ビート単位で生成したときの展開の一覧。 */
+  beats?: string[];
+}
+
+/** `plot/chapters/<NN>.md` の front matter。 */
+export interface ChapterMeta {
+  title: string;
+  /** シーン構成。並び順がそのままシーンの順序になる。 */
+  scenes?: ScenePlan[];
+}
+
+/**
+ * 画面で編集する文書。人物資料と章立ては front matter を項目に分け、それ以外は文字列のまま扱う。
+ * 章立ての `body` は、その章のストーリーライン。
+ */
+export type EditableDocument =
+  | { kind: "text"; content: string }
+  | { kind: "character"; meta: CharacterMeta; body: string }
+  | { kind: "chapter"; meta: ChapterMeta; body: string };
+
+export interface DocumentFile {
+  document: EditableDocument;
+  /** 読み込んだ時点のファイル全体のハッシュ。上書き時の競合検出に使う。 */
   hash: string;
+  /** 人物資料・章立てなのに front matter を解釈できず、文字列として返したときの理由。 */
+  parse_error: string | null;
 }
 
 // ---- テキスト ----

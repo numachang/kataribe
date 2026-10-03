@@ -6,8 +6,12 @@
 
 import type { AppSettings as GeneratedAppSettings } from "../bindings/AppSettings";
 import type { ChangeSet as GeneratedChangeSet } from "../bindings/ChangeSet";
+import type { ChapterMeta as GeneratedChapterMeta } from "../bindings/ChapterMeta";
+import type { CharacterMeta as GeneratedCharacterMeta } from "../bindings/CharacterMeta";
 import type { CommandErrorKind as GeneratedCommandErrorKind } from "../bindings/CommandErrorKind";
+import type { DocumentFile as GeneratedDocumentFile } from "../bindings/DocumentFile";
 import type { DraftUnit as GeneratedDraftUnit } from "../bindings/DraftUnit";
+import type { EditableDocument as GeneratedEditableDocument } from "../bindings/EditableDocument";
 import type { EditorPreferences as GeneratedEditorPreferences } from "../bindings/EditorPreferences";
 import type { EntryKind as GeneratedEntryKind } from "../bindings/EntryKind";
 import type { FileChange as GeneratedFileChange } from "../bindings/FileChange";
@@ -31,12 +35,12 @@ import type { QualityIssue as GeneratedQualityIssue } from "../bindings/QualityI
 import type { QualityMetrics as GeneratedQualityMetrics } from "../bindings/QualityMetrics";
 import type { QualityReport as GeneratedQualityReport } from "../bindings/QualityReport";
 import type { Rating as GeneratedRating } from "../bindings/Rating";
+import type { ScenePlan as GeneratedScenePlan } from "../bindings/ScenePlan";
 import type { SectionKind as GeneratedSectionKind } from "../bindings/SectionKind";
 import type { Segment as GeneratedSegment } from "../bindings/Segment";
 import type { Severity as GeneratedSeverity } from "../bindings/Severity";
 import type { StepState as GeneratedStepState } from "../bindings/StepState";
 import type { Task as GeneratedTask } from "../bindings/Task";
-import type { TextFile as GeneratedTextFile } from "../bindings/TextFile";
 import type { TextStats as GeneratedTextStats } from "../bindings/TextStats";
 import type { BackendErrorKind } from "./backend";
 import type * as Api from "./types";
@@ -57,7 +61,11 @@ export type BindingsContract = [
   Expect<Equal<Api.OverviewEntry, GeneratedOverviewEntry>>,
   Expect<Equal<Api.OverviewSection, GeneratedOverviewSection>>,
   Expect<Equal<Api.ProjectOverview, GeneratedProjectOverview>>,
-  Expect<Equal<Api.TextFile, GeneratedTextFile>>,
+  Expect<Equal<Api.CharacterMeta, GeneratedCharacterMeta>>,
+  Expect<Equal<Api.ScenePlan, GeneratedScenePlan>>,
+  Expect<Equal<Api.ChapterMeta, GeneratedChapterMeta>>,
+  Expect<Equal<Api.EditableDocument, GeneratedEditableDocument>>,
+  Expect<Equal<Api.DocumentFile, GeneratedDocumentFile>>,
   Expect<Equal<Api.TextStats, GeneratedTextStats>>,
   Expect<Equal<Api.Segment, GeneratedSegment>>,
   Expect<Equal<Api.Severity, GeneratedSeverity>>,

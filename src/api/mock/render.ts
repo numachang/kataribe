@@ -44,15 +44,22 @@ export function renderManifest(manifest: Manifest, settings: ProjectSettings = {
   return `${lines.join("\n")}\n`;
 }
 
+/** 詳細をまだ生成していない人物の、本文の代わりに書く文。 */
+export const PLACEHOLDER_CHARACTER_BODY = "（この人物の詳しい設定はまだ生成していません）\n";
+
 export function renderCharacterFile(character: MockCharacter): string {
-  const frontMatter = renderFrontMatter([
+  const fields: Array<[string, string]> = [
     ["name", character.name],
     ["reading", character.reading],
     ["role", character.role],
     ["summary", character.summary],
-    ["order", String(character.order)],
-  ]);
-  const body = character.detail ?? "（この人物の詳しい設定はまだ生成していません）\n";
+  ];
+  // 順番を決めていない人物は order 自体を書かない
+  if (character.order !== null) {
+    fields.push(["order", String(character.order)]);
+  }
+  const frontMatter = renderFrontMatter(fields);
+  const body = character.detail ?? PLACEHOLDER_CHARACTER_BODY;
   return `${frontMatter}${body}`;
 }
 
