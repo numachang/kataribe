@@ -50,6 +50,8 @@ pub fn run() {
             commands::pipeline,
             commands::read_file,
             commands::write_file,
+            commands::read_document,
+            commands::write_document,
             commands::text_stats,
             commands::parse_ruby,
             commands::analyze_quality,

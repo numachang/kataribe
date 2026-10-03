@@ -22,6 +22,8 @@
     "allow-pipeline",
     "allow-read-file",
     "allow-write-file",
+    "allow-read-document",
+    "allow-write-document",
     "allow-text-stats",
     "allow-parse-ruby",
     "allow-analyze-quality",

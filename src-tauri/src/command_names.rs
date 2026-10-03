@@ -23,6 +23,8 @@ pub const COMMAND_NAMES: &[&str] = &[
     "pipeline",
     "read_file",
     "write_file",
+    "read_document",
+    "write_document",
     "text_stats",
     "parse_ruby",
     "analyze_quality",

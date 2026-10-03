@@ -43,7 +43,10 @@
 - 文字コードは UTF-8（BOM なし）、改行は LF。読み込み時は BOM と CRLF を許容して正規化する。
 - 章の順序はファイル名（`01`, `02`, …）の順。シーンの順序は章ファイルの `scenes` の並び順。
   シーン本文のファイル名はシーンの `id` なので、`scenes` を手で並べ替えても本文との対応は崩れない。
-- 人が追加した未知の YAML 項目は、アプリが書き戻すときも保持する。
+- 人が追加した未知の YAML 項目は、アプリが書き戻すときも保持する。画面から人物資料・章立てを保存するときは、
+  項目（front matter）に変更がなく本文だけが変わったなら、YAML を解釈し直さず書かれたまま
+  （コメント・項目の順番・引用符やブロック表記も）残して本文だけを差し替える。項目が変わったときは YAML を書き直す
+  （未知の項目は残るが、コメントと順番は残らない）。
 
 ### kataribe.yaml
 
@@ -197,10 +200,11 @@ pub async fn collect(stream, on_event) -> Result<Completion, LlmError>;   // 全
 |---|---|---|
 | `path` | `RelPath` | 作品フォルダ内の相対パス。`..`・絶対パス・ドライブ指定・`\`・Windows 予約名・末尾のドット／空白・制御文字を拒否する |
 | `store` | `ProjectStore`、`TextFile { content, hash }`、`ContentHash`、`WriteCondition`、`BackupMode`、`normalize_text(&str) -> String` | フォルダ外に出られないファイル操作。アトミック書き込み、競合検出、バックアップ、ゴミ箱 |
-| `frontmatter` | `Document<M> { meta, body }`、`parse`、`render` | YAML front matter の分解・合成（未知の項目を保持） |
-| `layout` | パス定数と `character_path(id)` などの関数 | §2 のフォルダ構成の唯一の定義 |
+| `frontmatter` | `Document<M> { meta, body }`、`parse`、`render`、`replace_body(text, body)` | YAML front matter の分解・合成（未知の項目を保持）。`replace_body` は front matter を書かれたまま残して本文だけを差し替える |
+| `layout` | パス定数と `character_path(id)` などの関数、`document_kind(&RelPath) -> DocumentKind` | §2 のフォルダ構成の唯一の定義。`document_kind` は `characters/<有効な id>.md` を人物資料、`plot/chapters/<有効な NN>.md` を章立て、それ以外（サブフォルダの下・id として無効な名前・ほかのファイル）を「その他」と判定する。`Project::characters` / `chapters` が拾うファイルと同じ条件 |
 | `model` | `Manifest`・`Rating`・`MarkdownDoc`・`Character`/`CharacterMeta`・`Chapter`/`ChapterMeta`・`ScenePlan`・`ChapterId`・`SceneId`・`CharacterId` | 各ファイルの型。`render()` でファイル内容を生成 |
-| `project` | `Project` | 作品の作成・読み込み・型付きの取得。`update_manifest` で作品情報（`kataribe.yaml`）を書き換える |
+| `document` | `EditableDocument`、`DocumentFile { document, hash, parse_error }` | 画面で編集する文書。人物資料と章立ては front matter を項目に分け、それ以外は文字列のまま扱う |
+| `project` | `Project` | 作品の作成・読み込み・型付きの取得。`update_manifest` で作品情報（`kataribe.yaml`）を書き換える。`read_document` / `write_document` で画面で編集する文書を読み書きする |
 
 - `ProjectStore::write_text(path, content, WriteOptions { condition, backup })`
   - `WriteCondition::{Any, Absent, Matches(ContentHash)}`。条件に合わなければ `Conflict` エラー（外部で変更された可能性）。
@@ -213,6 +217,20 @@ pub async fn collect(stream, on_event) -> Result<Completion, LlmError>;   // 全
 - 「条件の確認から置き換えまで」は同じプロセスの中で排他する（自動保存と変更案の適用が重なっても、
   両方が同じ内容を前提に通って片方の変更が消えることがないように）。
 - `remove` は削除せず `.kataribe/trash/<日時>/<相対パス>` へ移す。
+- `Project::read_document(path) -> DocumentFile` は、人物資料・章立てのパスなら `EditableDocument::Character { meta, body }` /
+  `Chapter { meta, body }`（章の `body` はストーリーライン）を返す。front matter を解釈できなければ、直して保存できるよう
+  `Text { content }` のまま返し、理由（パスと行番号を含む）を `parse_error` に入れる。それ以外のパスは `Text { content }`。
+  `hash` は正規化したファイル全体のハッシュで、`read_text` と同じもの。
+- `Project::write_document(path, &EditableDocument, expected) -> ContentHash` の `expected` は `write_text` の条件に対応する
+  （`Some` なら今のハッシュと一致するときだけ、`None` なら新規作成だけ。違えば `Conflict`）。バックアップは `Throttled`。
+  - `Text` はパスの種類を問わずそのまま書く（YAML が壊れた人物資料を文字列のまま直せるように）。
+  - `Character` / `Chapter` はパスの種類が合わなければ `DocumentKindMismatch`。保存されている今のファイルを読み、
+    解釈できれば、画面が知らない項目（`extra`）は保存されている側の値を使う（章立てのシーンは `id` で突き合わせ、
+    保存側に無い `id` は未知の項目なし）。そのうえで項目が保存されているものと等しければ `replace_body` で本文だけを
+    差し替え、等しくなければ `render` で書き直す。保存されているファイルが無い（新規作成）か解釈できないときは、
+    画面から来た文書をそのまま `render` する。
+  - 保存されているファイルを読んだ時点で `expected` と食い違っていれば、項目を引き継がずに `Conflict` にする。
+    読んでから書くまでの間の変更は、`write_text` が排他の中で条件を確かめ直して検出する。
 - 作品全体の一覧（文字数や生成工程の状態を含む `ProjectOverview`）は engine が組み立てる。
 - `Project` はキャッシュを持たず、毎回ファイルを読む（外部エディタや `git checkout` による変更を常に反映するため）。
 
@@ -376,6 +394,7 @@ Tauri コマンド名と引数（JS 側の名前。Rust 側は snake_case で受
 | createProject / openProject / closeProject | `create_project` / `open_project` / `close_project` | `folder, project` / `folder` / — |
 | overview / pipeline | `overview` / `pipeline` | — |
 | readFile / writeFile | `read_file` / `write_file` | `path` / `path, content, expectedHash` |
+| readDocument / writeDocument | `read_document` / `write_document` | `path` / `path, document, expectedHash`（`document` は `EditableDocument`。`kind` が `text`・`character`・`chapter` のどれか。`read_document` は `{ document, hash, parse_error }`、`write_document` は新しいハッシュを返す。パスの種類に合わない文書は `invalid_input`） |
 | textStats / parseRuby / analyzeQuality | `text_stats` / `parse_ruby` / `analyze_quality` | `text` / `text` / `text, targetChars` |
 | generate / cancelGeneration | `generate` / `cancel_generation` | `jobId, task, onEvent`（`Channel<GenerationEvent>`）/ `jobId` |
 | applyChangeSet | `apply_change_set` | `changeSet` |

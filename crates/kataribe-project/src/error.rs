@@ -36,6 +36,15 @@ pub enum ProjectError {
         path: RelPath,
     },
 
+    /// 人物資料・章立てとして保存しようとしたが、パスがその種類のファイルではなかった。
+    #[error("{path} は{expected}のファイルではないため、{expected}として保存できません")]
+    DocumentKindMismatch {
+        /// 保存先のパス。
+        path: RelPath,
+        /// 保存しようとした文書の種類（「人物資料」など）。
+        expected: &'static str,
+    },
+
     /// ファイルが見つからなかった。
     #[error("{path} が見つかりません")]
     NotFound {

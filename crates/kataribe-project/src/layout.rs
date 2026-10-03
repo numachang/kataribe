@@ -53,6 +53,42 @@ pub fn chapter_path(id: &ChapterId) -> RelPath {
     RelPath::trusted(format!("{CHAPTERS_DIR}/{id}.md"))
 }
 
+/// パスが指すファイルの種類。画面が front matter を項目に分けて扱うかどうかを決める。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DocumentKind {
+    /// `characters/<有効な id>.md`。
+    Character(CharacterId),
+    /// `plot/chapters/<有効な NN>.md`。
+    Chapter(ChapterId),
+    /// 上のどれでもないもの（サブフォルダの下・id として無効な名前・ほかのファイル）。
+    Other,
+}
+
+/// パスから文書の種類を引く。
+///
+/// [`crate::project::Project::characters`] / [`crate::project::Project::chapters`] が
+/// 人物・章として拾うファイルと、ちょうど同じ条件で判定する。
+#[must_use]
+pub fn document_kind(path: &RelPath) -> DocumentKind {
+    if let Some(id) =
+        markdown_stem_in(path, CHARACTERS_DIR).and_then(|stem| CharacterId::new(stem).ok())
+    {
+        return DocumentKind::Character(id);
+    }
+    if let Some(id) =
+        markdown_stem_in(path, CHAPTERS_DIR).and_then(|stem| ChapterId::new(stem).ok())
+    {
+        return DocumentKind::Chapter(id);
+    }
+    DocumentKind::Other
+}
+
+/// `dir` の直下にある Markdown ファイルなら、その拡張子を除いた名前。
+fn markdown_stem_in<'a>(path: &'a RelPath, dir: &str) -> Option<&'a str> {
+    let is_directly_in_dir = path.parent().is_some_and(|parent| parent.as_str() == dir);
+    (is_directly_in_dir && path.extension() == Some("md")).then(|| path.file_stem())
+}
+
 /// `manuscript/<NN>/<scene-id>.txt` のパス。
 #[must_use]
 pub fn scene_text_path(chapter: &ChapterId, scene: &SceneId) -> RelPath {
@@ -91,6 +127,82 @@ mod tests {
     fn chapter_path_builds_expected_location() {
         let id = ChapterId::from_number(1);
         assert_eq!(chapter_path(&id).as_str(), "plot/chapters/01.md");
+    }
+
+    fn kind_of(path: &str) -> DocumentKind {
+        document_kind(&RelPath::new(path).unwrap())
+    }
+
+    #[test]
+    fn character_file_is_a_character_document() {
+        assert_eq!(
+            kind_of("characters/kirishima-rin.md"),
+            DocumentKind::Character(CharacterId::new("kirishima-rin").unwrap())
+        );
+    }
+
+    #[test]
+    fn chapter_file_is_a_chapter_document() {
+        assert_eq!(
+            kind_of("plot/chapters/01.md"),
+            DocumentKind::Chapter(ChapterId::from_number(1))
+        );
+        assert_eq!(
+            kind_of("plot/chapters/100.md"),
+            DocumentKind::Chapter(ChapterId::new("100").unwrap())
+        );
+    }
+
+    #[test]
+    fn paths_made_by_the_layout_functions_are_classified_back() {
+        let character = CharacterId::new("sato-kenji").unwrap();
+        let chapter = ChapterId::from_number(12);
+        assert_eq!(
+            document_kind(&character_path(&character)),
+            DocumentKind::Character(character)
+        );
+        assert_eq!(
+            document_kind(&chapter_path(&chapter)),
+            DocumentKind::Chapter(chapter)
+        );
+    }
+
+    #[test]
+    fn invalid_ids_are_other_documents() {
+        for path in [
+            "characters/Kirishima.md",
+            "characters/霧島.md",
+            "characters/-rin.md",
+            "characters/.md",
+            "plot/chapters/1.md",
+            "plot/chapters/1000.md",
+            "plot/chapters/ab.md",
+        ] {
+            assert_eq!(kind_of(path), DocumentKind::Other, "path: {path}");
+        }
+    }
+
+    #[test]
+    fn files_below_a_subfolder_are_other_documents() {
+        assert_eq!(kind_of("characters/old/rin.md"), DocumentKind::Other);
+        assert_eq!(kind_of("plot/chapters/draft/01.md"), DocumentKind::Other);
+    }
+
+    #[test]
+    fn files_in_other_folders_or_with_other_extensions_are_other_documents() {
+        for path in [
+            "concept.md",
+            "world/rin.md",
+            "plot/01.md",
+            "plot/synopsis.md",
+            "characters/rin.txt",
+            "characters/rin.MD",
+            "plot/chapters/01.txt",
+            "characters",
+            "plot/chapters",
+        ] {
+            assert_eq!(kind_of(path), DocumentKind::Other, "path: {path}");
+        }
     }
 
     #[test]
