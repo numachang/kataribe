@@ -1,3 +1,4 @@
+import { BackendError } from "../backend";
 import { mergeSceneDrafts, parseChapterFile, parseCharacterFile } from "./parse";
 import {
   CONCEPT_PATH,
@@ -5,9 +6,10 @@ import {
   STYLE_PATH,
   SYNOPSIS_PATH,
   WORLD_OVERVIEW_PATH,
+  worldDocumentNameFromPath,
 } from "./paths";
 import type { ProjectState } from "./state";
-import { findChapter, findCharacter } from "./state";
+import { findChapter, findCharacter, findWorldDocument } from "./state";
 
 const CHARACTER_PATH_PATTERN = /^characters\/(.+)\.md$/;
 const CHAPTER_PATH_PATTERN = /^plot\/chapters\/(.+)\.md$/;
@@ -33,6 +35,20 @@ export function writeMockFile(state: ProjectState, path: string, content: string
   }
   if (path === SYNOPSIS_PATH) {
     return { ...state, synopsis: content };
+  }
+
+  const worldDocumentName = worldDocumentNameFromPath(path);
+  if (worldDocumentName !== null) {
+    const exists = findWorldDocument(state, worldDocumentName) !== null;
+    const written = { name: worldDocumentName, content };
+    return {
+      ...state,
+      worldDocuments: exists
+        ? state.worldDocuments.map((document) =>
+            document.name === worldDocumentName ? written : document,
+          )
+        : [...state.worldDocuments, written],
+    };
   }
 
   const characterMatch = CHARACTER_PATH_PATTERN.exec(path);
@@ -84,4 +100,53 @@ export function writeMockFile(state: ProjectState, path: string, content: string
   }
 
   return state;
+}
+
+/**
+ * ファイルをゴミ箱へ移した後の状態を返す（状態を書き換えない）。
+ * 人物資料・足した世界観の資料はそのまま取り除き、シーンの本文は「未生成」に戻す。
+ * 構成の操作が消せるのはそれだけなので、ほかのパスは invalid_input にする（本物の Trash と同じく、消すものを選ぶのは呼び出し側）。
+ */
+export function trashMockFile(state: ProjectState, path: string): ProjectState {
+  const worldDocumentName = worldDocumentNameFromPath(path);
+  if (worldDocumentName !== null) {
+    return {
+      ...state,
+      worldDocuments: state.worldDocuments.filter(
+        (document) => document.name !== worldDocumentName,
+      ),
+    };
+  }
+
+  const characterMatch = CHARACTER_PATH_PATTERN.exec(path);
+  if (characterMatch?.[1] !== undefined) {
+    const id = characterMatch[1];
+    return {
+      ...state,
+      characters: state.characters?.filter((character) => character.id !== id) ?? null,
+    };
+  }
+
+  const sceneMatch = SCENE_PATH_PATTERN.exec(path);
+  if (sceneMatch?.[1] !== undefined && sceneMatch[2] !== undefined) {
+    const chapterId = sceneMatch[1];
+    const sceneId = sceneMatch[2];
+    return {
+      ...state,
+      chapters:
+        state.chapters?.map((chapter) =>
+          chapter.id !== chapterId
+            ? chapter
+            : {
+                ...chapter,
+                scenes:
+                  chapter.scenes?.map((scene) =>
+                    scene.id === sceneId ? { ...scene, draft: null } : scene,
+                  ) ?? null,
+              },
+        ) ?? null,
+    };
+  }
+
+  throw new BackendError("invalid_input", `「${path}」はゴミ箱へ移せません。`);
 }

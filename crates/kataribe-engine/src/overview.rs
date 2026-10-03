@@ -2,7 +2,9 @@
 //! 1 つのファイルが壊れていても一覧全体は出せるよう、ファイルごとにエラーを記録する。
 
 use kataribe_project::store::DirEntryKind;
-use kataribe_project::{Chapter, ChapterId, CharacterId, Project, ProjectError, RelPath, layout};
+use kataribe_project::{
+    Chapter, ChapterId, CharacterId, Project, ProjectError, RelPath, SceneId, layout,
+};
 use kataribe_text::count::count_chars;
 use serde::{Deserialize, Serialize};
 
@@ -42,6 +44,11 @@ pub struct OverviewEntry {
     pub path: Option<String>,
     pub label: String,
     pub kind: EntryKind,
+    /// 章に属する項目（章立て・本文の章見出し・シーンの本文）の章。本文の章見出しにはパスが無いので、
+    /// 画面が章を知るために持つ。
+    pub chapter: Option<ChapterId>,
+    /// シーンの本文の項目のシーン。
+    pub scene: Option<SceneId>,
     pub exists: bool,
     /// 本文の文字数（ルビの読み・空白を除く）。
     pub chars: usize,
@@ -123,6 +130,8 @@ fn entry(path: &RelPath, label: String, kind: EntryKind) -> OverviewEntry {
         path: Some(path.to_string()),
         label,
         kind,
+        chapter: None,
+        scene: None,
         exists: false,
         chars: 0,
         target_chars: None,
@@ -234,6 +243,7 @@ fn plot_entries(project: &Project, chapters: &[ChapterEntry]) -> Result<Vec<Over
             format!("第{}章", chapter.id.number()),
             EntryKind::Chapter,
         );
+        item.chapter = Some(chapter.id);
         item.exists = true;
         match &chapter.parsed {
             Ok(parsed) => {
@@ -257,6 +267,8 @@ fn manuscript_section(project: &Project, chapters: &[ChapterEntry]) -> Result<Ov
             path: None,
             label: chapter_label(parsed),
             kind: EntryKind::Chapter,
+            chapter: Some(parsed.id),
+            scene: None,
             exists: true,
             chars: 0,
             target_chars: None,
@@ -267,6 +279,8 @@ fn manuscript_section(project: &Project, chapters: &[ChapterEntry]) -> Result<Ov
             let path = layout::scene_text_path(&parsed.id, &scene.id);
             let label = format!("{}. {}", index + 1, scene.title);
             let mut item = file_entry(project, path.as_str(), &label, EntryKind::Scene)?;
+            item.chapter = Some(parsed.id);
+            item.scene = Some(scene.id);
             item.target_chars = scene.target_chars.filter(|&target| target > 0);
             heading.chars += item.chars;
             heading.children.push(item);

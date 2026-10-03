@@ -5,8 +5,8 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use kataribe_engine::{
-    DraftUnit, Engine, EventSink, GenerationEvent, GenerationSettings, IgnoreEvents, NewProject,
-    StepState, Task, create_project, pipeline,
+    DraftUnit, Engine, EventSink, FileChange, GenerationEvent, GenerationSettings, IgnoreEvents,
+    NewProject, StepState, Task, create_project, pipeline,
 };
 use kataribe_llm::testing::{Script, ScriptedChatModel};
 use kataribe_project::{ChapterId, Project, Rating, RelPath, SceneId};
@@ -343,17 +343,18 @@ async fn revise_rewrites_a_document_following_the_instruction() {
         .unwrap();
 
     assert_eq!(changes.files.len(), 1);
-    assert!(
-        changes.files[0]
-            .previous
-            .as_deref()
-            .unwrap()
-            .contains("嵐の洋館")
-    );
-    assert_eq!(
-        changes.files[0].content,
-        "# 企画\n## ログライン\n吹雪の山荘で起きる事件。\n"
-    );
+    let FileChange::Write {
+        path,
+        content,
+        previous,
+        ..
+    } = &changes.files[0]
+    else {
+        panic!("書き直しは書き込みの変更になるはず: {:?}", changes.files[0]);
+    };
+    assert_eq!(path.as_str(), "concept.md");
+    assert!(previous.as_deref().unwrap().contains("嵐の洋館"));
+    assert_eq!(content, "# 企画\n## ログライン\n吹雪の山荘で起きる事件。\n");
 }
 
 #[tokio::test]

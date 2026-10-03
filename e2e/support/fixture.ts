@@ -8,6 +8,10 @@ export const PROJECT_FOLDER_NAME = "e2e-project";
 export const SCENE_TITLE = "雨の夜";
 export const SCENE_PATH = "manuscript/01/s01.txt";
 export const INITIAL_SCENE_TEXT = "　雨が降っていた。\n";
+/** 本文のある 2 つ目のシーン。削除したとき、本文がゴミ箱へ移ることを確かめるのに使う。 */
+export const SECOND_SCENE_TITLE = "雨上がり";
+export const SECOND_SCENE_PATH = "manuscript/01/s02.txt";
+export const SECOND_SCENE_TEXT = "　雨が上がった。\n";
 export const CHAPTER_TITLE = "第一章";
 export const CHARACTER_NAME = "霧島 凛";
 export const CHARACTER_PATH = "characters/kirishima-rin.md";
@@ -45,11 +49,15 @@ const PROJECT_FILES: Record<string, string> = {
     "    pov: 霧島 凛",
     "    characters: [霧島 凛]",
     `    ${UNKNOWN_SCENE_FIELD}`,
+    "  - id: s02",
+    `    title: ${SECOND_SCENE_TITLE}`,
+    "    summary: 雨が上がった朝の場面。",
     "---",
     "雨の夜の章。",
     "",
   ].join("\n"),
   [SCENE_PATH]: INITIAL_SCENE_TEXT,
+  [SECOND_SCENE_PATH]: SECOND_SCENE_TEXT,
   [CHARACTER_PATH]: [
     "---",
     HAND_WRITTEN_COMMENT,

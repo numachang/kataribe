@@ -40,12 +40,40 @@
   border-bottom: 1px solid var(--color-border);
 }
 
+.project-tree__section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-right: 8px;
+  margin-bottom: 4px;
+}
+
 .project-tree__section h3 {
-  margin: 0 0 4px;
+  margin: 0;
   padding: 0 14px;
   font-size: 11px;
   font-weight: normal;
   color: var(--color-ink-faint);
+}
+
+.project-tree__add {
+  border: none;
+  background: none;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--color-ink-soft);
+}
+
+.project-tree__add:hover:not(:disabled) {
+  color: var(--color-ink);
+  background: var(--color-bg-raised);
+}
+
+.project-tree__add:disabled {
+  color: var(--color-ink-faint);
+  opacity: 0.6;
 }
 
 .project-tree__section ul {
@@ -54,11 +82,19 @@
   padding: 0;
 }
 
+/* 1 行は、項目（開く）と操作メニューを横に並べる。背景は行全体に付ける。 */
+.project-tree__row {
+  display: flex;
+  align-items: center;
+  padding-right: 6px;
+}
+
 .project-tree__entry {
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   padding: 5px 14px;
   border: none;
   background: none;
@@ -71,16 +107,16 @@ button.project-tree__entry {
   cursor: pointer;
 }
 
-.project-tree__entry:hover {
+.project-tree__row:hover {
   background: var(--color-bg-raised);
 }
 
-.project-tree__entry--selected {
+.project-tree__row--selected {
   background: var(--color-accent-soft);
   font-weight: bold;
 }
 
-.project-tree__entry--pending {
+.project-tree__row--pending .project-tree__entry {
   color: var(--color-ink-faint);
 }
 

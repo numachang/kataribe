@@ -90,6 +90,7 @@ fn project_error_kind(error: &ProjectError) -> CommandErrorKind {
         | ProjectError::InvalidId(_)
         | ProjectError::DocumentKindMismatch { .. }
         | ProjectError::DuplicateSceneId { .. }
+        | ProjectError::InvalidChangeSet { .. }
         | ProjectError::AlreadyExists { .. }
         | ProjectError::PathEscapesRoot { .. }
         | ProjectError::DirectoryNotEmpty { .. } => CommandErrorKind::InvalidInput,
@@ -167,6 +168,19 @@ mod tests {
             CommandError::from(source).kind,
             CommandErrorKind::InvalidInput
         );
+    }
+
+    #[test]
+    fn invalid_change_set_maps_to_invalid_input() {
+        let source = ProjectError::InvalidChangeSet {
+            reason: "kataribe.yaml はゴミ箱へ移せません".into(),
+        };
+        let message = source.to_string();
+
+        let error = CommandError::from(EngineError::Project(source));
+
+        assert_eq!(error.kind, CommandErrorKind::InvalidInput);
+        assert_eq!(error.message, message);
     }
 
     #[test]

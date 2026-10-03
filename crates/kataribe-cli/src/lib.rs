@@ -13,6 +13,8 @@ mod commands;
 mod output;
 mod settings;
 mod stage;
+mod structure_args;
+mod target_spec;
 mod task_spec;
 #[cfg(test)]
 mod test_support;
@@ -39,7 +41,7 @@ const EXIT_USAGE_ERROR: u8 = 2;
 /// 変更案の適用中であることを示す、プロセス全体で共有する合図。
 ///
 /// Ctrl+C を 2 回受けたときは、応答しなくなった処理を待たずにその場でプロセスを終了してよいが、
-/// 変更案の適用（`ChangeSet::apply` → `ProjectStore::write_all`）の途中だけは、原稿を失わないよう
+/// 変更案の適用（`ChangeSet::apply` → `ProjectStore::apply_changes`）の途中だけは、原稿を失わないよう
 /// 完了を待ってから終了したい。`main.rs` はこの型を作って [`run_cancellable`] に渡し、2 回目の
 /// Ctrl+C を受けたときに [`ApplyGuard::wait_until_idle`] で完了を待ってから終了する。
 #[derive(Debug, Clone)]
@@ -134,6 +136,8 @@ async fn dispatch(
         Command::Run(args) => {
             commands::run::run(args, &cli.global, console, cancel, apply_guard).await
         }
+        Command::Add(args) => commands::add::run(args, console, apply_guard).await,
+        Command::Remove(args) => commands::remove::run(args, console, apply_guard).await,
         Command::Quality(args) => commands::quality::run(args, console),
         Command::Export(args) => commands::export::run(args, console),
         Command::Models => commands::models::run(&cli.global, console).await,

@@ -29,3 +29,12 @@ export function findOverviewEntry(
   }
   return null;
 }
+
+/** 本文の節にある、章 `chapterId` の見出し（その下にシーンが並ぶ）。無ければ null。 */
+export function findManuscriptChapter(
+  overview: ProjectOverview | null,
+  chapterId: string,
+): OverviewEntry | null {
+  const manuscript = overview?.sections.find((section) => section.kind === "manuscript");
+  return manuscript?.entries.find((entry) => entry.chapter === chapterId) ?? null;
+}

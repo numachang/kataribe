@@ -1,7 +1,7 @@
 // 本物のアプリ（WebView2 + Rust のバックエンド）を WebDriver で操作する E2E テスト。
 // 実行方法は README の「E2E テスト」を参照。
 
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { By, Key, until, type WebDriver, type WebElement } from "selenium-webdriver";
 import { type AppSession, launchApp } from "./support/appSession";
@@ -17,6 +17,9 @@ import {
   PROJECT_FOLDER_NAME,
   SCENE_PATH,
   SCENE_TITLE,
+  SECOND_SCENE_PATH,
+  SECOND_SCENE_TEXT,
+  SECOND_SCENE_TITLE,
   UNKNOWN_FIELD,
   UNKNOWN_SCENE_FIELD,
 } from "./support/fixture";
@@ -83,14 +86,17 @@ async function saveWithShortcut(element: WebElement): Promise<void> {
   await element.sendKeys(Key.chord(Key.CONTROL, "s"));
 }
 
-/** ファイルが条件を満たすまで待つ（自動保存や Ctrl+S の保存は非同期なので）。 */
+/** ファイルが条件を満たすまで待つ（自動保存や Ctrl+S の保存は非同期なので）。まだ無いファイルは、できるまで待つ。 */
 async function waitForFile(
   relativePath: string,
   condition: (content: string) => boolean,
   message: string,
 ): Promise<string> {
   await app.wait(
-    async () => condition(await readProjectFile(relativePath)),
+    async () => {
+      const content = await readProjectFile(relativePath).catch(() => null);
+      return content !== null && condition(content);
+    },
     SAVE_TIMEOUT_MS,
     message,
   );
@@ -241,4 +247,96 @@ test("章立てを開くと章題とシーンのカードが出て、シーン�
   expect(saved).toContain(UNKNOWN_SCENE_FIELD);
   expect(saved).toContain("pov: 霧島 凛");
   expect(saved).toContain("雨の夜の章。");
+});
+
+/** 開いているダイアログ（見出しの名前で探す）。 */
+async function dialogNamed(name: string): Promise<WebElement> {
+  return waitForElement(By.css(`[role="dialog"][aria-label="${name}"]`));
+}
+
+async function dialogField(dialog: WebElement, label: string, tag = "input"): Promise<WebElement> {
+  return dialog.findElement(By.xpath(`.//label[span[normalize-space(.)='${label}']]//${tag}`));
+}
+
+async function projectFileExists(relativePath: string): Promise<boolean> {
+  return access(path.join(fixture.projectFolder, relativePath)).then(
+    () => true,
+    () => false,
+  );
+}
+
+test("目次の「人物を追加」で、かなの読みからローマ字の ID を作り、人物資料ができて目次に出て開かれる", async () => {
+  await (await waitForElement(By.css('button[aria-label="人物を追加"]'))).click();
+  const dialog = await dialogNamed("人物を追加");
+
+  await (await dialogField(dialog, "名前")).sendKeys("霧島 蓮");
+  await (await dialogField(dialog, "読み")).sendKeys("きりしま れん");
+  await (await dialogField(dialog, "役割")).sendKeys("助手");
+  const idInput = await dialogField(dialog, "ID");
+  await app.wait(
+    async () => (await idInput.getAttribute("value")) === "kirishima-ren",
+    SAVE_TIMEOUT_MS,
+    "読みからローマ字の ID の提案が出ませんでした。",
+  );
+  await saveScreenshot("add-character-dialog.png");
+  await (await dialog.findElement(By.xpath(".//button[normalize-space(.)='追加']"))).click();
+
+  const saved = await waitForFile(
+    "characters/kirishima-ren.md",
+    (content) => content.includes("name: 霧島 蓮"),
+    "追加した人物の資料が作られませんでした。",
+  );
+  expect(saved).toContain("name: 霧島 蓮");
+  expect(saved).toContain("reading: きりしま れん");
+  expect(saved).toContain("role: 助手");
+  // 目次に出て、そのまま開かれる（本文の欄の名前は、開いているファイルのパス）
+  await waitForElement(buttonWithText("霧島 蓮"));
+  await documentEditor("characters/kirishima-ren.md");
+  expect(await (await fieldInput("名前")).getAttribute("value")).toBe("霧島 蓮");
+  await saveScreenshot("character-added.png");
+});
+
+test("本文のあるシーンを削除すると、確認で本文も移ることを見せ、本文は .kataribe/trash/ に移り、章立てからも外れる", async () => {
+  await (
+    await waitForElement(By.css(`button[aria-label="「2. ${SECOND_SCENE_TITLE}」の操作"]`))
+  ).click();
+  await (
+    await waitForElement(By.xpath("//*[@role='menuitem' and normalize-space(.)='削除']"))
+  ).click();
+
+  const dialog = await dialogNamed("削除の確認");
+  const emphasis = await waitForElement(By.css(".structure-dialog__emphasis"));
+  expect(await emphasis.getText()).toContain("本文 1 ファイル（計 7 字）もゴミ箱へ移ります。");
+  await saveScreenshot("remove-scene-confirm.png");
+  await (
+    await dialog.findElement(By.xpath(".//button[normalize-space(.)='ゴミ箱へ移す']"))
+  ).click();
+
+  await app.wait(
+    async () => !(await projectFileExists(SECOND_SCENE_PATH)),
+    SAVE_TIMEOUT_MS,
+    "本文がゴミ箱へ移りませんでした。",
+  );
+  // ゴミ箱へは、日時のフォルダの下に元のパスのまま移る
+  const trashRoot = path.join(fixture.projectFolder, ".kataribe", "trash");
+  const [stamp] = await readdir(trashRoot);
+  expect(stamp).toBeDefined();
+  expect(await readFile(path.join(trashRoot, stamp ?? "", SECOND_SCENE_PATH), "utf8")).toBe(
+    SECOND_SCENE_TEXT,
+  );
+  const chapter = await waitForFile(
+    "plot/chapters/01.md",
+    (content) => !content.includes(SECOND_SCENE_TITLE),
+    "章立てからシーンが外れませんでした。",
+  );
+  expect(chapter).toContain(`title: ${SCENE_TITLE}`);
+  expect(chapter).toContain(UNKNOWN_SCENE_FIELD);
+  await app.wait(
+    async () =>
+      (await app.findElements(By.css(`button[aria-label="「2. ${SECOND_SCENE_TITLE}」の操作"]`)))
+        .length === 0,
+    UI_TIMEOUT_MS,
+    "目次からシーンが消えませんでした。",
+  );
+  await saveScreenshot("scene-removed.png");
 });

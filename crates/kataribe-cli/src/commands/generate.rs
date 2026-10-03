@@ -60,9 +60,7 @@ async fn apply_or_show(
         return Ok(Outcome::Success);
     }
     super::apply_change_set(changes, project, apply_guard, console).await?;
-    for file in &changes.files {
-        console.eprint(&format!("書き込み: {}\n", file.path))?;
-    }
+    super::report_applied_changes(console, changes, "")?;
     Ok(Outcome::Success)
 }
 
@@ -90,7 +88,7 @@ mod tests {
             .unwrap();
 
         let mut changes = ChangeSet::new("企画を生成しました。").made_for(&project);
-        changes.files.push(FileChange {
+        changes.files.push(FileChange::Write {
             path: RelPath::new("concept.md").unwrap(),
             content: "LLM が生成した企画の内容".into(),
             previous: None,

@@ -15,6 +15,8 @@ import type {
   ProjectSettingsFile,
   QualityReport,
   Segment,
+  StructureEdit,
+  StructurePlan,
   Task,
   TextStats,
 } from "./types";
@@ -92,6 +94,15 @@ export interface Backend {
   ): Promise<ChangeSet>;
   cancelGeneration(jobId: string): Promise<void>;
   applyChangeSet(changeSet: ChangeSet): Promise<ProjectOverview>;
+
+  // 構成（人物・世界観の資料・シーンの追加と削除）
+  /**
+   * 構成の操作を、作品フォルダを書き換えずに変更案へ組み立てる。適用は applyChangeSet。
+   * 入力の誤り・消せない資料は kind = "invalid_input"、対象が無ければ "not_found" で失敗する。
+   */
+  planStructureEdit(edit: StructureEdit): Promise<StructurePlan>;
+  /** 人物の ID の案を、読み（無ければ名前）から作る。使用済みの ID は避ける。 */
+  suggestCharacterId(reading: string, name: string): Promise<string>;
 }
 
 export type BackendErrorKind =

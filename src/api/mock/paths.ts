@@ -1,6 +1,8 @@
 // 作品フォルダ内の相対パスの組み立て。docs/architecture.md §2 のフォルダ構成と一致させる。
 // kataribe-project の `layout` モジュールに相当する、偽実装だけで使うもの。
 
+import { isValidSlug } from "../../lib/slug";
+
 export const MANIFEST_PATH = "kataribe.yaml";
 export const CONCEPT_PATH = "concept.md";
 export const STYLE_PATH = "style.md";
@@ -9,6 +11,10 @@ export const SYNOPSIS_PATH = "plot/synopsis.md";
 
 export function characterPath(id: string): string {
   return `characters/${id}.md`;
+}
+
+export function worldDocumentPath(name: string): string {
+  return `world/${name}.md`;
 }
 
 export function chapterPath(chapterId: string): string {
@@ -32,35 +38,32 @@ export function isProjectRelativePath(path: string): boolean {
   return path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
-// Windows が予約しているファイル名（kataribe-project の `RESERVED_STEMS` と同じ）。
-const WINDOWS_RESERVED_NAMES = new Set([
-  "con",
-  "prn",
-  "aux",
-  "nul",
-  ...Array.from({ length: 9 }, (_, index) => `com${index + 1}`),
-  ...Array.from({ length: 9 }, (_, index) => `lpt${index + 1}`),
-]);
-
-const CHARACTER_ID_MAX_LENGTH = 48;
-const CHARACTER_ID_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const CHAPTER_ID_PATTERN = /^\d{2,3}$/;
+const WORLD_FILE_PATTERN = /^world\/([^/]+)\.md$/;
 const CHARACTER_FILE_PATTERN = /^characters\/([^/]+)\.md$/;
 const CHAPTER_FILE_PATTERN = /^plot\/chapters\/([^/]+)\.md$/;
 
-/** 人物 id として有効か（`CharacterId::new` と同じ規則）。小文字の英数字をハイフン 1 つずつでつないだ slug。 */
-function isValidCharacterId(id: string): boolean {
-  return (
-    id.length <= CHARACTER_ID_MAX_LENGTH &&
-    CHARACTER_ID_PATTERN.test(id) &&
-    !WINDOWS_RESERVED_NAMES.has(id)
-  );
+/** 世界観の概要（`world/overview.md`）の名前。足す資料には使えない。 */
+const WORLD_OVERVIEW_NAME = "overview";
+
+/** 足す世界観の資料のファイル名として使えるか。slug の規則に合い、概要の名前でないこと。 */
+export function isValidWorldDocumentName(name: string): boolean {
+  return isValidSlug(name) && name !== WORLD_OVERVIEW_NAME;
+}
+
+/**
+ * `world/<name>.md`（概要以外）なら name、それ以外は null。
+ * Windows は大文字小文字を区別しないので、`world/Overview.md` も概要（足した資料ではない）とみなす。
+ */
+export function worldDocumentNameFromPath(path: string): string | null {
+  const name = WORLD_FILE_PATTERN.exec(path)?.[1];
+  return name !== undefined && name.toLowerCase() !== WORLD_OVERVIEW_NAME ? name : null;
 }
 
 /** `characters/<有効な id>.md` なら id、それ以外は null（`document_kind` が人物資料と判定する条件）。 */
 export function characterIdFromPath(path: string): string | null {
   const id = CHARACTER_FILE_PATTERN.exec(path)?.[1];
-  return id !== undefined && isValidCharacterId(id) ? id : null;
+  return id !== undefined && isValidSlug(id) ? id : null;
 }
 
 /** `plot/chapters/<NN または NNN>.md` なら章 id、それ以外は null（`ChapterId::new` と同じ規則）。 */

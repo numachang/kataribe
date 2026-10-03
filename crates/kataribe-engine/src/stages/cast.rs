@@ -17,6 +17,7 @@ use crate::change_set::ChangeSet;
 use crate::error::{EngineError, Result};
 use crate::events::{NoticeLevel, notice};
 use crate::excerpt;
+use crate::names::same_person;
 use crate::prompt::{Prompt, PromptTemplate};
 
 const ROSTER_OUTPUT_TOKENS: u32 = 3072;
@@ -194,26 +195,4 @@ fn merge_entry(mut character: Character, entry: RosterEntry, order: Option<u32>)
     character.meta.summary = entry.summary;
     character.meta.order = order;
     character
-}
-
-/// 空白の有無を無視して名前が一致するか（「霧島 凛」と「霧島凛」を同一人物とみなす）。
-pub(crate) fn same_person(left: &str, right: &str) -> bool {
-    let squeeze = |name: &str| {
-        name.chars()
-            .filter(|c| !c.is_whitespace())
-            .collect::<String>()
-    };
-    squeeze(left) == squeeze(right)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn names_match_regardless_of_spacing() {
-        assert!(same_person("霧島 凛", "霧島凛"));
-        assert!(same_person("霧島　凛", "霧島 凛"));
-        assert!(!same_person("霧島 凛", "霧島 蓮"));
-    }
 }

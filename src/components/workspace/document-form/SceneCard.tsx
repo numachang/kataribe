@@ -1,12 +1,6 @@
 import type { ScenePlan } from "../../../api/types";
 import { SCENE_FIELD_LABELS } from "./fieldLabels";
-import {
-  IntegerField,
-  NameListField,
-  OptionalTextField,
-  TextAreaField,
-  TextField,
-} from "./formFields";
+import { SceneFields } from "./SceneFields";
 
 interface SceneCardProps {
   scene: ScenePlan;
@@ -22,45 +16,7 @@ export function SceneCard({ scene, onChange }: SceneCardProps) {
         {scene.id}　{scene.title}
       </summary>
       <div className="document-form scene-card__fields">
-        <TextField
-          label={SCENE_FIELD_LABELS.title}
-          value={scene.title}
-          onChange={(title) => onChange({ ...scene, title })}
-        />
-        <TextAreaField
-          label={SCENE_FIELD_LABELS.summary}
-          value={scene.summary}
-          onChange={(summary) => onChange({ ...scene, summary })}
-        />
-        <div className="document-form__row">
-          <OptionalTextField
-            label={SCENE_FIELD_LABELS.pov}
-            value={scene.pov}
-            onChange={(pov) => onChange({ ...scene, pov })}
-          />
-          <NameListField
-            label={SCENE_FIELD_LABELS.characters}
-            value={scene.characters}
-            onChange={(characters) => onChange({ ...scene, characters })}
-          />
-        </div>
-        <div className="document-form__row">
-          <OptionalTextField
-            label={SCENE_FIELD_LABELS.place}
-            value={scene.place}
-            onChange={(place) => onChange({ ...scene, place })}
-          />
-          <OptionalTextField
-            label={SCENE_FIELD_LABELS.time}
-            value={scene.time}
-            onChange={(time) => onChange({ ...scene, time })}
-          />
-          <IntegerField
-            label={SCENE_FIELD_LABELS.target_chars}
-            value={scene.target_chars}
-            onChange={(target_chars) => onChange({ ...scene, target_chars })}
-          />
-        </div>
+        <SceneFields scene={scene} onChange={onChange} />
         {beats.length > 0 && (
           <div className="scene-card__beats">
             <p className="scene-card__beats-heading">

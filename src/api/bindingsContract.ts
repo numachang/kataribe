@@ -25,6 +25,7 @@ import type { LlmSettings as GeneratedLlmSettings } from "../bindings/LlmSetting
 import type { Manifest as GeneratedManifest } from "../bindings/Manifest";
 import type { ModelInfo as GeneratedModelInfo } from "../bindings/ModelInfo";
 import type { NewProject as GeneratedNewProject } from "../bindings/NewProject";
+import type { NewScenePlan as GeneratedNewScenePlan } from "../bindings/NewScenePlan";
 import type { OverviewEntry as GeneratedOverviewEntry } from "../bindings/OverviewEntry";
 import type { OverviewSection as GeneratedOverviewSection } from "../bindings/OverviewSection";
 import type { ParsedDocument as GeneratedParsedDocument } from "../bindings/ParsedDocument";
@@ -37,12 +38,16 @@ import type { QualityMetrics as GeneratedQualityMetrics } from "../bindings/Qual
 import type { QualityReport as GeneratedQualityReport } from "../bindings/QualityReport";
 import type { Rating as GeneratedRating } from "../bindings/Rating";
 import type { ScenePlan as GeneratedScenePlan } from "../bindings/ScenePlan";
+import type { SceneReference as GeneratedSceneReference } from "../bindings/SceneReference";
 import type { SectionKind as GeneratedSectionKind } from "../bindings/SectionKind";
 import type { Segment as GeneratedSegment } from "../bindings/Segment";
 import type { Severity as GeneratedSeverity } from "../bindings/Severity";
 import type { StepState as GeneratedStepState } from "../bindings/StepState";
+import type { StructureEdit as GeneratedStructureEdit } from "../bindings/StructureEdit";
+import type { StructurePlan as GeneratedStructurePlan } from "../bindings/StructurePlan";
 import type { Task as GeneratedTask } from "../bindings/Task";
 import type { TextStats as GeneratedTextStats } from "../bindings/TextStats";
+import type { TrashedFile as GeneratedTrashedFile } from "../bindings/TrashedFile";
 import type { BackendErrorKind } from "./backend";
 import type * as Api from "./types";
 
@@ -89,8 +94,13 @@ export type BindingsContract = [
   Expect<Equal<Api.StepState, GeneratedStepState>>,
   Expect<Equal<Api.PipelineStep, GeneratedPipelineStep>>,
   Expect<Equal<Api.GenerationEvent, GeneratedGenerationEvent>>,
+  Expect<Equal<Api.TrashedFile, GeneratedTrashedFile>>,
   Expect<Equal<Api.FileChange, GeneratedFileChange>>,
   Expect<Equal<Api.ChangeSet, GeneratedChangeSet>>,
+  Expect<Equal<Api.NewScenePlan, GeneratedNewScenePlan>>,
+  Expect<Equal<Api.StructureEdit, GeneratedStructureEdit>>,
+  Expect<Equal<Api.SceneReference, GeneratedSceneReference>>,
+  Expect<Equal<Api.StructurePlan, GeneratedStructurePlan>>,
   Expect<Equal<BackendErrorKind, GeneratedCommandErrorKind>>,
 ];
 

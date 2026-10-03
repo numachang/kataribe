@@ -5,7 +5,7 @@ import type { Backend } from "../../api/backend";
 import { BackendProvider } from "../../api/context";
 import { createMockBackend } from "../../api/mock";
 import { SAMPLE_PROJECT_FOLDER } from "../../api/mock/sampleProject";
-import type { NewProject, Task } from "../../api/types";
+import type { ChangeSet, NewProject, Task } from "../../api/types";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { editorBody, readText, textDocument } from "../../test/documents";
 import { resetAllStores } from "../../test/resetStores";
@@ -58,6 +58,40 @@ it("開いている文書の保存に失敗しているときは、その文書�
   expect(result.current.session.applyErrorMessage).toContain("保存できていない編集");
   expect(editorBody()).toBe("保存できていない大事な編集");
   expect(await readText(inner, "concept.md")).toBe(conceptBefore);
+});
+
+it("開いている文書をゴミ箱へ移す変更案も、その文書に保存できない編集が残っていれば適用しない", async () => {
+  const inner = createMockBackend({ delayMs: 0 });
+  useWorkspaceStore.getState().openWorkspace(await inner.openProject(SAMPLE_PROJECT_FOLDER));
+  const { hash } = await inner.readDocument("concept.md");
+  const trashConcept: ChangeSet = {
+    summary: "企画をゴミ箱へ移します。",
+    project_root: SAMPLE_PROJECT_FOLDER,
+    files: [
+      {
+        kind: "trash",
+        path: "concept.md",
+        files: [{ path: "concept.md", base_hash: hash, chars: 100 }],
+      },
+    ],
+  };
+  const backend = wrapBackend(inner, {
+    async writeDocument() {
+      throw new Error("ディスクがいっぱいです");
+    },
+    generate: async () => trashConcept,
+  });
+  const { result } = await reviewRevisionOfOpenConcept(backend);
+
+  act(() => result.current.editor.onDocumentChange(textDocument("保存できていない大事な編集")));
+  await act(async () => {
+    await result.current.session.apply();
+  });
+
+  expect(result.current.session.phase).toBe("reviewing");
+  expect(result.current.session.applyErrorMessage).toContain("保存できていない編集");
+  expect(editorBody()).toBe("保存できていない大事な編集");
+  await expect(inner.readDocument("concept.md")).resolves.toBeDefined();
 });
 
 it("適用の間にエディタへ入力した文字は、適用後の読み直しで消さず、次の保存で競合として知らせる", async () => {

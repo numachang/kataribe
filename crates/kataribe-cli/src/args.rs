@@ -7,6 +7,7 @@ use kataribe_engine::{DraftUnit, LlmProvider};
 use kataribe_project::Rating;
 
 use crate::stage::Stage;
+use crate::structure_args::{AddArgs, RemoveArgs};
 use crate::task_spec::TaskSpec;
 
 /// GUI と同じ執筆エンジンを画面なしで動かす。
@@ -100,6 +101,10 @@ pub enum Command {
     Generate(GenerateArgs),
     /// 取りかかれる工程を順に生成・適用する。
     Run(RunArgs),
+    /// 登場人物・世界観の資料・シーンを、自分で書いて足す（LLM は使わない）。
+    Add(AddArgs),
+    /// 登場人物・世界観の資料・シーンを、ゴミ箱（.kataribe/trash/）へ移して消す（LLM は使わない）。
+    Remove(RemoveArgs),
     /// シーンごとの品質レポートを表示する。
     Quality(QualityArgs),
     /// 本文を章題付きの一つのテキストにまとめる。
@@ -353,7 +358,9 @@ impl From<DraftUnitArg> for DraftUnit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kataribe_project::RelPath;
+    use crate::structure_args::AddTarget;
+    use crate::target_spec::RemoveTarget;
+    use kataribe_project::{ChapterId, RelPath, SceneId};
 
     fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
         Cli::try_parse_from(std::iter::once(&"kataribe-cli").chain(args.iter()))
@@ -476,5 +483,141 @@ mod tests {
     fn validate_accepts_non_revise_tasks_without_instruction() {
         let args = generate_args(TaskSpec::Concept, None);
         assert!(args.validate().is_ok());
+    }
+
+    #[test]
+    fn add_character_takes_the_fields_and_an_optional_id() {
+        let cli = parse(&[
+            "add",
+            "character",
+            "folder",
+            "--name",
+            "霧島 凛",
+            "--reading",
+            "きりしま りん",
+            "--order",
+            "2",
+            "--id",
+            "rin",
+            "--body",
+            "本文",
+            "--dry-run",
+        ])
+        .unwrap();
+
+        let Command::Add(AddArgs {
+            target: AddTarget::Character(args),
+        }) = cli.command
+        else {
+            panic!("add character が来るはず");
+        };
+        assert_eq!(args.name, "霧島 凛");
+        assert_eq!(args.reading.as_deref(), Some("きりしま りん"));
+        assert_eq!(args.order, Some(2));
+        assert_eq!(args.id.as_deref(), Some("rin"));
+        assert_eq!(args.body.body.as_deref(), Some("本文"));
+        assert!(args.dry_run);
+    }
+
+    #[test]
+    fn add_character_requires_a_name() {
+        assert!(parse(&["add", "character", "folder"]).is_err());
+    }
+
+    #[test]
+    fn an_unusable_id_is_left_to_the_engine_so_the_reason_is_told_in_one_place() {
+        let cli = parse(&["add", "character", "folder", "--name", "凛", "--id", "Rin"]).unwrap();
+
+        let Command::Add(AddArgs {
+            target: AddTarget::Character(args),
+        }) = cli.command
+        else {
+            panic!("add character が来るはず");
+        };
+        assert_eq!(args.id.as_deref(), Some("Rin"));
+    }
+
+    #[test]
+    fn the_body_can_be_given_as_text_or_as_a_file_but_not_both() {
+        let both = [
+            "add",
+            "world",
+            "folder",
+            "--title",
+            "題",
+            "--body",
+            "a",
+            "--body-file",
+            "b",
+        ];
+        assert!(parse(&both).is_err());
+        assert!(
+            parse(&[
+                "add",
+                "world",
+                "folder",
+                "--title",
+                "題",
+                "--body-file",
+                "b"
+            ])
+            .is_ok()
+        );
+        assert!(parse(&["add", "world", "folder", "--title", "題"]).is_ok());
+    }
+
+    #[test]
+    fn add_scene_splits_the_characters_at_commas_and_validates_the_ids() {
+        let cli = parse(&[
+            "add",
+            "scene",
+            "folder",
+            "01",
+            "--title",
+            "題",
+            "--characters",
+            "霧島 凛,佐藤 健二",
+            "--before",
+            "s02",
+        ])
+        .unwrap();
+
+        let Command::Add(AddArgs {
+            target: AddTarget::Scene(args),
+        }) = cli.command
+        else {
+            panic!("add scene が来るはず");
+        };
+        assert_eq!(args.chapter, ChapterId::from_number(1));
+        assert_eq!(args.characters, vec!["霧島 凛", "佐藤 健二"]);
+        assert_eq!(args.before, Some(SceneId::from_number(2)));
+        assert!(
+            parse(&["add", "scene", "folder", "1", "--title", "題"]).is_err(),
+            "章番号は 2〜3 桁"
+        );
+        assert!(
+            parse(&[
+                "add", "scene", "folder", "01", "--title", "題", "--before", "02"
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn remove_takes_a_target_and_a_dry_run_flag() {
+        let cli = parse(&["remove", "folder", "scene:01/s02", "--dry-run"]).unwrap();
+
+        let Command::Remove(args) = cli.command else {
+            panic!("remove が来るはず");
+        };
+        assert_eq!(
+            args.target,
+            RemoveTarget::Scene {
+                chapter: ChapterId::from_number(1),
+                scene: SceneId::from_number(2),
+            }
+        );
+        assert!(args.dry_run);
+        assert!(parse(&["remove", "folder", "chapter:01"]).is_err());
     }
 }

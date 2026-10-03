@@ -78,3 +78,16 @@
   justify-content: flex-end;
   gap: 10px;
 }
+
+.changeset-review__trash {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+}
+
+.changeset-review__trash-heading {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-ink-soft);
+}

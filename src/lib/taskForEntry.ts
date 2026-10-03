@@ -1,6 +1,6 @@
 import type { EntryKind, Task } from "../api/types";
+import { characterIdOfPath } from "./entryPaths";
 
-const CHARACTER_PATH_PATTERN = /^characters\/(.+)\.md$/;
 const SCENE_PATH_PATTERN = /^manuscript\/(.+)\/(.+)\.txt$/;
 
 /**
@@ -18,9 +18,8 @@ export function taskForEntry(path: string, kind: EntryKind): Task | null {
     case "synopsis":
       return { kind: "synopsis" };
     case "character": {
-      const match = CHARACTER_PATH_PATTERN.exec(path);
-      const id = match?.[1];
-      return id !== undefined ? { kind: "character", id } : null;
+      const id = characterIdOfPath(path);
+      return id !== null ? { kind: "character", id } : null;
     }
     case "scene": {
       const match = SCENE_PATH_PATTERN.exec(path);

@@ -8,8 +8,10 @@ import {
   SYNOPSIS_PATH,
   scenePath,
   WORLD_OVERVIEW_PATH,
+  worldDocumentNameFromPath,
 } from "./paths";
 import type { MockChapter, MockCharacter, MockScene, ProjectState } from "./state";
+import { findWorldDocument } from "./state";
 
 // ProjectState の各要素を、実際に作品フォルダへ保存されるテキストへ変換する。
 // docs/architecture.md §2 のファイル形式に合わせる（偽実装の見た目を本物に近づけるため）。
@@ -116,6 +118,11 @@ export function readMockFile(state: ProjectState, path: string): string | null {
   }
   if (path === SYNOPSIS_PATH) {
     return state.synopsis;
+  }
+
+  const worldDocumentName = worldDocumentNameFromPath(path);
+  if (worldDocumentName !== null) {
+    return findWorldDocument(state, worldDocumentName)?.content ?? null;
   }
 
   for (const character of state.characters ?? []) {

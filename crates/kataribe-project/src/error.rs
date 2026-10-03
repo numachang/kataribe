@@ -123,14 +123,26 @@ pub enum ProjectError {
         supported: u32,
     },
 
-    /// 複数のファイルをまとめて書く途中で失敗し、書き終えたファイルの一部を元に戻せなかった。
+    /// まとめて反映する変更の形が正しくなかった（ゴミ箱へ移せないパス、同じパスへの変更の重なりなど）。
+    ///
+    /// 画面から戻ってくる値なので、反映の前に必ず検証する。何も変えていない。
+    #[error("変更案が正しくありません: {reason}")]
+    InvalidChangeSet {
+        /// 正しくない理由。
+        reason: String,
+    },
+
+    /// 複数のファイルをまとめて反映する途中で失敗し、反映済みの変更の一部を元に戻せなかった。
     #[error(
-        "書き込みの途中で失敗し、{} を元に戻せませんでした（.kataribe/backups から戻せます）。原因: {source}",
-        join_paths(not_restored)
+        "反映の途中で失敗し、元に戻せなかったファイルがあります。{} 原因: {source}",
+        describe_unrestored(not_restored, still_trashed)
     )]
     PartialWrite {
-        /// 新しい内容のまま残ったファイル。
+        /// 書き込み前の内容に戻せず、新しい内容のまま残ったファイル。
         not_restored: Vec<RelPath>,
+        /// ゴミ箱から元の場所へ戻せなかったファイル。実物はゴミ箱の中にしかない
+        /// （ゴミ箱へ移すファイルはバックアップを取らない）。
+        still_trashed: Vec<StillTrashed>,
         /// 途中で起きた失敗。
         #[source]
         source: Box<ProjectError>,
@@ -144,10 +156,104 @@ pub enum ProjectError {
     },
 }
 
-fn join_paths(paths: &[RelPath]) -> String {
-    paths
-        .iter()
-        .map(RelPath::as_str)
-        .collect::<Vec<_>>()
-        .join("、")
+/// ゴミ箱から元の場所へ戻せなかったファイル。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StillTrashed {
+    /// 元の場所。
+    pub original: RelPath,
+    /// 今ある場所（`.kataribe/trash/<日時>/…`）。
+    pub trashed: RelPath,
+}
+
+/// [`ProjectError::PartialWrite`] のメッセージの、戻せなかったものの案内。
+/// 書き込みとゴミ箱とでは実物のある場所も戻し方も違うので、分けて書く。
+fn describe_unrestored(not_restored: &[RelPath], still_trashed: &[StillTrashed]) -> String {
+    let mut sentences = Vec::new();
+    if !not_restored.is_empty() {
+        let paths: Vec<&str> = not_restored.iter().map(RelPath::as_str).collect();
+        sentences.push(format!(
+            "{} は新しい内容のまま残っています（バックアップを取っていれば .kataribe/backups から戻せます）。",
+            paths.join("、")
+        ));
+    }
+    for stranded in still_trashed {
+        sentences.push(format!(
+            "{} はゴミ箱へ移したまま戻せませんでした。実物は {} にあります。",
+            stranded.original, stranded.trashed
+        ));
+    }
+    sentences.join("")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rel(path: &str) -> RelPath {
+        RelPath::new(path).unwrap()
+    }
+
+    fn partial_write(not_restored: &[&str], still_trashed: &[(&str, &str)]) -> String {
+        ProjectError::PartialWrite {
+            not_restored: not_restored.iter().map(|path| rel(path)).collect(),
+            still_trashed: still_trashed
+                .iter()
+                .map(|(original, trashed)| StillTrashed {
+                    original: rel(original),
+                    trashed: rel(trashed),
+                })
+                .collect(),
+            source: Box::new(ProjectError::NotFound {
+                path: rel("concept.md"),
+            }),
+        }
+        .to_string()
+    }
+
+    #[test]
+    fn partial_write_points_to_the_backups_for_files_left_with_new_content() {
+        let message = partial_write(&["plot/chapters/01.md", "concept.md"], &[]);
+
+        assert!(message.contains("plot/chapters/01.md、concept.md は新しい内容のまま残っています"));
+        assert!(message.contains(".kataribe/backups"));
+        assert!(!message.contains("ゴミ箱"));
+    }
+
+    #[test]
+    fn partial_write_tells_where_the_files_that_stayed_in_the_trash_are() {
+        let message = partial_write(
+            &[],
+            &[(
+                "characters/rin.md",
+                ".kataribe/trash/20231114-221320-000/characters/rin.md",
+            )],
+        );
+
+        assert!(message.contains(
+            "characters/rin.md はゴミ箱へ移したまま戻せませんでした。\
+             実物は .kataribe/trash/20231114-221320-000/characters/rin.md にあります。"
+        ));
+        assert!(
+            !message.contains(".kataribe/backups"),
+            "ゴミ箱へ移したファイルはバックアップを取っていない: {message}"
+        );
+    }
+
+    #[test]
+    fn partial_write_separates_the_written_files_from_the_trashed_ones() {
+        let message = partial_write(
+            &["plot/chapters/01.md"],
+            &[(
+                "manuscript/01/s02.txt",
+                ".kataribe/trash/20231114-221320-000/manuscript/01/s02.txt",
+            )],
+        );
+
+        assert!(message.contains("plot/chapters/01.md は新しい内容のまま残っています"));
+        assert!(message.contains("manuscript/01/s02.txt はゴミ箱へ移したまま"));
+        assert!(
+            message.ends_with("原因: concept.md が見つかりません"),
+            "{message}"
+        );
+    }
 }

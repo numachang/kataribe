@@ -7,6 +7,7 @@ import { useSettingsStore } from "../../store/settingsStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { ConflictDialog } from "./ConflictDialog";
 import { bodyHeading, DocumentForm } from "./document-form/DocumentForm";
+import { NotGeneratedPane } from "./NotGeneratedPane";
 import { RubyPreview } from "./RubyPreview";
 import { StatusBar } from "./StatusBar";
 import "./EditorPane.css";
@@ -55,7 +56,7 @@ export function EditorPane() {
 
   const entry = findOverviewEntry(overview, currentPath);
   if (entry && !entry.exists) {
-    return <EmptyPane message="この文書はまだ生成されていません。" />;
+    return <NotGeneratedPane entry={entry} />;
   }
 
   if (editor.path !== currentPath || editor.document === null) {

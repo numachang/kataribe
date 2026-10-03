@@ -1,7 +1,6 @@
 import { toGraphemes } from "../../lib/graphemes";
-import { hashText } from "../../lib/hash";
 import { BackendError } from "../backend";
-import type { ChangeSet, FileChange, GenerationEvent, GenerationSettings, Task } from "../types";
+import type { ChangeSet, GenerationEvent, GenerationSettings, Task } from "../types";
 
 import {
   generateCastDrafts,
@@ -17,6 +16,7 @@ import {
   generateWorldText,
   splitIntoBeats,
 } from "./content";
+import { writeChange } from "./fileChange";
 import {
   CONCEPT_PATH,
   chapterPath,
@@ -151,11 +151,6 @@ async function runSteps(
   return results;
 }
 
-function toFileChange(state: ProjectState, path: string, content: string): FileChange {
-  const previous = readMockFile(state, path);
-  return { path, content, previous, base_hash: previous !== null ? hashText(previous) : null };
-}
-
 function notFound(message: string): BackendError {
   return new BackendError("not_found", message);
 }
@@ -192,7 +187,7 @@ async function generateConcept(
   const [assembled] = await runSteps(job, [plan], delayMs, onEvent);
   return {
     summary: "企画を生成しました",
-    files: [toFileChange(state, CONCEPT_PATH, assembled ?? text)],
+    files: [writeChange(state, CONCEPT_PATH, assembled ?? text)],
   };
 }
 
@@ -212,7 +207,7 @@ async function generateStyle(
   const [assembled] = await runSteps(job, [plan], delayMs, onEvent);
   return {
     summary: "文体を生成しました",
-    files: [toFileChange(state, STYLE_PATH, assembled ?? text)],
+    files: [writeChange(state, STYLE_PATH, assembled ?? text)],
   };
 }
 
@@ -232,7 +227,7 @@ async function generateWorld(
   const [assembled] = await runSteps(job, [plan], delayMs, onEvent);
   return {
     summary: "世界観を生成しました",
-    files: [toFileChange(state, WORLD_OVERVIEW_PATH, assembled ?? text)],
+    files: [writeChange(state, WORLD_OVERVIEW_PATH, assembled ?? text)],
   };
 }
 
@@ -254,7 +249,7 @@ async function generateCast(
   };
   await runSteps(job, [plan], delayMs, onEvent);
   const files = drafts.map((draft, index) =>
-    toFileChange(
+    writeChange(
       state,
       characterPath(draft.id),
       renderCharacterFile({ ...draft, order: index + 1, detail: null }),
@@ -282,7 +277,7 @@ async function generateCharacter(
     notices: [],
   };
   const [assembled] = await runSteps(job, [plan], delayMs, onEvent);
-  const file = toFileChange(
+  const file = writeChange(
     state,
     characterPath(id),
     renderCharacterFile({ ...character, detail: assembled ?? text }),
@@ -306,7 +301,7 @@ async function generateSynopsis(
   const [assembled] = await runSteps(job, [plan], delayMs, onEvent);
   return {
     summary: "あらすじを生成しました",
-    files: [toFileChange(state, SYNOPSIS_PATH, assembled ?? text)],
+    files: [writeChange(state, SYNOPSIS_PATH, assembled ?? text)],
   };
 }
 
@@ -326,7 +321,7 @@ async function generateOutline(
   };
   await runSteps(job, [plan], delayMs, onEvent);
   const files = chapters.map((chapter) =>
-    toFileChange(state, chapterPath(chapter.id), renderChapterFile({ ...chapter, scenes: null })),
+    writeChange(state, chapterPath(chapter.id), renderChapterFile({ ...chapter, scenes: null })),
   );
   return { summary: "章立てを生成しました", files };
 }
@@ -351,7 +346,7 @@ async function generateScenePlanTask(
   };
   await runSteps(job, [plan], delayMs, onEvent);
   const fullScenes = scenes.map((scene) => ({ ...scene, beats: null, draft: null }));
-  const file = toFileChange(
+  const file = writeChange(
     state,
     chapterPath(chapter.id),
     renderChapterFile({ ...chapter, scenes: fullScenes }),
@@ -398,7 +393,7 @@ async function generateDraft(
 
   const assembled = await runSteps(job, plans, delayMs, onEvent);
   const content = assembled.join("\n");
-  const file = toFileChange(state, scenePath(chapter.id, scene.id), content);
+  const file = writeChange(state, scenePath(chapter.id, scene.id), content);
   return { summary: `${chapter.title} ${scene.title}の本文を生成しました`, files: [file] };
 }
 
@@ -424,7 +419,7 @@ async function generateRevision(
   const [assembled] = await runSteps(job, [plan], delayMs, onEvent);
   return {
     summary: "指示に沿って書き直しました",
-    files: [toFileChange(state, path, assembled ?? text)],
+    files: [writeChange(state, path, assembled ?? text)],
   };
 }
 

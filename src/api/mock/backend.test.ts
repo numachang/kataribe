@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { writeChanges } from "../../test/changeSets";
 import { readText, textDocument } from "../../test/documents";
 import type { GenerationEvent, LlmSettings } from "../types";
 import { createMockBackend } from "./backend";
@@ -329,7 +330,7 @@ describe("createMockBackend / 生成", () => {
     expect(events.some((event) => event.kind === "content")).toBe(true);
     expect(events.some((event) => event.kind === "step_finished")).toBe(true);
     expect(changeSet.files).toHaveLength(1);
-    expect(changeSet.files[0]?.previous).toBeNull();
+    expect(writeChanges(changeSet)[0]?.previous).toBeNull();
 
     const overviewAfterApply = await backend.applyChangeSet(changeSet);
     const planning = overviewAfterApply.sections.find((section) => section.kind === "planning");
@@ -471,7 +472,7 @@ describe("createMockBackend / 生成", () => {
       () => {},
     );
 
-    expect(changeSet.files[0]?.previous).toBe(before);
-    expect(changeSet.files[0]?.content).not.toBe(before);
+    expect(writeChanges(changeSet)[0]?.previous).toBe(before);
+    expect(writeChanges(changeSet)[0]?.content).not.toBe(before);
   });
 });

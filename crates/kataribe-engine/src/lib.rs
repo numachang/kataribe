@@ -12,6 +12,7 @@ mod events;
 mod excerpt;
 mod genre;
 mod llm_client;
+mod names;
 mod new_project;
 mod overview;
 mod pipeline;
@@ -20,9 +21,10 @@ mod prompt;
 mod secrets;
 mod settings;
 mod stages;
+mod structure;
 mod task;
 
-pub use change_set::{ChangeSet, FileChange};
+pub use change_set::{ChangeSet, FileChange, TrashedFile};
 pub use engine::Engine;
 pub use error::{EngineError, Result};
 pub use events::{EventSink, GenerationEvent, IgnoreEvents, NoticeLevel};
@@ -38,6 +40,10 @@ pub use secrets::ApiKeyStore;
 pub use settings::{
     DraftUnit, EngineSettings, GenerationSettings, LlmProvider, LlmSettings, default_settings_path,
     load_settings, save_settings,
+};
+pub use structure::{
+    NewScenePlan, SceneReference, StructureEdit, StructurePlan, plan_structure_edit,
+    suggest_character_id,
 };
 pub use task::Task;
 

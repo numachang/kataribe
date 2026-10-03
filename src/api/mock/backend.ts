@@ -10,7 +10,6 @@ import type {
   ChangeSet,
   DocumentFile,
   EditableDocument,
-  FileChange,
   GenerationEvent,
   GenrePreset,
   LlmSettings,
@@ -23,8 +22,11 @@ import type {
   ProjectSettingsFile,
   QualityReport,
   Segment,
+  StructureEdit,
+  StructurePlan,
   Task,
   TextStats,
+  TrashFileChange,
 } from "../types";
 import { parseMockDocument, readMockDocument, writeMockDocument } from "./document";
 import {
@@ -44,7 +46,8 @@ import {
   SAMPLE_PROJECT_FOLDER,
 } from "./sampleProject";
 import type { ProjectState } from "./state";
-import { writeMockFile } from "./write";
+import { planMockStructureEdit, suggestMockCharacterId } from "./structure";
+import { trashMockFile, writeMockFile } from "./write";
 
 const MAX_RECENT_PROJECTS = 10;
 const DEFAULT_CHUNK_DELAY_MS = 30;
@@ -356,16 +359,86 @@ class MockBackend implements Backend {
         `この変更案は別の作品（${changeSet.project_root}）のものなので、今開いている作品には適用できません。`,
       );
     }
+    checkChangeSetShape(changeSet);
+    // 本物と同じく、ゴミ箱へ移す → 書く の順。状態は書き換えずに進め、競合したら何も変えない。
     for (const file of changeSet.files) {
-      project = this.applyFileChange(project, file);
+      if (file.kind === "trash") {
+        project = this.trashFile(project, file);
+      }
+    }
+    for (const file of changeSet.files) {
+      if (file.kind === "write") {
+        this.checkWriteConflict(project, file.path, file.base_hash);
+        project = writeMockFile(project, file.path, file.content);
+      }
     }
     this.setCurrentProject(project);
     return buildOverview(project);
   }
 
-  private applyFileChange(project: ProjectState, file: FileChange): ProjectState {
-    this.checkWriteConflict(project, file.path, file.base_hash);
-    return writeMockFile(project, file.path, file.content);
+  private trashFile(project: ProjectState, file: TrashFileChange): ProjectState {
+    const current = readMockFile(project, file.path);
+    const expectedHash = file.files[0]?.base_hash ?? null;
+    if (current === null || hashText(current) !== expectedHash) {
+      throw new BackendError(
+        "conflict",
+        `「${file.path}」が確かめたあとに変更されたため、ゴミ箱へ移しませんでした。`,
+      );
+    }
+    return trashMockFile(project, file.path);
+  }
+
+  async planStructureEdit(edit: StructureEdit): Promise<StructurePlan> {
+    return planMockStructureEdit(this.requireProject(), edit);
+  }
+
+  async suggestCharacterId(reading: string, name: string): Promise<string> {
+    return suggestMockCharacterId(this.requireProject(), reading, name);
+  }
+}
+
+const PROTECTED_TRASH_FILE = MANIFEST_PATH;
+const PROTECTED_TRASH_FOLDER = ".kataribe";
+
+/** ゴミ箱へ移せない場所か。Windows は大文字小文字を区別しないので、`Kataribe.yaml` や `.Kataribe/…` も同じ扱い。 */
+function isProtectedFromTrash(path: string): boolean {
+  const lowerCased = path.toLowerCase();
+  return (
+    lowerCased === PROTECTED_TRASH_FILE ||
+    lowerCased === PROTECTED_TRASH_FOLDER ||
+    lowerCased.startsWith(`${PROTECTED_TRASH_FOLDER}/`)
+  );
+}
+
+/**
+ * 本物と同じく、画面から戻ってくる変更案の形を確かめる。
+ * 同じパスへの変更が重ならないこと、ゴミ箱へ移せないパスを含まないこと、
+ * ゴミ箱へ移すファイルの一覧が、移す対象と同じファイル 1 つであること。
+ */
+function checkChangeSetShape(changeSet: ChangeSet): void {
+  const seen = new Set<string>();
+  for (const file of changeSet.files) {
+    const key = file.path.toLowerCase();
+    if (seen.has(key)) {
+      throw new BackendError("invalid_input", `「${file.path}」への変更が重なっています。`);
+    }
+    seen.add(key);
+    if (file.kind === "trash") {
+      checkTrashShape(file);
+    }
+  }
+}
+
+function checkTrashShape(file: TrashFileChange): void {
+  if (isProtectedFromTrash(file.path)) {
+    throw new BackendError("invalid_input", `「${file.path}」はゴミ箱へ移せません。`);
+  }
+  const [only] = file.files;
+  if (file.files.length !== 1 || only?.path !== file.path) {
+    throw new BackendError(
+      "invalid_input",
+      `「${file.path}」をゴミ箱へ移す変更の、移すファイルの一覧が合っていません（このファイル 1 つだけにしてください）。`,
+    );
   }
 }
 

@@ -91,12 +91,24 @@ fn parse_prefixed(input: &str) -> Result<TaskSpec, String> {
 }
 
 fn parse_draft(rest: &str) -> Result<TaskSpec, String> {
+    let (chapter, scene) = parse_chapter_and_scene(rest, "draft")?;
+    Ok(TaskSpec::Draft { chapter, scene })
+}
+
+/// `<章番号>/<シーン ID>`（例: `01/s02`）を解析する。`prefix` は、指定の頭に付けた種類の名前
+/// （`draft:01/s02` なら `draft`）で、誤りのメッセージに使う。`generate` の `draft:` と `remove` の `scene:` が共有する。
+pub(crate) fn parse_chapter_and_scene(
+    rest: &str,
+    prefix: &str,
+) -> Result<(ChapterId, SceneId), String> {
     let (chapter, scene) = rest.split_once('/').ok_or_else(|| {
-        format!("draft の指定は <章番号>/<シーン ID> の形にしてください（例: draft:01/s01）: draft:{rest}")
+        format!(
+            "{prefix} の指定は <章番号>/<シーン ID> の形にしてください（例: {prefix}:01/s01）: {prefix}:{rest}"
+        )
     })?;
     let chapter = ChapterId::new(chapter).map_err(|error| error.to_string())?;
     let scene = SceneId::new(scene).map_err(|error| error.to_string())?;
-    Ok(TaskSpec::Draft { chapter, scene })
+    Ok((chapter, scene))
 }
 
 #[cfg(test)]

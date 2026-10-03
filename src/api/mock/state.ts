@@ -41,6 +41,14 @@ export interface MockChapter {
   scenes: MockScene[] | null;
 }
 
+/** world/ 直下に足した、概要以外の世界観の資料。 */
+export interface MockWorldDocument {
+  /** ファイル名（拡張子なし）。 */
+  name: string;
+  /** ファイルの全文（先頭の見出しが題）。 */
+  content: string;
+}
+
 export interface ProjectState {
   folder: string;
   manifest: Manifest;
@@ -49,6 +57,8 @@ export interface ProjectState {
   concept: string | null;
   style: string | null;
   world: string | null;
+  /** 世界観の概要（world/overview.md）以外の資料。 */
+  worldDocuments: MockWorldDocument[];
   /** 登場人物。null なら Cast 工程がまだ実行されていない。 */
   characters: MockCharacter[] | null;
   synopsis: string | null;
@@ -115,4 +125,14 @@ export function withCharacter(
       character.id === id ? update(character) : character,
     ),
   };
+}
+
+export function findWorldDocument(state: ProjectState, name: string): MockWorldDocument | null {
+  return state.worldDocuments.find((document) => document.name === name) ?? null;
+}
+
+/** 世界観の資料の題。先頭の見出し（`# 題`）、無ければファイル名。 */
+export function worldDocumentTitle(document: MockWorldDocument): string {
+  const heading = /^#\s+(.+)$/m.exec(document.content)?.[1]?.trim();
+  return heading ?? document.name;
 }

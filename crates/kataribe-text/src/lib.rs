@@ -8,5 +8,6 @@ pub mod meta;
 pub mod normalize;
 pub mod quality;
 pub mod repetition;
+pub mod romaji;
 pub mod ruby;
 pub mod tokens;

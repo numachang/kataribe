@@ -11,6 +11,7 @@ use crate::error::ProjectError;
 use crate::layout::{self, DocumentKind};
 use crate::model::{
     Chapter, ChapterId, Character, CharacterId, FORMAT_VERSION, Manifest, MarkdownDoc, SceneId,
+    WorldDocumentName,
 };
 use crate::path::RelPath;
 use crate::store::{
@@ -250,6 +251,70 @@ impl Project {
         Ok(characters)
     }
 
+    /// 使用済みの登場人物の id を、ファイル名の順で返す（人物を追加するときに、使える id を決めるため）。
+    ///
+    /// ファイルの中身は読まないので、YAML が壊れた人物資料があっても失敗しない。
+    /// 名前は小文字にそろえてから id として読む（`Kirishima-Rin.md` は Windows では `kirishima-rin.md` と
+    /// 同じファイルなので、使用済みとして数える）。大文字小文字だけが違うファイルが並んでいれば、同じ id が重なる。
+    pub fn character_ids(&self) -> Result<Vec<CharacterId>, ProjectError> {
+        let dir = RelPath::new(layout::CHARACTERS_DIR)?;
+        self.list_files(&dir, |path| {
+            lowercase_stem(path, "md").and_then(|stem| CharacterId::new(&stem).ok())
+        })
+    }
+
+    /// 章の id を、番号順で返す。ファイルの中身は読まないので、章立てが壊れていても失敗しない。
+    pub fn chapter_ids(&self) -> Result<Vec<ChapterId>, ProjectError> {
+        let dir = RelPath::new(layout::CHAPTERS_DIR)?;
+        let mut ids = self.list_files(&dir, |path| match layout::document_kind(path) {
+            DocumentKind::Chapter(id) => Some(id),
+            DocumentKind::Character(_) | DocumentKind::Other => None,
+        })?;
+        ids.sort();
+        Ok(ids)
+    }
+
+    /// 章の本文フォルダ（`manuscript/NN/`）にある、シーン id として読める名前の本文ファイルの id を、
+    /// 番号順で返す。ファイルの中身は読まない。名前は小文字にそろえてから読む（`S02.txt` は Windows では
+    /// `s02.txt` と同じファイル）。
+    ///
+    /// 章立てから消えたシーンの本文が残っていても、その id を新しいシーンに使い回さないために使う。
+    pub fn scene_text_ids(&self, chapter: &ChapterId) -> Result<Vec<SceneId>, ProjectError> {
+        let dir = layout::manuscript_chapter_dir(chapter);
+        let mut ids = self.list_files(&dir, |path| {
+            lowercase_stem(path, "txt").and_then(|stem| SceneId::new(&stem).ok())
+        })?;
+        ids.sort();
+        Ok(ids)
+    }
+
+    /// 世界観の資料のうち、名前が [`WorldDocumentName`] の規則に合うものを、ファイル名の順で返す。
+    /// ファイルの中身は読まない。名前は小文字にそろえてから読む（`Doc.md` は Windows では `doc.md` と同じファイル）。
+    pub fn world_document_names(&self) -> Result<Vec<WorldDocumentName>, ProjectError> {
+        let dir = RelPath::new(layout::WORLD_DIR)?;
+        self.list_files(&dir, |path| {
+            lowercase_stem(path, "md").and_then(|stem| WorldDocumentName::new(&stem).ok())
+        })
+    }
+
+    /// `dir` 直下のファイルのうち、`pick` が値を返すものを、ファイル名の順で集める。フォルダが無ければ空。
+    fn list_files<T>(
+        &self,
+        dir: &RelPath,
+        pick: impl Fn(&RelPath) -> Option<T>,
+    ) -> Result<Vec<T>, ProjectError> {
+        if !self.store.exists(dir) {
+            return Ok(Vec::new());
+        }
+        Ok(self
+            .store
+            .list_dir(dir)?
+            .into_iter()
+            .filter(|entry| entry.kind == DirEntryKind::File)
+            .filter_map(|entry| pick(&entry.path))
+            .collect())
+    }
+
     /// id を指定して登場人物を読み込む。
     pub fn character(&self, id: &CharacterId) -> Result<Option<Character>, ProjectError> {
         let path = layout::character_path(id);
@@ -307,6 +372,16 @@ impl Project {
             .read_text_opt(&path)?
             .map(|text_file| text_file.content))
     }
+}
+
+/// 拡張子が `extension`（大文字小文字は無視）のファイルなら、拡張子を除いた名前を小文字にしたもの。
+///
+/// 使用済みの id や名前を数えるためのもの。Windows は大文字小文字を区別しないので、
+/// 大文字を含む名前のファイルも、小文字の id が使われているのと同じに扱う。
+fn lowercase_stem(path: &RelPath, extension: &str) -> Option<String> {
+    path.extension()
+        .is_some_and(|actual| actual.eq_ignore_ascii_case(extension))
+        .then(|| path.file_stem().to_ascii_lowercase())
 }
 
 fn ensure_directory_is_creatable(dir: &Path) -> Result<(), ProjectError> {
@@ -726,5 +801,154 @@ mod tests {
         let docs = project.world_docs().unwrap();
         let paths: Vec<&str> = docs.iter().map(|(path, _)| path.as_str()).collect();
         assert_eq!(paths, vec!["world/overview.md", "world/glossary.md"]);
+    }
+
+    /// 作品を作り、`files` の（パス, 内容）を置いて開く。壊れた YAML のファイルも、そのまま置ける。
+    fn project_with_files(dir: &TempDir, files: &[(&str, &str)]) -> Project {
+        Project::create(dir.path(), &sample_manifest()).unwrap();
+        let project = Project::open(dir.path()).unwrap();
+        for (path, content) in files {
+            project
+                .store()
+                .write_text(
+                    &RelPath::new(path).unwrap(),
+                    content,
+                    WriteOptions::default(),
+                )
+                .unwrap();
+        }
+        project
+    }
+
+    fn names_of<T: ToString>(ids: &[T]) -> Vec<String> {
+        ids.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn character_ids_lists_valid_ids_even_when_a_file_has_broken_yaml() {
+        let dir = TempDir::new().unwrap();
+        let project = project_with_files(
+            &dir,
+            &[
+                ("characters/sato-kenji.md", "---\nname: [\n---\n"),
+                ("characters/kirishima-rin.md", "---\nname: 霧島 凛\n---\n"),
+                ("characters/Invalid Name.md", "---\nname: 無効\n---\n"),
+                ("characters/memo.txt", "メモ"),
+                ("characters/old/rin.md", "---\nname: 古い\n---\n"),
+            ],
+        );
+
+        assert!(
+            project.characters().is_err(),
+            "壊れたファイルで一覧は失敗する"
+        );
+
+        assert_eq!(
+            names_of(&project.character_ids().unwrap()),
+            vec!["kirishima-rin", "sato-kenji"]
+        );
+    }
+
+    #[test]
+    fn character_ids_is_empty_when_the_folder_is_missing() {
+        let dir = TempDir::new().unwrap();
+        let project = project_with_files(&dir, &[]);
+        fs::remove_dir(dir.path().join(layout::CHARACTERS_DIR)).unwrap();
+
+        assert_eq!(project.character_ids().unwrap(), Vec::new());
+    }
+
+    #[test]
+    fn chapter_ids_are_sorted_numerically_and_ignore_broken_content() {
+        let dir = TempDir::new().unwrap();
+        let project = project_with_files(
+            &dir,
+            &[
+                ("plot/chapters/100.md", "---\ntitle: 百\n---\n"),
+                ("plot/chapters/02.md", "---\ntitle: [\n---\n"),
+                ("plot/chapters/01.md", "---\ntitle: 一\n---\n"),
+                ("plot/chapters/notes.md", "メモ"),
+            ],
+        );
+
+        assert_eq!(
+            names_of(&project.chapter_ids().unwrap()),
+            vec!["01", "02", "100"]
+        );
+    }
+
+    #[test]
+    fn scene_text_ids_lists_only_files_named_like_scenes() {
+        let dir = TempDir::new().unwrap();
+        let project = project_with_files(
+            &dir,
+            &[
+                ("manuscript/01/s03.txt", "三"),
+                ("manuscript/01/s01.txt", "一"),
+                ("manuscript/01/s02.md", "別の拡張子"),
+                ("manuscript/01/memo.txt", "メモ"),
+                ("manuscript/02/s01.txt", "別の章"),
+            ],
+        );
+
+        let ids = project.scene_text_ids(&ChapterId::from_number(1)).unwrap();
+        assert_eq!(names_of(&ids), vec!["s01", "s03"]);
+
+        let without_manuscript = project.scene_text_ids(&ChapterId::from_number(9)).unwrap();
+        assert_eq!(without_manuscript, Vec::new());
+    }
+
+    #[test]
+    fn world_document_names_skip_the_overview_and_names_outside_the_rules() {
+        let dir = TempDir::new().unwrap();
+        let project = project_with_files(
+            &dir,
+            &[
+                ("world/overview.md", "# 世界観\n"),
+                ("world/glossary.md", "# 用語集\n"),
+                ("world/用語集.md", "# 日本語の名前\n"),
+                ("world/Invalid Name.md", "# 空白\n"),
+                ("world/notes.txt", "メモ"),
+            ],
+        );
+
+        assert_eq!(
+            names_of(&project.world_document_names().unwrap()),
+            vec!["glossary"]
+        );
+    }
+
+    #[test]
+    fn ids_and_names_in_use_are_counted_in_lowercase_because_windows_ignores_the_case() {
+        let dir = TempDir::new().unwrap();
+        let project = project_with_files(
+            &dir,
+            &[
+                ("characters/Kirishima-Rin.md", "---\nname: 霧島 凛\n---\n"),
+                ("characters/SATO.MD", "---\nname: 佐藤\n---\n"),
+                ("world/Maps.md", "# 地図\n"),
+                ("manuscript/01/S02.txt", "二つ目"),
+                ("manuscript/01/s03.TXT", "三つ目"),
+            ],
+        );
+
+        assert_eq!(
+            names_of(&project.character_ids().unwrap()),
+            vec!["kirishima-rin", "sato"]
+        );
+        assert_eq!(
+            names_of(&project.world_document_names().unwrap()),
+            vec!["maps"]
+        );
+        let scene_ids = project.scene_text_ids(&ChapterId::from_number(1)).unwrap();
+        assert_eq!(names_of(&scene_ids), vec!["s02", "s03"]);
+    }
+
+    #[test]
+    fn the_overview_in_any_letter_case_is_not_a_world_document_name() {
+        let dir = TempDir::new().unwrap();
+        let project = project_with_files(&dir, &[("world/Overview.md", "# 世界観\n")]);
+
+        assert_eq!(project.world_document_names().unwrap(), Vec::new());
     }
 }
