@@ -8,14 +8,15 @@
 //! - 途中が抜けた番号は抜けたまま残す（手で作った番号を勝手に詰めない）。ずらすのは、操作した位置より後ろの章だけ。
 //! - 章の本文のフォルダ（`manuscript/<NN>/`）は、章立てと一緒に、フォルダごと 1 回の改名で動かす
 //!   （中のファイルを 1 つずつ動かすと、章立てに載っていない本文が古い番号のフォルダに残り、別の章の本文と混ざる）。
-//!   本文がまだ無い章（フォルダの無い章）は、改名もゴミ箱への移動もせず、適用のときにまだ無いことだけを確かめる。
+//!   本文がまだ無い章（フォルダの無い章）は、改名もゴミ箱への移動もせず、適用のときに移動元にまだ無いこと、
+//!   移動先が空いたままであることだけを確かめる（移動先は、同じ変更案の改名・ゴミ箱で空くものを除く）。
 //!
 //! ほかの章の YAML は読まない（壊れた章があっても操作できる）。章題を読むのは、利用者に見せる文言のためだけで、
 //! 読めなければ番号だけにする。
 
 use std::collections::{BTreeMap, HashSet};
 
-use kataribe_project::{Chapter, ChapterId, ChapterMeta, Project, frontmatter, layout};
+use kataribe_project::{Chapter, ChapterId, ChapterMeta, Project, RelPath, frontmatter, layout};
 
 use super::plan::{RenumberedChapter, StructurePlan, Wording};
 use crate::change_set::{ChangeSet, FileChange};
@@ -133,7 +134,8 @@ fn too_many_chapters() -> EngineError {
 }
 
 /// `chapters` の章立てと本文のフォルダを、番号を `delta` ずらした場所へ改名する変更を加える。
-/// 本文のフォルダがまだ無い章には、適用のときにまだ無いことの確認を加える。
+/// 本文のフォルダがまだ無い章には、適用のときに移動元にまだ無いことと、移動先が空いたままであることの
+/// 確認を加える。
 fn renumber(
     project: &Project,
     changes: &mut ChangeSet,
@@ -141,6 +143,7 @@ fn renumber(
     delta: i32,
 ) -> Result<Vec<RenumberedChapter>> {
     let mut renumbered = Vec::with_capacity(chapters.len());
+    let mut destinations_without_text = Vec::new();
     for &from in chapters {
         let to = from.shifted(delta).ok_or_else(too_many_chapters)?;
         changes.move_entry(layout::chapter_path(&from), layout::chapter_path(&to));
@@ -149,6 +152,7 @@ fn renumber(
             changes.move_entry(text_dir, layout::manuscript_chapter_dir(&to));
         } else {
             changes.expect(text_dir, None);
+            destinations_without_text.push(layout::manuscript_chapter_dir(&to));
         }
         renumbered.push(RenumberedChapter {
             from,
@@ -156,7 +160,26 @@ fn renumber(
             title: chapter_title(project, from),
         });
     }
+    // 全部の改名を加えてから確かめる（行き先を同じ変更案の改名が空けるかどうかは、並べ終えないと分からない）
+    for destination in destinations_without_text {
+        if !is_already_decided(changes, &destination) {
+            changes.expect(destination, None);
+        }
+    }
     Ok(renumbered)
+}
+
+/// 同じ変更案が、`path` の今の状態を既に扱っているか（移動元・ゴミ箱・状態の確認のどれかになっているか）。
+///
+/// 移動元かゴミ箱なら、中身は適用のときに別の場所へ移るので空く。状態の確認なら、同じ確認を重ねない
+/// （同じパスへの確認が重なるのは形の誤りになる）。
+fn is_already_decided(changes: &ChangeSet, path: &RelPath) -> bool {
+    changes.files.iter().any(|change| match change {
+        FileChange::Move { from: decided, .. }
+        | FileChange::Trash { path: decided, .. }
+        | FileChange::Expect { path: decided, .. } => decided == path,
+        FileChange::Write { .. } => false,
+    })
 }
 
 /// 消す章の本文のフォルダを、中のファイル全部ごとゴミ箱へ移す変更を加える。フォルダが無ければ、

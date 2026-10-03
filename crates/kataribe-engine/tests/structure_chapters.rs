@@ -377,6 +377,95 @@ fn a_text_folder_made_by_someone_else_after_the_plan_stops_the_renumbering() {
     );
 }
 
+/// 番号が抜けていて、ずらす章に本文のフォルダが無いとき、行き先（抜けた番号の本文のフォルダ）も適用のときに確かめる。
+/// 確認している間に外でそこにフォルダができたら、ずらした章がそれを自分の本文として読んでしまう。
+#[test]
+fn a_folder_made_at_a_vacant_number_after_the_plan_stops_the_shift_of_a_chapter_without_text() {
+    let dir = TempDir::new().unwrap();
+    let project = new_project(dir.path());
+    put_chapter_with_text(&project, "01", "一章");
+    put_chapter_with_text(&project, "02", "二章");
+    put(
+        &project,
+        "plot/chapters/05.md",
+        &chapter_md("五章", "あらすじ"),
+    );
+    let plan = plan_structure_edit(&project, &remove_chapter(2)).unwrap();
+    assert!(
+        plan.change_set.files.iter().any(|change| matches!(
+            change,
+            FileChange::Expect { path, base_hash: None } if *path == rel("manuscript/04")
+        )),
+        "行き先の本文のフォルダがまだ無いことを確かめる"
+    );
+    // 計画してから適用するまでの間に、外のエディタで、抜けた番号 04 の本文ができた
+    put(&project, "manuscript/04/s01.txt", "関係のない本文\n");
+
+    let error = plan.change_set.apply(&project).unwrap_err();
+
+    assert!(
+        matches!(error, EngineError::Project(ProjectError::Conflict { .. })),
+        "{error:?}"
+    );
+    assert_eq!(chapter_numbers(&project), vec!["01", "02", "05"]);
+    assert_eq!(
+        read(&project, "manuscript/04/s01.txt").unwrap(),
+        "関係のない本文\n"
+    );
+    assert!(!dir.path().join(".kataribe/trash").exists());
+}
+
+#[test]
+fn a_chapter_without_text_moves_to_a_vacant_number_when_nothing_appeared_there() {
+    let dir = TempDir::new().unwrap();
+    let project = new_project(dir.path());
+    put_chapter_with_text(&project, "01", "一章");
+    put_chapter_with_text(&project, "02", "二章");
+    put(
+        &project,
+        "plot/chapters/05.md",
+        &chapter_md("五章", "あらすじ"),
+    );
+
+    plan_and_apply(&project, &remove_chapter(2));
+
+    assert_eq!(chapter_numbers(&project), vec!["01", "04"]);
+    assert_eq!(chapter_titles(&project), vec!["一章", "五章"]);
+}
+
+/// 本文の無い章が続くときは、前の章の行き先が次の章の「本文がまだ無いこと」の確認と同じパスになる。
+/// 同じ確認を重ねると形の誤りになるので、重ねない。
+#[test]
+fn consecutive_chapters_without_text_do_not_repeat_the_same_expectation() {
+    let dir = TempDir::new().unwrap();
+    let project = new_project(dir.path());
+    for number in ["01", "02"] {
+        put(
+            &project,
+            &format!("plot/chapters/{number}.md"),
+            &chapter_md(number, "あらすじ"),
+        );
+    }
+
+    let plan = plan_and_apply(&project, &add_chapter(Some(1), "序章"));
+
+    let expected_paths: Vec<String> = plan
+        .change_set
+        .files
+        .iter()
+        .filter_map(|change| match change {
+            FileChange::Expect { path, .. } => Some(path.to_string()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        expected_paths,
+        vec!["manuscript/01", "manuscript/02", "manuscript/03"],
+        "移動元 01・02 と、どの改名にも空けられない行き先 03 を 1 回ずつ"
+    );
+    assert_eq!(chapter_titles(&project), vec!["序章", "01", "02"]);
+}
+
 #[test]
 fn a_text_folder_without_a_chapter_at_a_destination_is_refused_with_a_clear_message() {
     let dir = TempDir::new().unwrap();

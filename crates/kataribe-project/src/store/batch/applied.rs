@@ -8,7 +8,7 @@ use super::prepare::{PlannedMove, PlannedWrite};
 use super::staging::Staging;
 use crate::error::{ProjectError, StillMoved, StillTrashed};
 use crate::path::RelPath;
-use crate::store::{atomic_write, rename_with_retry};
+use crate::store::{atomic_write, is_transient_lock_error, rename_with_retry};
 
 /// 反映済みの変更。途中で失敗したとき、逆順に元へ戻すために覚えておく。
 pub(super) enum Applied<'a> {
@@ -67,33 +67,61 @@ impl<'a> MoveStep<'a> {
 
     /// 1 段階目: 移動元を置き場へ預ける。
     pub(super) fn move_away(&self) -> Result<(), ProjectError> {
-        rename_with_retry(self.from_resolved, &self.staged_resolved).map_err(|source| {
-            ProjectError::Io {
-                path: self.from.clone(),
-                source,
-            }
-        })
+        rename_into_free_place(self.from_resolved, &self.staged_resolved)
+            .map_err(|source| rename_error(self.from, source))
     }
 
     /// 2 段階目: 預けたものを移動先へ置く。
     pub(super) fn move_in(&self) -> Result<(), ProjectError> {
         crate::store::create_parent_dir(self.to_resolved, self.to)?;
-        rename_with_retry(&self.staged_resolved, self.to_resolved).map_err(|source| {
-            ProjectError::Io {
-                path: self.to.clone(),
-                source,
-            }
-        })
+        rename_into_free_place(&self.staged_resolved, self.to_resolved)
+            .map_err(|source| rename_error(self.to, source))
     }
 
     /// `move_away` を取り消す（預けたものを元の場所へ戻す）。
+    ///
+    /// 元の場所が埋まっていれば戻さない（そこにあるのは、取り消せなかった別の改名の実物かもしれない）。
     fn undo_move_away(&self) -> std::io::Result<()> {
-        rename_with_retry(&self.staged_resolved, self.from_resolved)
+        rename_into_free_place(&self.staged_resolved, self.from_resolved)
     }
 
     /// `move_in` を取り消す（置いたものを預け先へ戻す）。
     fn undo_move_in(&self) -> std::io::Result<()> {
-        rename_with_retry(self.to_resolved, &self.staged_resolved)
+        rename_into_free_place(self.to_resolved, &self.staged_resolved)
+    }
+}
+
+/// `to` に何も無いことを確かめてから、`from` を `to` へ改名する。
+///
+/// Windows の改名は、行き先がファイルだと黙って置き換える。そこにある別のファイル（外で作られたもの、
+/// 取り消せなかった別の改名の実物）の中身を消さないための確認。確認と改名の間に外で作られる場合までは
+/// 防げない（std には置き換えない改名が無い）が、同じ変更案の中で起こる取り違えは防げる。
+fn rename_into_free_place(from: &Path, to: &Path) -> std::io::Result<()> {
+    match fs::symlink_metadata(to) {
+        Ok(_) => return Err(std::io::ErrorKind::AlreadyExists.into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    rename_with_retry(from, to)
+}
+
+/// 改名の失敗を、利用者へ知らせる形にする。
+///
+/// 行き先が埋まっていたのは外で変更されたということ、ロックで失敗したのはほかのアプリがファイルを
+/// 開いているということ。後者は、閉じれば再試行できるので、権限のエラーとは別に案内する。
+pub(super) fn rename_error(path: &RelPath, source: std::io::Error) -> ProjectError {
+    if source.kind() == std::io::ErrorKind::AlreadyExists {
+        ProjectError::Conflict { path: path.clone() }
+    } else if is_transient_lock_error(&source) {
+        ProjectError::FilesInUse {
+            path: path.clone(),
+            restored: false,
+        }
+    } else {
+        ProjectError::Io {
+            path: path.clone(),
+            source,
+        }
     }
 }
 
@@ -111,13 +139,10 @@ impl PlannedWrite<'_> {
 }
 
 impl TrashMove<'_> {
+    /// ゴミ箱から元の場所へ戻す。元の場所が埋まっていれば戻さない（実物はゴミ箱に残る）。
     fn restore(&self) -> Result<(), ProjectError> {
-        rename_with_retry(&self.resolved_trashed, self.original).map_err(|source| {
-            ProjectError::Io {
-                path: self.path.clone(),
-                source,
-            }
-        })?;
+        rename_into_free_place(&self.resolved_trashed, self.original)
+            .map_err(|source| rename_error(self.path, source))?;
         remove_empty_dirs(self.resolved_trashed.parent(), &self.batch_dir);
         Ok(())
     }
@@ -196,7 +221,7 @@ pub(super) fn roll_back(
         }
     }
     if not_restored.is_empty() && still_trashed.is_empty() && still_moved.is_empty() {
-        error
+        declare_restored(error)
     } else {
         ProjectError::PartialWrite {
             not_restored,
@@ -205,5 +230,16 @@ pub(super) fn roll_back(
             journal: journal.cloned(),
             source: Box::new(error),
         }
+    }
+}
+
+/// すべて元に戻せたことを、ロックの失敗の案内に反映する（戻せなかったものがあるときは、別に案内する）。
+fn declare_restored(error: ProjectError) -> ProjectError {
+    match error {
+        ProjectError::FilesInUse { path, .. } => ProjectError::FilesInUse {
+            path,
+            restored: true,
+        },
+        other => other,
     }
 }

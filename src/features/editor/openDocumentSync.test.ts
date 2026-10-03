@@ -296,6 +296,66 @@ describe("writeBesideEditor（章の番号の振り直しで、開いている�
     expect(documentSaveController.getConflict()).toBeNull();
   });
 
+  it("書き換えの最中の入力と保存は、古いパスへ書かず、終わったあとに新しいパスへ保存する", async () => {
+    const inner = createMockBackend({ delayMs: 0 });
+    await openSceneInEditor(inner);
+    let applyStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      applyStarted = resolve;
+    });
+    let finishApply!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      finishApply = resolve;
+    });
+    const writeDocument = vi.fn(inner.writeDocument.bind(inner));
+    const backend = wrapBackend(inner, {
+      writeDocument,
+      async applyChangeSet(changeSet) {
+        applyStarted();
+        await gate;
+        return inner.applyChangeSet(changeSet);
+      },
+    });
+    const writing = writeBesideEditor(backend, await addChapterBeforeFirst(backend));
+    await started;
+
+    editText("書き換えの最中に書いた本文");
+    documentSaveController.saveNow(backend);
+    await Promise.resolve();
+    expect(writeDocument).not.toHaveBeenCalled();
+
+    finishApply();
+    await writing;
+    await documentSaveController.flush(backend);
+
+    expect(writeDocument).toHaveBeenCalledTimes(1);
+    expect(writeDocument.mock.calls[0]?.[0]).toBe(NEW_PATH);
+    expect(await readText(inner, NEW_PATH)).toBe("書き換えの最中に書いた本文");
+    await expect(inner.readDocument(OLD_PATH)).rejects.toMatchObject({ kind: "not_found" });
+    expect(documentSaveController.getConflict()).toBeNull();
+    expect(useEditorStore.getState().status).toBe("clean");
+  });
+
+  it("書き換えが失敗しても、保存の保留は解け、元のパスへ保存できる", async () => {
+    const inner = createMockBackend({ delayMs: 0 });
+    await openSceneInEditor(inner);
+    const backend = wrapBackend(inner, {
+      async applyChangeSet() {
+        editText("失敗する書き換えの最中の編集");
+        documentSaveController.saveNow(backend);
+        throw new Error("適用できません");
+      },
+    });
+
+    await expect(writeBesideEditor(backend, await addChapterBeforeFirst(backend))).rejects.toThrow(
+      "適用できません",
+    );
+    await documentSaveController.flush(backend);
+
+    expect(await readText(inner, OLD_PATH)).toBe("失敗する書き換えの最中の編集");
+    expect(useEditorStore.getState().path).toBe(OLD_PATH);
+  });
+
   it("保存できない編集が残っていれば、改名もせずに止める", async () => {
     const inner = createMockBackend({ delayMs: 0 });
     await openSceneInEditor(inner);

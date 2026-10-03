@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use crate::error::ProjectError;
 use crate::layout;
 use crate::path::RelPath;
-use crate::store::{ProjectStore, timestamp_stamp};
+use crate::store::{ProjectStore, create_parent_dir, timestamp_stamp};
 
 /// 操作の記録のファイル名。
 const JOURNAL_FILE_NAME: &str = "journal.json";
@@ -55,18 +55,17 @@ impl Staging {
 impl ProjectStore {
     /// 1 回の反映のための置き場を作る。
     pub(super) fn create_staging_dir(&self) -> Result<Staging, ProjectError> {
-        let dir = self.new_batch_dir(layout::STAGING_DIR)?;
+        let dir = self.create_batch_dir(layout::STAGING_DIR)?;
         let resolved = self.resolve(&dir)?;
-        fs::create_dir_all(&resolved).map_err(|source| ProjectError::Io {
-            path: dir.clone(),
-            source,
-        })?;
         Ok(Staging { dir, resolved })
     }
 
-    /// まだ無い `<parent_dir>/<日時>/` のパス。同じ日時のフォルダが既にあれば `-1`, `-2`, … を付ける
+    /// `<parent_dir>/<日時>/` を新しく作り、そのパスを返す。同じ日時のフォルダが既にあれば `-1`, `-2`, … を付ける
     /// （同じミリ秒に 2 回反映しても、前のものを上書きしないため）。
-    pub(super) fn new_batch_dir(&self, parent_dir: &str) -> Result<RelPath, ProjectError> {
+    ///
+    /// 「無いことを確かめてから作る」のではなく、作成そのものの成否で確保する。GUI と CLI が同じミリ秒に
+    /// 反映しても、互いに別のフォルダになる（同じ置き場を共有して、操作の記録や預け先を上書きしない）。
+    pub(super) fn create_batch_dir(&self, parent_dir: &str) -> Result<RelPath, ProjectError> {
         let stamp = timestamp_stamp(self.clock.now());
         let mut collision_counter = 0u32;
         loop {
@@ -76,10 +75,20 @@ impl ProjectStore {
                 format!("{stamp}-{collision_counter}")
             };
             let candidate = RelPath::new(&format!("{parent_dir}/{name}"))?;
-            if !self.exists(&candidate) {
-                return Ok(candidate);
+            let resolved = self.resolve(&candidate)?;
+            create_parent_dir(&resolved, &candidate)?;
+            match fs::create_dir(&resolved) {
+                Ok(()) => return Ok(candidate),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    collision_counter += 1;
+                }
+                Err(source) => {
+                    return Err(ProjectError::Io {
+                        path: candidate,
+                        source,
+                    });
+                }
             }
-            collision_counter += 1;
         }
     }
 }

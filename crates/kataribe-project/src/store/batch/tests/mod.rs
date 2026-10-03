@@ -245,6 +245,47 @@ fn trash_folders_made_in_the_same_millisecond_do_not_overwrite_each_other() {
 }
 
 #[test]
+fn a_batch_dir_that_is_already_taken_is_never_shared() {
+    let dir = TempDir::new().unwrap();
+    let store = open_store_with_fixed_clock(&dir);
+
+    let first = store.create_batch_dir(".kataribe/staging").unwrap();
+    fs::write(
+        dir.path().join(first.as_str()).join("journal.json"),
+        "先の記録",
+    )
+    .unwrap();
+    let second = store.create_batch_dir(".kataribe/staging").unwrap();
+    let third = store.create_batch_dir(".kataribe/staging").unwrap();
+
+    assert_eq!(first.as_str(), ".kataribe/staging/20231114-221320-000");
+    assert_eq!(second.as_str(), ".kataribe/staging/20231114-221320-000-1");
+    assert_eq!(third.as_str(), ".kataribe/staging/20231114-221320-000-2");
+    assert_eq!(
+        read(&store, ".kataribe/staging/20231114-221320-000/journal.json").unwrap(),
+        "先の記録",
+        "先に確保した置き場の中身は、あとから確保した置き場に触られない"
+    );
+}
+
+#[test]
+fn a_batch_dir_name_taken_by_a_file_is_skipped() {
+    let dir = TempDir::new().unwrap();
+    let store = open_store_with_fixed_clock(&dir);
+    fs::create_dir_all(dir.path().join(".kataribe/staging")).unwrap();
+    fs::write(
+        dir.path().join(".kataribe/staging/20231114-221320-000"),
+        "ファイル",
+    )
+    .unwrap();
+
+    let created = store.create_batch_dir(".kataribe/staging").unwrap();
+
+    assert_eq!(created.as_str(), ".kataribe/staging/20231114-221320-000-1");
+    assert!(dir.path().join(created.as_str()).is_dir());
+}
+
+#[test]
 fn trash_and_write_in_one_call_both_take_effect() {
     let dir = TempDir::new().unwrap();
     let store = open_store(&dir);
@@ -434,7 +475,9 @@ fn trash_moves_are_undone_when_a_later_file_is_locked_by_another_app() {
         BackupMode::Always,
     );
 
-    assert!(matches!(result, Err(ProjectError::Io { path, .. }) if path == second));
+    assert!(
+        matches!(result, Err(ProjectError::FilesInUse { path, restored: true }) if path == second)
+    );
     assert_eq!(
         read(&store, "manuscript/01/s01.txt").unwrap(),
         "一つ目の本文"

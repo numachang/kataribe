@@ -8,7 +8,7 @@ use std::path::Path;
 
 use tempfile::NamedTempFile;
 
-use super::applied::{Applied, MoveStep, TrashMove, remove_empty_dirs, roll_back};
+use super::applied::{Applied, MoveStep, TrashMove, remove_empty_dirs, rename_error, roll_back};
 use super::journal::Journal;
 use super::prepare::{Batch, PlannedTrash, PlannedWrite};
 use super::staging::Staging;
@@ -59,29 +59,47 @@ impl ProjectStore {
         let trash_dir = if batch.trashes.is_empty() {
             None
         } else {
-            Some(self.new_batch_dir(layout::TRASH_DIR)?)
+            Some(self.create_batch_dir(layout::TRASH_DIR)?)
         };
+        let result =
+            self.journal_and_apply(batch, changed, staging, trash_dir.as_ref(), temp_files);
+        if let Some(trash_dir) = &trash_dir {
+            self.discard_empty_trash_dir(trash_dir);
+        }
+        result
+    }
+
+    /// 何も移せないまま終わったとき、確保しておいたゴミ箱フォルダを空のまま残さない。
+    /// 中に何かがあれば消えない（ゴミ箱の中身を消すことはない）。
+    fn discard_empty_trash_dir(&self, trash_dir: &RelPath) {
+        if let Ok(resolved) = self.resolve(trash_dir) {
+            remove_empty_dirs(Some(&resolved), &resolved);
+        }
+    }
+
+    /// 操作の記録を書いてから、反映する。失敗したら巻き戻す。
+    fn journal_and_apply<'a>(
+        &self,
+        batch: &'a Batch<'a>,
+        changed: &[&'a PlannedWrite<'a>],
+        staging: &Staging,
+        trash_dir: Option<&RelPath>,
+        temp_files: Vec<NamedTempFile>,
+    ) -> Result<(), ProjectError> {
         let steps = batch
             .moves
             .iter()
             .enumerate()
             .map(|(index, planned)| MoveStep::plan(index, planned, staging))
             .collect::<Result<Vec<_>, _>>()?;
-        let journal = match Journal::describe(batch, changed, trash_dir.as_ref(), &steps) {
+        let journal = match Journal::describe(batch, changed, trash_dir, &steps) {
             Some(journal) => Some(journal.write(staging)?),
             None => None,
         };
 
         let mut applied = Vec::new();
-        self.apply_steps(
-            batch,
-            trash_dir.as_ref(),
-            &steps,
-            changed,
-            temp_files,
-            &mut applied,
-        )
-        .map_err(|error| roll_back(&applied, journal.as_ref(), error))
+        self.apply_steps(batch, trash_dir, &steps, changed, temp_files, &mut applied)
+            .map_err(|error| roll_back(&applied, journal.as_ref(), error))
     }
 
     /// ゴミ箱へ移す → 改名（預ける → 置く）→ 置き換え、の順に行う。済んだものを `applied` に記録する。
@@ -140,12 +158,8 @@ impl ProjectStore {
         let destination = RelPath::new(&format!("{batch_dir}/{}", trash.path))?;
         let resolved_destination = self.resolve(&destination)?;
         let moved = create_parent_dir(&resolved_destination, &destination).and_then(|()| {
-            rename_with_retry(&trash.resolved, &resolved_destination).map_err(|source| {
-                ProjectError::Io {
-                    path: trash.path.clone(),
-                    source,
-                }
-            })
+            rename_with_retry(&trash.resolved, &resolved_destination)
+                .map_err(|source| rename_error(trash.path, source))
         });
         if let Err(error) = moved {
             remove_empty_dirs(resolved_destination.parent(), resolved_batch_dir);

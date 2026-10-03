@@ -99,14 +99,53 @@ describe("章を足す", () => {
       { kind: "move", from: "manuscript/01", to: "manuscript/02" },
       { kind: "move", from: "plot/chapters/02.md", to: "plot/chapters/03.md" },
     ]);
-    // 本文のフォルダが無い第 2 章は、移さずに、まだ無いことを確かめる
+    // 本文のフォルダが無い第 2 章は、移さずに、まだ無いことを確かめる。移す先（manuscript/03）も、
+    // ほかの変更で扱っていないので、まだ無いことを確かめる
     expect(expectChanges(plan.change_set)).toEqual([
       { kind: "expect", path: "manuscript/02", base_hash: null },
+      { kind: "expect", path: "manuscript/03", base_hash: null },
     ]);
     // 新しい章は、改名のあとの「無いこと」を条件に書く
     expect(writeChanges(plan.change_set)).toMatchObject([
       { path: "plot/chapters/01.md", previous: null, base_hash: null },
     ]);
+  });
+
+  it("本文の無い章をずらした先が、ほかの変更で扱われていれば、確認を重ねない。扱われていなければ足す", async () => {
+    await planAndApply(addChapter(null, "第三章"));
+
+    const plan = await backend.planStructureEdit(addChapter("01", "序章"));
+
+    // 本文の無い第 2・3 章の元の場所（02・03）は確認済み。第 3 章の移す先（04）だけが、どの変更にも無い
+    const expectedPaths = expectChanges(plan.change_set).map((change) => change.path);
+    expect(expectedPaths).toEqual(["manuscript/02", "manuscript/03", "manuscript/04"]);
+  });
+
+  it("本文の無い章を移す先に、外で本文のある章ができたら、競合で何も変えない", async () => {
+    const plan = await backend.planStructureEdit(addChapter("02", "挿入"));
+    await planAndApply(addChapter(null, "外で足した章"));
+    await planAndApply({
+      kind: "add_scene",
+      chapter: "03",
+      before: null,
+      scene: {
+        title: "外の場面",
+        summary: "",
+        pov: null,
+        characters: [],
+        place: null,
+        time: null,
+        target_chars: null,
+      },
+    });
+    await backend.writeDocument("manuscript/03/s01.txt", textDocument("外で書いた本文"), null);
+
+    await expect(backend.applyChangeSet(plan.change_set)).rejects.toMatchObject({
+      kind: "conflict",
+    });
+
+    expect(await plannedChapters()).toHaveLength(3);
+    expect(await readText(backend, "manuscript/03/s01.txt")).toBe("外で書いた本文");
   });
 
   it("途中に足して適用すると、章の番号と本文が振り直される", async () => {
@@ -216,6 +255,18 @@ describe("章を消す", () => {
     expect(trashChanges(plan.change_set).map((file) => file.path)).toEqual(["plot/chapters/02.md"]);
     expect(expectChanges(plan.change_set)).toEqual([
       { kind: "expect", path: "manuscript/02", base_hash: null },
+    ]);
+  });
+
+  it("第 0 章を消すと、第 1 章が 00 になる（番号は 0 まで許す）", async () => {
+    await backend.writeDocument("plot/chapters/00.md", textDocument("---\ntitle: 序\n---\n"), null);
+
+    const { plan } = await planAndApply(removeChapter("00"));
+
+    expect(plan.renumbered[0]).toEqual({ from: "01", to: "00", title: "雨の匂い" });
+    expect(await plannedChapters()).toEqual([
+      ["00", "雨の匂い"],
+      ["01", "灯台のある岬"],
     ]);
   });
 

@@ -32,26 +32,52 @@ function shiftedId(chapterId: string, delta: number): string {
   return shifted;
 }
 
+/** この変更案が、元の場所を空ける・元の場所を確かめる・ゴミ箱へ移すパス。ここにある行き先は、改めて確かめなくてよい。 */
+function accountedPaths(files: FileChange[]): Set<string> {
+  const paths = new Set<string>();
+  for (const file of files) {
+    if (file.kind === "move") {
+      paths.add(file.from);
+    } else if (file.kind !== "write") {
+      paths.add(file.path);
+    }
+  }
+  return paths;
+}
+
 /**
  * `chapters` の章立てと本文のフォルダを、番号を `delta` ずらした場所へ改名する変更。
- * 本文のフォルダがまだ無い章には、適用のときにまだ無いことの確認を付ける。
+ * 本文のフォルダがまだ無い章には、適用のときにまだ無いことの確認を付ける。移す先も、同じ変更案の
+ * 移動・ゴミ箱・確認で扱っていなければ、外で本文のフォルダができていないことを確かめる
+ * （番号が抜けていて行き先が空いているときに、そこへ取り残された本文を作らないため）。
+ * `alreadyPlanned` は、同じ変更案のほかの部分（章を消すときの、消す章の分）。
  */
 function renumber(
   state: ProjectState,
   chapters: MockChapter[],
   delta: number,
+  alreadyPlanned: FileChange[] = [],
 ): { files: FileChange[]; renumbered: RenumberedChapter[] } {
   const files: FileChange[] = [];
   const renumbered: RenumberedChapter[] = [];
+  const destinationsWithoutText: string[] = [];
   for (const chapter of chapters) {
     const to = shiftedId(chapter.id, delta);
     files.push(moveChange(chapterPath(chapter.id), chapterPath(to)));
-    files.push(
-      chapterTextFiles(state, chapter.id).length > 0
-        ? moveChange(chapterTextDir(chapter.id), chapterTextDir(to))
-        : expectAbsentChange(chapterTextDir(chapter.id)),
-    );
+    if (chapterTextFiles(state, chapter.id).length > 0) {
+      files.push(moveChange(chapterTextDir(chapter.id), chapterTextDir(to)));
+    } else {
+      files.push(expectAbsentChange(chapterTextDir(chapter.id)));
+      destinationsWithoutText.push(chapterTextDir(to));
+    }
     renumbered.push({ from: chapter.id, to, title: chapter.title.trim() || null });
+  }
+  const accounted = accountedPaths([...alreadyPlanned, ...files]);
+  for (const destination of destinationsWithoutText) {
+    if (!accounted.has(destination)) {
+      files.push(expectAbsentChange(destination));
+      accounted.add(destination);
+    }
   }
   return { files, renumbered };
 }
@@ -127,7 +153,7 @@ export function planRemoveChapter(state: ProjectState, chapterId: string): Struc
     trashChange(state, chapterPath(chapterId)),
     trashChapterTextChange(state, chapterId) ?? expectAbsentChange(chapterTextDir(chapterId)),
   ];
-  const { files: moves, renumbered } = renumber(state, shifted, -1);
+  const { files: moves, renumbered } = renumber(state, shifted, -1, files);
   return {
     ...described(state, `${chapterLabel(chapterId, chapter.title.trim() || null)}をゴミ箱へ移し`, [
       ...files,

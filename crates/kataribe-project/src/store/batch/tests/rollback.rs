@@ -5,12 +5,12 @@ use std::fs;
 use tempfile::TempDir;
 
 use super::super::super::test_support::{read, rel, write};
-use super::super::applied::{Applied, MoveStep, roll_back};
+use super::super::applied::{Applied, MoveStep, rename_error, roll_back};
 use super::super::journal::Journal;
-use super::super::prepare::PlannedMove;
+use super::super::prepare::{PlannedMove, PlannedTrash};
 use super::super::{EntryCondition, PendingChange, PendingWrite};
 use super::open_store;
-use crate::error::{ProjectError, StillMoved};
+use crate::error::{ProjectError, StillMoved, StillTrashed};
 use crate::path::RelPath;
 use crate::store::{BackupMode, ProjectStore, WriteCondition};
 
@@ -98,10 +98,16 @@ fn renames_and_trashes_are_all_undone_when_a_folder_is_locked_by_another_app() {
         BackupMode::Always,
     );
 
+    let Err(error) = result else {
+        panic!("失敗するはず");
+    };
     assert!(
-        matches!(result, Err(ProjectError::Io { ref path, .. }) if *path == text_03),
-        "{result:?}"
+        matches!(&error, ProjectError::FilesInUse { path, restored: true } if *path == text_03),
+        "{error:?}"
     );
+    let message = error.to_string();
+    assert!(message.contains("ほかのアプリ"), "{message}");
+    assert!(message.contains("元に戻しました"), "{message}");
     assert_eq!(read(&store, "world/glossary.md").unwrap(), "用語集");
     assert_nothing_changed(&dir, &store);
 }
@@ -294,6 +300,266 @@ fn renames_that_were_made_are_put_back_where_they_came_from() {
     assert!(matches!(error, ProjectError::NotFound { .. }), "{error:?}");
     assert_eq!(read(&store, "manuscript/03/s01.txt").unwrap(), "本文");
     assert!(!store.exists(&to));
+}
+
+// ---- 取り消しが、その場所にある別のファイルを置き換えないこと ----
+
+/// `relative` に `content` のファイルを置く。
+fn put(dir: &TempDir, relative: &str, content: &str) {
+    let path = dir.path().join(relative);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, content).unwrap();
+}
+
+fn read_file(dir: &TempDir, relative: &str) -> String {
+    fs::read_to_string(dir.path().join(relative)).unwrap()
+}
+
+fn planned_move<'a>(dir: &TempDir, from: &'a RelPath, to: &'a RelPath) -> PlannedMove<'a> {
+    PlannedMove {
+        from,
+        to,
+        from_resolved: dir.path().join(from.as_str()),
+        to_resolved: dir.path().join(to.as_str()),
+    }
+}
+
+/// 2 段階目の取り消し（移動先から預け先へ）だけを失敗させる。預け先に別のものを置いておくと、行き先が
+/// 埋まっているので取り消せない。
+fn block_undo_of_move_in(dir: &TempDir, step: &MoveStep<'_>) {
+    put(dir, step.staged.as_str(), "預け先を塞ぐもの");
+}
+
+/// 章 03・04・05 の第 3 章の前に章を足す形（03→04、04→05、05→06）で、改名を 2 段階とも済ませ、
+/// 1 つ目の 2 段階目の取り消しだけが失敗する状況で巻き戻す。1 つ目の取り消しが失敗して 04 に旧 03 が
+/// 残っているところへ、2 つ目の取り消しが旧 04 を重ねて、旧 03 を消してはならない。
+#[test]
+fn an_undo_does_not_overwrite_a_file_left_by_another_rename_that_could_not_be_undone() {
+    let dir = TempDir::new().unwrap();
+    let store = open_store(&dir);
+    for number in 3..=5 {
+        put(
+            &dir,
+            &format!("plot/chapters/0{number}.md"),
+            &format!("旧{number}"),
+        );
+    }
+    let staging = store.create_staging_dir().unwrap();
+    let paths: Vec<RelPath> = (3..=6)
+        .map(|number| rel(&format!("plot/chapters/0{number}.md")))
+        .collect();
+    let planned = [
+        planned_move(&dir, &paths[0], &paths[1]),
+        planned_move(&dir, &paths[1], &paths[2]),
+        planned_move(&dir, &paths[2], &paths[3]),
+    ];
+    let steps: Vec<MoveStep<'_>> = planned
+        .iter()
+        .enumerate()
+        .map(|(index, planned)| MoveStep::plan(index, planned, &staging).unwrap())
+        .collect();
+    for step in &steps {
+        step.move_away().unwrap();
+    }
+    for step in &steps {
+        step.move_in().unwrap();
+    }
+    block_undo_of_move_in(&dir, &steps[0]);
+
+    let error = roll_back(
+        &[
+            Applied::MovedAway(&steps[0]),
+            Applied::MovedAway(&steps[1]),
+            Applied::MovedAway(&steps[2]),
+            Applied::MovedIn(&steps[0]),
+            Applied::MovedIn(&steps[1]),
+            Applied::MovedIn(&steps[2]),
+        ],
+        None,
+        super::some_failure(),
+    );
+
+    let ProjectError::PartialWrite { still_moved, .. } = error else {
+        panic!("PartialWrite になるはず: {error:?}");
+    };
+    assert_eq!(
+        still_moved,
+        vec![
+            StillMoved {
+                original: paths[0].clone(),
+                current: paths[1].clone(),
+            },
+            StillMoved {
+                original: paths[1].clone(),
+                current: steps[1].staged.clone(),
+            },
+        ],
+        "旧 03 は 04 に、旧 04 は預け先にある。案内が実物と一致する"
+    );
+    assert_eq!(
+        read_file(&dir, "plot/chapters/04.md"),
+        "旧3",
+        "旧 03 が消えていない"
+    );
+    assert_eq!(
+        read_file(&dir, steps[1].staged.as_str()),
+        "旧4",
+        "旧 04 が預け先に残っている"
+    );
+    assert_eq!(
+        read_file(&dir, "plot/chapters/05.md"),
+        "旧5",
+        "戻せるものは戻っている"
+    );
+    assert!(!dir.path().join("plot/chapters/06.md").exists());
+}
+
+/// 章を消す形（02 をゴミ箱へ、03→02）で、2 段階目の取り消しだけが失敗したとき、ゴミ箱からの取り消しが
+/// 02 にある旧 03 を上書きしてはならない。
+#[test]
+fn restoring_from_the_trash_does_not_overwrite_a_file_left_by_a_rename_that_could_not_be_undone() {
+    let dir = TempDir::new().unwrap();
+    let store = open_store(&dir);
+    put(&dir, "plot/chapters/02.md", "旧2");
+    put(&dir, "plot/chapters/03.md", "旧3");
+    let staging = store.create_staging_dir().unwrap();
+    let (removed, from, to) = (
+        rel("plot/chapters/02.md"),
+        rel("plot/chapters/03.md"),
+        rel("plot/chapters/02.md"),
+    );
+    let planned_trashes = [PlannedTrash {
+        path: &removed,
+        resolved: dir.path().join(removed.as_str()),
+    }];
+    let mut applied = Vec::new();
+    let batch_dir = store.create_batch_dir(".kataribe/trash").unwrap();
+    store
+        .move_to_trash(&planned_trashes, &batch_dir, &mut applied)
+        .unwrap();
+    let planned = planned_move(&dir, &from, &to);
+    let step = MoveStep::plan(0, &planned, &staging).unwrap();
+    step.move_away().unwrap();
+    applied.push(Applied::MovedAway(&step));
+    step.move_in().unwrap();
+    applied.push(Applied::MovedIn(&step));
+    block_undo_of_move_in(&dir, &step);
+
+    let error = roll_back(&applied, None, super::some_failure());
+
+    let ProjectError::PartialWrite {
+        still_trashed,
+        still_moved,
+        ..
+    } = error
+    else {
+        panic!("PartialWrite になるはず: {error:?}");
+    };
+    let place_in_trash = rel(&format!("{batch_dir}/plot/chapters/02.md"));
+    assert_eq!(
+        still_trashed,
+        vec![StillTrashed {
+            original: removed,
+            trashed: place_in_trash.clone(),
+        }]
+    );
+    assert_eq!(
+        still_moved,
+        vec![StillMoved {
+            original: from,
+            current: to,
+        }]
+    );
+    assert_eq!(
+        read_file(&dir, "plot/chapters/02.md"),
+        "旧3",
+        "旧 03 が消えていない"
+    );
+    assert_eq!(
+        read_file(&dir, place_in_trash.as_str()),
+        "旧2",
+        "旧 02 はゴミ箱にある"
+    );
+}
+
+#[test]
+fn the_second_stage_does_not_replace_a_file_that_appeared_at_the_destination() {
+    let dir = TempDir::new().unwrap();
+    let store = open_store(&dir);
+    put(&dir, "plot/chapters/03.md", "旧3");
+    let staging = store.create_staging_dir().unwrap();
+    let (from, to) = (rel("plot/chapters/03.md"), rel("plot/chapters/04.md"));
+    let planned = planned_move(&dir, &from, &to);
+    let step = MoveStep::plan(0, &planned, &staging).unwrap();
+    step.move_away().unwrap();
+    put(&dir, "plot/chapters/04.md", "外で作られた 4");
+
+    let result = step.move_in();
+
+    assert!(
+        matches!(result, Err(ProjectError::Conflict { ref path }) if *path == to),
+        "{result:?}"
+    );
+    assert_eq!(read_file(&dir, "plot/chapters/04.md"), "外で作られた 4");
+    assert_eq!(
+        read_file(&dir, step.staged.as_str()),
+        "旧3",
+        "預けたものは預け先に残っている"
+    );
+}
+
+// ---- 改名の失敗の案内 ----
+
+#[test]
+fn a_rename_refused_by_a_lock_is_reported_as_files_in_use() {
+    let path = rel("manuscript/03");
+    let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+
+    let error = rename_error(&path, denied);
+
+    assert!(
+        matches!(
+            &error,
+            ProjectError::FilesInUse {
+                restored: false,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+    let message = error.to_string();
+    assert!(message.contains("manuscript/03"), "{message}");
+    assert!(message.contains("ほかのアプリ"), "{message}");
+    assert!(
+        !message.contains("元に戻しました"),
+        "まだ戻していない: {message}"
+    );
+}
+
+#[test]
+fn a_rename_that_fails_for_another_reason_stays_an_io_error() {
+    let path = rel("manuscript/03");
+
+    let error = rename_error(&path, std::io::Error::from(std::io::ErrorKind::NotFound));
+
+    assert!(matches!(error, ProjectError::Io { .. }), "{error:?}");
+}
+
+#[test]
+fn a_lock_failure_that_was_fully_rolled_back_says_so() {
+    let path = rel("manuscript/03");
+    let failure = rename_error(
+        &path,
+        std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+    );
+
+    let error = roll_back(&[], None, failure);
+
+    assert!(
+        matches!(&error, ProjectError::FilesInUse { restored: true, .. }),
+        "{error:?}"
+    );
+    assert!(error.to_string().contains("元に戻しました"), "{error}");
 }
 
 // ---- 操作の記録 ----

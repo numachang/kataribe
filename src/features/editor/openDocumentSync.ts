@@ -48,6 +48,10 @@ interface WriteBesideEditorOptions<T> {
  * 新しいパスへ付け替える。これで、そのまま続けて編集でき、次の自動保存は新しいパスへ書く（古いパスへ書くと、
  * 移動で空いた場所に別の章の文書があるときに、それを壊してしまう）。
  *
+ * 書き換えている間（読み直し・付け替えが終わるまで）は、エディタの保存の開始を止める（`holdSaves`）。
+ * 保存先のパスは保存を始めるときに決まるので、その間の入力や Ctrl+S が改名の前のパスへの保存になるのを防ぐ。
+ * 止めた保存は、終わったあとの文書とパスで保存し直す。
+ *
  * 読み直しに失敗しても、書き換えそのものは済んでいるので、失敗を知らせたうえで `write` の結果を返す。
  */
 export async function writeBesideEditor<T>(
@@ -65,21 +69,29 @@ export async function writeBesideEditor<T>(
   if (openPath !== null && touches(openPath) && documentSaveController.hasUnsavedWork()) {
     throw new Error(unsavedWorkMessage);
   }
-  const revisionBeforeWrite = useEditorStore.getState().revision;
-  const result = await write();
-  const openPathAfterWrite = useWorkspaceStore.getState().currentPath;
-  if (openPathAfterWrite !== null) {
-    const destination = relocatedPath?.(openPathAfterWrite);
-    if (destination === null) {
-      closeTrashedDocument(openPathAfterWrite);
-      return result;
+  // 書き換えの最中に始まる保存は、改名の前のパスを対象にしてしまう（書き込みはこの書き換えの終わりまで待たされ、
+  // 古いパスに別の章の文書があれば競合になって、「上書き」で壊す）。書き換えとパスの付け替えが終わるまで止め、
+  // 終わったあとの文書とパスで保存し直す。
+  const releaseSaves = documentSaveController.holdSaves();
+  try {
+    const revisionBeforeWrite = useEditorStore.getState().revision;
+    const result = await write();
+    const openPathAfterWrite = useWorkspaceStore.getState().currentPath;
+    if (openPathAfterWrite !== null) {
+      const destination = relocatedPath?.(openPathAfterWrite);
+      if (destination === null) {
+        closeTrashedDocument(openPathAfterWrite);
+        return result;
+      }
+      if (destination !== undefined) {
+        followRenamedDocument(openPathAfterWrite, destination);
+      }
     }
-    if (destination !== undefined) {
-      followRenamedDocument(openPathAfterWrite, destination);
-    }
+    await reloadOpenDocumentIfUntouched(backend, rewrites, revisionBeforeWrite);
+    return result;
+  } finally {
+    releaseSaves();
   }
-  await reloadOpenDocumentIfUntouched(backend, rewrites, revisionBeforeWrite);
-  return result;
 }
 
 /** 改名された文書を、読み直さずに新しいパスで開いたままにする。 */

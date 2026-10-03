@@ -156,6 +156,74 @@ describe("保存の直列化", () => {
   });
 });
 
+describe("保存の保留（holdSaves）", () => {
+  it("保留の間は saveNow しても書かず、解いたときに最新の内容で 1 回だけ保存する", async () => {
+    const inner = createMockBackend({ delayMs: 0 });
+    await openProject(inner);
+    await loadIntoEditor(inner, "concept.md");
+    const writeDocument = vi.fn(inner.writeDocument.bind(inner));
+    const backend = wrapBackend(inner, { writeDocument });
+
+    const release = documentSaveController.holdSaves();
+    editText("1回目の編集");
+    documentSaveController.saveNow(backend);
+    editText("2回目の編集");
+    documentSaveController.saveNow(backend);
+    await Promise.resolve();
+    expect(writeDocument).not.toHaveBeenCalled();
+
+    release();
+    await documentSaveController.flush(backend);
+
+    expect(writeDocument).toHaveBeenCalledTimes(1);
+    expect(await readText(inner, "concept.md")).toBe("2回目の編集");
+    expect(useEditorStore.getState().status).toBe("clean");
+  });
+
+  it("保留の間の flush は、解けて保存が済むまで待つ", async () => {
+    const backend = createMockBackend({ delayMs: 0 });
+    await openProject(backend);
+    await loadIntoEditor(backend, "concept.md");
+
+    const release = documentSaveController.holdSaves();
+    editText("保留の間の編集");
+    let flushed = false;
+    const flushing = documentSaveController.flush(backend).then(() => {
+      flushed = true;
+    });
+    documentSaveController.saveNow(backend);
+    await Promise.resolve();
+    expect(flushed).toBe(false);
+
+    release();
+    await flushing;
+
+    expect(await readText(backend, "concept.md")).toBe("保留の間の編集");
+  });
+
+  it("保留を重ねたときは、すべて解けるまで保存を始めない。解く関数を二度呼んでも 1 回ぶん", async () => {
+    const inner = createMockBackend({ delayMs: 0 });
+    await openProject(inner);
+    await loadIntoEditor(inner, "concept.md");
+    const writeDocument = vi.fn(inner.writeDocument.bind(inner));
+    const backend = wrapBackend(inner, { writeDocument });
+
+    const releaseFirst = documentSaveController.holdSaves();
+    const releaseSecond = documentSaveController.holdSaves();
+    editText("編集");
+    documentSaveController.saveNow(backend);
+
+    releaseFirst();
+    releaseFirst();
+    await Promise.resolve();
+    expect(writeDocument).not.toHaveBeenCalled();
+
+    releaseSecond();
+    await documentSaveController.flush(backend);
+    expect(writeDocument).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("人物資料・章立てを保存したあと", () => {
   async function openWorkspaceFor(backend: Backend) {
     useWorkspaceStore.getState().openWorkspace(await openProject(backend));

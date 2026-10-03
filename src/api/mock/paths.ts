@@ -30,12 +30,13 @@ export function chapterTextDir(chapterId: string): string {
   return `manuscript/${chapterId}`;
 }
 
+const MIN_CHAPTER_NUMBER = 0;
 const MAX_CHAPTER_NUMBER = 999;
 
-/** 章 id の番号を `delta` ずらした章 id（`ChapterId::shifted` と同じ。2 桁以上に付け直し、999 を超えたら null）。 */
+/** 章 id の番号を `delta` ずらした章 id（`ChapterId::shifted` と同じ。2 桁以上に付け直し、0〜999 の外なら null）。 */
 export function shiftedChapterId(chapterId: string, delta: number): string | null {
   const shifted = Number.parseInt(chapterId, 10) + delta;
-  if (shifted < 1 || shifted > MAX_CHAPTER_NUMBER) {
+  if (shifted < MIN_CHAPTER_NUMBER || shifted > MAX_CHAPTER_NUMBER) {
     return null;
   }
   return String(shifted).padStart(2, "0");
