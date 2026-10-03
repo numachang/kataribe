@@ -2,11 +2,33 @@ import { describe, expect, it } from "vitest";
 import type { GenerationEvent } from "../../api/types";
 import { applyGenerationEvent, createEmptyGenerationDisplay } from "./eventAccumulator";
 
+const RECEIVED_AT = 1_700_000_000_000;
+
 function replay(events: GenerationEvent[]) {
-  return events.reduce(applyGenerationEvent, createEmptyGenerationDisplay());
+  return events.reduce(
+    (display, event) => applyGenerationEvent(display, event, RECEIVED_AT),
+    createEmptyGenerationDisplay(),
+  );
 }
 
 describe("applyGenerationEvent", () => {
+  it("started で、使っている LLM の名前を覚える", () => {
+    const display = replay([{ kind: "started", model: "Claude Code（haiku）" }]);
+
+    expect(display.model).toBe("Claude Code（haiku）");
+    expect(display.steps).toEqual([]);
+  });
+
+  it("段階が進んでも、使っている LLM の名前は残る", () => {
+    const display = replay([
+      { kind: "started", model: "Claude Code（haiku）" },
+      { kind: "step_started", label: "企画を生成", index: 1, total: 1 },
+      { kind: "content", text: "企画" },
+    ]);
+
+    expect(display.model).toBe("Claude Code（haiku）");
+  });
+
   it("step_started で新しい段階を追加する", () => {
     const display = replay([
       { kind: "step_started", label: "企画を生成しています", index: 1, total: 1 },
@@ -16,7 +38,9 @@ describe("applyGenerationEvent", () => {
         label: "企画を生成しています",
         index: 1,
         total: 1,
+        startedAt: RECEIVED_AT,
         content: "",
+        receivedCharacters: 0,
         reasoning: "",
         notices: [],
         finished: false,
@@ -34,6 +58,16 @@ describe("applyGenerationEvent", () => {
       { kind: "content", text: "洋館に人々が集まる。" },
     ]);
     expect(display.steps[0]?.content).toBe("嵐の夜、洋館に人々が集まる。");
+  });
+
+  it("受け取った本文の文字数を、断片ごとに書記素単位で足していく", () => {
+    const display = replay([
+      { kind: "step_started", label: "本文", index: 1, total: 1 },
+      { kind: "content", text: "嵐の夜、" },
+      { kind: "reasoning", text: "思考は数えない" },
+      { kind: "content", text: "👨‍👩‍👧が来た。" },
+    ]);
+    expect(display.steps[0]?.receivedCharacters).toBe(4 + 5);
   });
 
   it("reasoning は content と別に積み上がる", () => {
@@ -82,6 +116,20 @@ describe("applyGenerationEvent", () => {
     expect(display.steps).toHaveLength(2);
     expect(display.steps[0]?.content).toBe("最初の展開。");
     expect(display.steps[1]?.content).toBe("続きの展開。");
+  });
+
+  it("それぞれの段階は、その段階が始まったときの時刻を持つ", () => {
+    const first = applyGenerationEvent(
+      createEmptyGenerationDisplay(),
+      { kind: "step_started", label: "ビート 1/2", index: 1, total: 2 },
+      1_000,
+    );
+    const second = applyGenerationEvent(
+      first,
+      { kind: "step_started", label: "ビート 2/2", index: 2, total: 2 },
+      5_000,
+    );
+    expect(second.steps.map((step) => step.startedAt)).toEqual([1_000, 5_000]);
   });
 
   it("段階が始まる前のイベントは無視する（防御的）", () => {

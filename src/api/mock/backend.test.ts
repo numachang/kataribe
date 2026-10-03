@@ -271,6 +271,51 @@ describe("createMockBackend / 生成", () => {
     await expect(promise).rejects.toMatchObject({ kind: "cancelled" });
   });
 
+  async function firstEventOfGeneration(llm: LlmSettings): Promise<GenerationEvent | undefined> {
+    const backend = createMockBackend({ delayMs: 0 });
+    await backend.saveSettings({ ...(await backend.loadSettings()), llm });
+    await backend.openProject(SAMPLE_PROJECT_FOLDER);
+    const events: GenerationEvent[] = [];
+    await backend.generate("job-started", { kind: "concept" }, (event) => events.push(event));
+    return events[0];
+  }
+
+  it("生成の最初に、Claude Code とそのモデルの名前を知らせる", async () => {
+    const event = await firstEventOfGeneration(
+      llmSettings({ provider: "claude_code", claude_model: "haiku" }),
+    );
+
+    expect(event).toEqual({ kind: "started", model: "Claude Code（haiku）" });
+  });
+
+  it("接続先の名前には、URL の認証情報やクエリを出さない（Rust と同じ）", async () => {
+    const event = await firstEventOfGeneration(
+      llmSettings({
+        base_url: "https://user:secret@example.com:8443/v1?api_key=abc",
+        model: "gemma",
+      }),
+    );
+
+    expect(event).toEqual({ kind: "started", model: "OpenAI 互換 API（example.com:8443）・gemma" });
+  });
+
+  it.each([
+    ["ホスト名に空白がある", "http://exa mple.com/v1?api_key=abc"],
+    ["スキームが無い", "localhost:1234/v1"],
+  ])(
+    "解釈できない接続先の URL（%s）は、そのまま出さない（Rust と同じ）",
+    async (_case, baseUrl) => {
+      const event = await firstEventOfGeneration(
+        llmSettings({ base_url: baseUrl, model: "gemma" }),
+      );
+
+      expect(event).toEqual({
+        kind: "started",
+        model: "OpenAI 互換 API（接続先の URL を解釈できません）・gemma",
+      });
+    },
+  );
+
   it("章の目標文字数は、すべてのシーンに目標があるときだけ合計し、目標 0 は目標なしとする（Rust と同じ）", async () => {
     const backend = createMockBackend({ delayMs: 0 });
     await backend.openProject(SAMPLE_PROJECT_FOLDER);

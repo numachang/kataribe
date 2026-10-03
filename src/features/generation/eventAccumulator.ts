@@ -1,4 +1,5 @@
 import type { GenerationEvent } from "../../api/types";
+import { countGraphemes } from "../../lib/graphemes";
 
 // generate() が届ける GenerationEvent の並びを、画面に表示できる形へ積み上げていく。
 // バックエンドや React に依存しない純粋な関数なので、単体テストしやすい。
@@ -12,7 +13,14 @@ export interface GenerationStepDisplay {
   label: string;
   index: number;
   total: number;
+  /** この回を始めた時刻（エポックからのミリ秒）。経過時間の表示に使う。 */
+  startedAt: number;
   content: string;
+  /**
+   * 受け取った本文の文字数（書記素単位）。届くたびに全文を数え直すと長い本文で重くなるので、断片の分だけ足す。
+   * 断片の境目で 1 文字が分かれると多めに数えることがあるが、進み具合の目安なので許す。
+   */
+  receivedCharacters: number;
   reasoning: string;
   notices: GenerationNotice[];
   finished: boolean;
@@ -22,11 +30,13 @@ export interface GenerationStepDisplay {
 }
 
 export interface GenerationDisplay {
+  /** 使っている LLM の名前。生成を始めたときに届く。 */
+  model: string | null;
   steps: GenerationStepDisplay[];
 }
 
 export function createEmptyGenerationDisplay(): GenerationDisplay {
-  return { steps: [] };
+  return { model: null, steps: [] };
 }
 
 function updateLastStep(
@@ -40,21 +50,29 @@ function updateLastStep(
   }
   const steps = [...display.steps];
   steps[lastIndex] = update(last);
-  return { steps };
+  return { ...display, steps };
 }
 
-/** 1 件の GenerationEvent を積み上げて、新しい表示状態を返す。 */
+/**
+ * 1 件の GenerationEvent を積み上げて、新しい表示状態を返す。
+ * `receivedAt` はイベントを受け取った時刻（エポックからのミリ秒）。純粋な関数に保つため、呼び出し側が渡す。
+ */
 export function applyGenerationEvent(
   display: GenerationDisplay,
   event: GenerationEvent,
+  receivedAt: number,
 ): GenerationDisplay {
   switch (event.kind) {
+    case "started":
+      return { ...display, model: event.model };
     case "step_started": {
       const step: GenerationStepDisplay = {
         label: event.label,
         index: event.index,
         total: event.total,
+        startedAt: receivedAt,
         content: "",
+        receivedCharacters: 0,
         reasoning: "",
         notices: [],
         finished: false,
@@ -62,10 +80,14 @@ export function applyGenerationEvent(
         completionTokens: null,
         elapsedMs: null,
       };
-      return { steps: [...display.steps, step] };
+      return { ...display, steps: [...display.steps, step] };
     }
     case "content":
-      return updateLastStep(display, (step) => ({ ...step, content: step.content + event.text }));
+      return updateLastStep(display, (step) => ({
+        ...step,
+        content: step.content + event.text,
+        receivedCharacters: step.receivedCharacters + countGraphemes(event.text),
+      }));
     case "reasoning":
       return updateLastStep(display, (step) => ({
         ...step,

@@ -6,6 +6,11 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub enum GenerationEvent {
+    /// タスクの生成を始めた。`model` は使う LLM の名前（アプリ全体の設定と作品の設定を重ねた後の、
+    /// 実際の接続先とモデル）で、利用者に見せる。
+    Started {
+        model: String,
+    },
     /// LLM の呼び出しを 1 回始めた。`index` は 1 始まり。
     StepStarted {
         label: String,
