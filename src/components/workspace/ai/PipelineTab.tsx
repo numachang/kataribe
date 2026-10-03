@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useBackend } from "../../../api/context";
 import type { PipelineStep, StepState, Task } from "../../../api/types";
 import { useGenerationSessionContext } from "../../../features/generation/GenerationSessionProvider";
+import { useGenerationStartBlockedReason } from "../../../features/structure/useStructureAvailability";
 import { toErrorMessage } from "../../../lib/errorMessage";
 import { taskKey } from "../../../lib/taskKey";
 import { useUiStore } from "../../../store/uiStore";
@@ -50,7 +51,8 @@ export function PipelineTab() {
 
   const groups = groupSteps(pipeline);
   const firstReady = pipeline.find((step) => step.state === "ready") ?? null;
-  const isBusy = session.phase !== "idle";
+  const startBlockedReason = useGenerationStartBlockedReason();
+  const isBusy = session.phase !== "idle" || startBlockedReason !== null;
 
   return (
     <div className="pipeline-tab">
@@ -59,6 +61,7 @@ export function PipelineTab() {
           type="button"
           className="app-button app-button--primary"
           disabled={!firstReady || isBusy}
+          title={startBlockedReason ?? undefined}
           onClick={() => firstReady && session.start(firstReady.task)}
         >
           次の工程を実行
@@ -76,6 +79,7 @@ export function PipelineTab() {
             type="button"
             className="app-button"
             disabled={!firstReady || isBusy}
+            title={startBlockedReason ?? undefined}
             onClick={session.runAutoAdvance}
           >
             自動で進める
@@ -104,6 +108,7 @@ export function PipelineTab() {
                       type="button"
                       className="app-button"
                       disabled={isBusy}
+                      title={startBlockedReason ?? undefined}
                       onClick={() => session.start(step.task)}
                     >
                       生成

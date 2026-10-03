@@ -203,7 +203,7 @@ fn character_entries(project: &Project) -> Result<Vec<OverviewEntry>> {
         };
         characters.push((order, item));
     }
-    characters.sort_by_key(|(order, _)| order.unwrap_or(u32::MAX));
+    sort_for_display(&mut characters, |(order, _)| *order);
     Ok(characters.into_iter().map(|(_, item)| item).collect())
 }
 
@@ -227,6 +227,8 @@ fn chapter_entries(project: &Project) -> Result<Vec<ChapterEntry>> {
         };
         chapters.push(ChapterEntry { id, path, parsed });
     }
+    // ファイル名の文字列順だと `100` が `10` と `11` の間に来る。章の順序は番号なので、`chapter_ids` と同じ並びにする
+    chapters.sort_by_key(|chapter| chapter.id);
     Ok(chapters)
 }
 
@@ -303,8 +305,14 @@ fn chapter_target(scenes: &[OverviewEntry]) -> Option<u32> {
         .sum::<Option<u32>>()
 }
 
+/// 登場人物を目次に出す順に並べる。`order` の昇順で、`order` の無い人物は最後。同じ値どうしは元の並び
+/// （ファイル名の順）のまま。目次と、人物の並べ替え（`structure`）が同じ並びを使うための唯一の定義。
+pub(crate) fn sort_for_display<T>(items: &mut [T], order_of: impl Fn(&T) -> Option<u32>) {
+    items.sort_by_key(|item| order_of(item).unwrap_or(u32::MAX));
+}
+
 /// フォルダ直下の Markdown ファイル（名前順）。フォルダが無ければ空。
-fn markdown_files(project: &Project, directory: &str) -> Result<Vec<RelPath>> {
+pub(crate) fn markdown_files(project: &Project, directory: &str) -> Result<Vec<RelPath>> {
     let directory = RelPath::new(directory)?;
     if !project.store().exists(&directory) {
         return Ok(Vec::new());

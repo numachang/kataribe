@@ -1,4 +1,4 @@
-//! シーンの追加と削除。章立て（`plot/chapters/<NN>.md`）の `scenes` を書き直す。
+//! シーンの追加・削除・並べ替え。章立て（`plot/chapters/<NN>.md`）の `scenes` を書き直す。
 //!
 //! 章立ての YAML は書き直すので、利用者が手で書いたコメントや項目の順番は残らない
 //! （画面から項目を変えて保存したときと同じ。画面が知らない項目は残る）。
@@ -12,6 +12,7 @@ use kataribe_project::{
 
 use super::edit::NewScenePlan;
 use super::plan::{StructurePlan, Wording};
+use super::position::{ensure_new_position, move_item};
 use crate::change_set::ChangeSet;
 use crate::error::{EngineError, Result};
 use crate::stages::materials::non_empty;
@@ -103,6 +104,35 @@ pub(super) fn remove(
     Ok(StructurePlan::new(changes, &wording))
 }
 
+/// 章のシーンの順を変える変更案。章立ての `scenes` の並びだけを変えて書き直す。
+///
+/// シーンの id と本文のファイル（`manuscript/<NN>/<id>.txt`）は変えない。本文との対応は id で決まるので、
+/// 並べ替えても崩れない。
+pub(super) fn move_to(
+    project: &Project,
+    chapter_id: ChapterId,
+    scene_id: SceneId,
+    position: usize,
+) -> Result<StructurePlan> {
+    let mut chapter = load_chapter(project, chapter_id)?;
+    let (current, planned) = locate_scene(&chapter, scene_id)?;
+    let title = planned.title.clone();
+    let subject = format!("第{}章のシーン「{title}」", chapter_id.number());
+    ensure_new_position(
+        &subject,
+        "シーン",
+        current,
+        position,
+        chapter.meta.scenes.len(),
+    )?;
+    move_item(&mut chapter.meta.scenes, current, position);
+
+    let wording = Wording::new(format!("{subject}を {} 番目に移し", position + 1));
+    let mut changes = ChangeSet::new(wording.planned());
+    put_chapter(&mut changes, chapter)?;
+    Ok(StructurePlan::new(changes, &wording))
+}
+
 /// 章立てを、項目に分けて編集できる形で読む。
 ///
 /// 章立てが無いときは見つからないエラー。YAML を解釈できない・シーンの id が重複している章立ては、
@@ -131,11 +161,17 @@ fn load_chapter(project: &Project, id: ChapterId) -> Result<LoadedChapter> {
 }
 
 fn scene_position(chapter: &LoadedChapter, scene: SceneId) -> Result<usize> {
+    locate_scene(chapter, scene).map(|(position, _)| position)
+}
+
+/// 章の中のシーンの位置（0 始まり）と、そのシーンの設計。
+fn locate_scene(chapter: &LoadedChapter, scene: SceneId) -> Result<(usize, &ScenePlan)> {
     chapter
         .meta
         .scenes
         .iter()
-        .position(|plan| plan.id == scene)
+        .enumerate()
+        .find(|(_, plan)| plan.id == scene)
         .ok_or_else(|| {
             EngineError::NotFound(format!(
                 "シーン {scene} が第{}章にありません。",

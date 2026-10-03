@@ -14,6 +14,7 @@ interface NotGeneratedPaneProps {
  * まだ生成していない文書を選んだときの、エディタの代わりの表示。
  * 本文のシーンなら、生成を待たずに、空の本文から自分で書き始めるボタンを添える。
  * 生成の途中や変更案の確認中は押せない（新規に書く本文の書き先が、生成した変更案とずれて適用できなくなるため）。
+ * 目次の追加・削除・並べ替えを適用している間も押せない（章の番号の振り直しの前のパスに、本文を作ってしまうため）。
  */
 export function NotGeneratedPane({ entry }: NotGeneratedPaneProps) {
   const backend = useBackend();

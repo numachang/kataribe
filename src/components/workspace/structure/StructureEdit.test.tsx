@@ -611,7 +611,7 @@ describe("開いている文書を消したとき", () => {
 });
 
 describe("生成のセッションが落ち着いていない間", () => {
-  it("生成している間は、追加と削除を無効にし、理由を title に出す", async () => {
+  it("生成している間は、追加・削除・並べ替えを無効にし、理由を title に出す", async () => {
     const user = userEvent.setup();
     const inner = createMockBackend({ delayMs: 0 });
     const backend = wrapBackend(inner, { generate: () => new Promise(() => {}) });
@@ -622,13 +622,17 @@ describe("生成のセッションが落ち着いていない間", () => {
 
     const addCharacter = screen.getByRole("button", { name: "人物を追加" });
     expect(addCharacter).toBeDisabled();
-    expect(addCharacter).toHaveAttribute("title", "生成している間は、追加・削除できません。");
+    expect(addCharacter).toHaveAttribute(
+      "title",
+      "生成している間は、追加・削除・並べ替えできません。",
+    );
     expect(screen.getByRole("button", { name: "資料を追加" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "「霧島 凛」の操作" }));
+    expect(screen.getByRole("menuitem", { name: "下へ移す" })).toBeDisabled();
     expect(screen.getByRole("menuitem", { name: "削除" })).toBeDisabled();
     expect(screen.getByRole("menuitem", { name: "削除" })).toHaveAttribute(
       "title",
-      "生成している間は、追加・削除できません。",
+      "生成している間は、追加・削除・並べ替えできません。",
     );
   });
 

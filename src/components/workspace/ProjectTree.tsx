@@ -1,9 +1,12 @@
 import { useState } from "react";
 import type { OverviewEntry, SectionKind } from "../../api/types";
-import type { StructureRequest } from "../../features/structure/structureRequest";
+import type { MoveEdit, StructureRequest } from "../../features/structure/structureRequest";
+import { useEntryMove } from "../../features/structure/useEntryMove";
 import { useStructureEditBlockedReason } from "../../features/structure/useStructureAvailability";
+import { listPlanChapters } from "../../lib/overviewTree";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { ActionMenu } from "../ActionMenu";
+import type { EntryAction } from "./structure/entryActions";
 import { entryActionsFor } from "./structure/entryActions";
 import { StructureDialogs } from "./structure/StructureDialogs";
 import "./ProjectTree.css";
@@ -19,11 +22,12 @@ function formatChars(entry: OverviewEntry): string | null {
   return null;
 }
 
-/** 構成の操作を求める手段。追加・削除は、いま始められない理由があれば無効にする。 */
+/** 構成の操作を求める手段。追加・削除・並べ替えは、いま始められない理由があれば無効にする。 */
 interface StructureControls {
   /** 始められない理由。始められるなら null。 */
   blockedReason: string | null;
   request: (request: StructureRequest) => void;
+  move: (edit: MoveEdit) => void;
 }
 
 /** 節の見出しの「＋」で足せるもの。 */
@@ -46,12 +50,14 @@ function menuLabelFor(entry: OverviewEntry): string {
 interface EntryNodeProps {
   entry: OverviewEntry;
   depth: number;
-  /** 同じ階層で、この項目の次の項目（最後なら null）。「この後に追加」の位置に使う。 */
-  nextSibling: OverviewEntry | null;
+  /** 同じ階層の項目の並び（この項目を含む）。「この後に追加」と並べ替えの位置に使う。 */
+  siblings: OverviewEntry[];
+  /** プロットの節の章（読めない章立ても含む）。本文の章見出しの並べ替えの位置に使う。 */
+  planChapters: OverviewEntry[];
   controls: StructureControls;
 }
 
-function EntryNode({ entry, depth, nextSibling, controls }: EntryNodeProps) {
+function EntryNode({ entry, depth, siblings, planChapters, controls }: EntryNodeProps) {
   const currentPath = useWorkspaceStore((state) => state.currentPath);
   const isSelected = entry.path !== null && entry.path === currentPath;
   const charsLabel = formatChars(entry);
@@ -77,11 +83,19 @@ function EntryNode({ entry, depth, nextSibling, controls }: EntryNodeProps) {
     .join(" ");
 
   const path = entry.path;
-  const menuItems = entryActionsFor(entry, nextSibling).map((action) => ({
+  const menuItems = entryActionsFor(entry, { siblings, planChapters }).map((action) => ({
     label: action.label,
-    onSelect: () => controls.request(action.request),
+    onSelect: () => select(action),
     disabledReason: controls.blockedReason ?? undefined,
   }));
+
+  function select(action: EntryAction): void {
+    if (action.kind === "move") {
+      controls.move(action.edit);
+    } else {
+      controls.request(action.request);
+    }
+  }
 
   return (
     <li>
@@ -109,7 +123,8 @@ function EntryNode({ entry, depth, nextSibling, controls }: EntryNodeProps) {
               key={child.path ?? `${entry.label}-${index}`}
               entry={child}
               depth={depth + 1}
-              nextSibling={entry.children[index + 1] ?? null}
+              siblings={entry.children}
+              planChapters={planChapters}
               controls={controls}
             />
           ))}
@@ -119,10 +134,11 @@ function EntryNode({ entry, depth, nextSibling, controls }: EntryNodeProps) {
   );
 }
 
-/** 左ペイン。作品の目次をツリーで表示し、文字数の進み具合とあわせて見せる。人物・資料・章・シーンの追加と削除もここから行う。 */
+/** 左ペイン。作品の目次をツリーで表示し、文字数の進み具合とあわせて見せる。人物・資料・章・シーンの追加・削除と、人物・章・シーンの並べ替えもここから行う。 */
 export function ProjectTree() {
   const overview = useWorkspaceStore((state) => state.overview);
   const blockedReason = useStructureEditBlockedReason();
+  const move = useEntryMove();
   const [request, setRequest] = useState<StructureRequest | null>(null);
   if (!overview) {
     return null;
@@ -130,7 +146,8 @@ export function ProjectTree() {
 
   const progress =
     overview.target_length > 0 ? Math.min(1, overview.total_chars / overview.target_length) : 0;
-  const controls: StructureControls = { blockedReason, request: setRequest };
+  const planChapters = listPlanChapters(overview);
+  const controls: StructureControls = { blockedReason, request: setRequest, move };
 
   return (
     <div className="project-tree">
@@ -172,7 +189,8 @@ export function ProjectTree() {
                     key={entry.path ?? `${section.kind}-${index}`}
                     entry={entry}
                     depth={0}
-                    nextSibling={section.entries[index + 1] ?? null}
+                    siblings={section.entries}
+                    planChapters={planChapters}
                     controls={controls}
                   />
                 ))}

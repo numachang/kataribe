@@ -1,4 +1,4 @@
-//! `remove` サブコマンドの `TARGET` 引数のミニ言語。
+//! `remove` / `move` サブコマンドの `TARGET` 引数のミニ言語。
 //!
 //! `character:<id>` のような `種類:引数` の形を解析し、[`kataribe_engine::StructureEdit`] に変換する。
 //! 書式は `generate` の `TASK`（[`crate::task_spec`]）と同じ。
@@ -35,6 +35,60 @@ impl RemoveTarget {
             RemoveTarget::Chapter(chapter) => StructureEdit::RemoveChapter { chapter },
             RemoveTarget::Scene { chapter, scene } => StructureEdit::RemoveScene { chapter, scene },
         }
+    }
+}
+
+/// `move` の `TARGET` 引数を解析した結果。並べ替えられるのは、順番のあるものだけ
+/// （世界観の資料には順番が無い）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MoveTarget {
+    /// `characters/` 直下の人物資料のパス。
+    Character(RelPath),
+    /// 章。動く範囲の章の番号が振り直される。
+    Chapter(ChapterId),
+    Scene {
+        chapter: ChapterId,
+        scene: SceneId,
+    },
+}
+
+impl MoveTarget {
+    /// 構成の操作にする。`position` は、並べ替えたあとの位置（0 始まり）。
+    #[must_use]
+    pub fn into_edit(self, position: usize) -> StructureEdit {
+        match self {
+            MoveTarget::Character(path) => StructureEdit::MoveCharacter { path, position },
+            MoveTarget::Chapter(chapter) => StructureEdit::MoveChapter { chapter, position },
+            MoveTarget::Scene { chapter, scene } => StructureEdit::MoveScene {
+                chapter,
+                scene,
+                position,
+            },
+        }
+    }
+}
+
+impl FromStr for MoveTarget {
+    type Err = String;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        if let Some(spec) = input.strip_prefix("character:") {
+            return parse_character(spec).map(MoveTarget::Character);
+        }
+        if let Some(spec) = input.strip_prefix("chapter:") {
+            return parse_chapter(spec).map(MoveTarget::Chapter);
+        }
+        if let Some(rest) = input.strip_prefix("scene:") {
+            return parse_chapter_and_scene(rest, "scene")
+                .map(|(chapter, scene)| MoveTarget::Scene { chapter, scene });
+        }
+        if input.starts_with("world:") {
+            return Err("世界観の資料には順番が無いので、並べ替えられません。".to_owned());
+        }
+        Err(format!(
+            "不明な対象です: {input}\n\
+             次のいずれかを指定してください: character:<id> | chapter:<NN> | scene:<NN>/<sNN>"
+        ))
     }
 }
 
@@ -194,6 +248,77 @@ mod tests {
     fn the_scene_error_names_the_scene_prefix() {
         let message = "scene:01".parse::<RemoveTarget>().unwrap_err();
         assert!(message.contains("scene:01/s01"), "{message}");
+    }
+
+    #[test]
+    fn a_move_target_parses_a_character_a_chapter_and_a_scene_like_a_remove_target() {
+        assert_eq!(
+            "character:Rin".parse(),
+            Ok(MoveTarget::Character(
+                RelPath::new("characters/Rin.md").unwrap()
+            ))
+        );
+        assert_eq!(
+            "chapter:03".parse(),
+            Ok(MoveTarget::Chapter(ChapterId::from_number(3)))
+        );
+        assert_eq!(
+            "scene:01/s02".parse(),
+            Ok(MoveTarget::Scene {
+                chapter: ChapterId::from_number(1),
+                scene: SceneId::from_number(2),
+            })
+        );
+    }
+
+    #[test]
+    fn a_world_document_cannot_be_moved_because_it_has_no_order() {
+        let message = "world:glossary".parse::<MoveTarget>().unwrap_err();
+
+        assert!(message.contains("順番が無い"), "{message}");
+    }
+
+    #[test]
+    fn a_move_target_rejects_unknown_kinds_and_bad_arguments() {
+        let unknown = "rin".parse::<MoveTarget>().unwrap_err();
+        assert_eq!(
+            unknown,
+            "不明な対象です: rin\n\
+             次のいずれかを指定してください: character:<id> | chapter:<NN> | scene:<NN>/<sNN>"
+        );
+        assert!("character:".parse::<MoveTarget>().is_err());
+        assert!("chapter:1".parse::<MoveTarget>().is_err());
+        assert!("scene:01".parse::<MoveTarget>().is_err());
+    }
+
+    #[test]
+    fn a_move_target_builds_the_matching_edit_with_the_position() {
+        assert_eq!(
+            MoveTarget::Character(RelPath::new("characters/rin.md").unwrap()).into_edit(2),
+            StructureEdit::MoveCharacter {
+                path: RelPath::new("characters/rin.md").unwrap(),
+                position: 2,
+            }
+        );
+        assert_eq!(
+            MoveTarget::Chapter(ChapterId::from_number(3)).into_edit(0),
+            StructureEdit::MoveChapter {
+                chapter: ChapterId::from_number(3),
+                position: 0,
+            }
+        );
+        assert_eq!(
+            MoveTarget::Scene {
+                chapter: ChapterId::from_number(1),
+                scene: SceneId::from_number(2),
+            }
+            .into_edit(4),
+            StructureEdit::MoveScene {
+                chapter: ChapterId::from_number(1),
+                scene: SceneId::from_number(2),
+                position: 4,
+            }
+        );
     }
 
     #[test]

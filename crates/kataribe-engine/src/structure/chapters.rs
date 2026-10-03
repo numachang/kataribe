@@ -1,11 +1,14 @@
-//! 章の追加と削除。章の順序はファイル名（`plot/chapters/<NN>.md`・`manuscript/<NN>/`）の番号なので、
-//! 途中に足す・消すときは、後ろの章の番号を振り直す（ファイルとフォルダを改名する）。
+//! 章の追加・削除・並べ替え。章の順序はファイル名（`plot/chapters/<NN>.md`・`manuscript/<NN>/`）の番号なので、
+//! 途中に足す・消す・動かすときは、動く範囲の章の番号を振り直す（ファイルとフォルダを改名する）。
 //!
 //! 番号を振り直す規則:
 //! - `before = X` で足すなら、X 以上の章を 1 つ後ろへずらし、新しい章を X にする。末尾に足すときは、
 //!   最大の番号の次（無ければ 01）で、ほかの章は改名しない。
 //! - 削除すると、それより後ろの章を 1 つ前へずらす。
 //! - 途中が抜けた番号は抜けたまま残す（手で作った番号を勝手に詰めない）。ずらすのは、操作した位置より後ろの章だけ。
+//! - 章を動かすときは、動く範囲（今の位置と行き先の間）の章が持っている番号の集合を、並べ替えたあとの並びへ
+//!   そのまま割り当てる。集合は変わらないので、番号が抜けていても抜けたままで、桁数（`001` など）も番号ごとに
+//!   保たれ（章についていくのではなく、その番号に残る）、999 を超えることもない。範囲の外の章は改名しない。入れ替えのような循環の改名は、適用が 2 段階の移動で扱う。
 //! - 章の本文のフォルダ（`manuscript/<NN>/`）は、章立てと一緒に、フォルダごと 1 回の改名で動かす
 //!   （中のファイルを 1 つずつ動かすと、章立てに載っていない本文が古い番号のフォルダに残り、別の章の本文と混ざる）。
 //!   本文がまだ無い章（フォルダの無い章）は、改名もゴミ箱への移動もせず、適用のときに移動元にまだ無いこと、
@@ -19,6 +22,7 @@ use std::collections::{BTreeMap, HashSet};
 use kataribe_project::{Chapter, ChapterId, ChapterMeta, Project, RelPath, frontmatter, layout};
 
 use super::plan::{RenumberedChapter, StructurePlan, Wording};
+use super::position::{ensure_new_position, move_item};
 use crate::change_set::{ChangeSet, FileChange};
 use crate::error::{EngineError, Result};
 
@@ -75,9 +79,10 @@ pub(super) fn add(
 /// 章を消す変更案。章立てと本文のフォルダをゴミ箱へ移し、後ろの章の番号を 1 つ前へずらす。
 pub(super) fn remove(project: &Project, chapter: ChapterId) -> Result<StructurePlan> {
     let path = layout::chapter_path(&chapter);
-    let file = project.store().read_text_opt(&path)?.ok_or_else(|| {
-        EngineError::NotFound(format!("第{}章（{path}）がありません。", chapter.number()))
-    })?;
+    let file = project
+        .store()
+        .read_text_opt(&path)?
+        .ok_or_else(|| chapter_not_found(chapter))?;
     let existing = project.chapter_ids()?;
     let shifted = chapters_where(&existing, |number| number > chapter.number());
 
@@ -101,15 +106,68 @@ pub(super) fn remove(project: &Project, chapter: ChapterId) -> Result<StructureP
     })
 }
 
+/// 章を並べ替える変更案。動く範囲の章の番号を、並べ替えたあとの並びに合わせて振り直す。
+///
+/// `position` は、並べ替えたあとに、章（番号順）の何番目に来るか（0 始まり）。章立てを読まずに、番号だけで決まる
+/// （章題を読むのは、利用者に見せる文言のためだけ）。
+pub(super) fn move_to(
+    project: &Project,
+    chapter: ChapterId,
+    position: usize,
+) -> Result<StructurePlan> {
+    let existing = project.chapter_ids()?;
+    let current = existing
+        .iter()
+        .position(|id| *id == chapter)
+        .ok_or_else(|| chapter_not_found(chapter))?;
+    let title = chapter_title(project, chapter);
+    let subject = chapter_label(chapter, title.as_deref());
+    ensure_new_position(&subject, "章", current, position, existing.len())?;
+
+    // 並べ替えたあとの並びの i 番目の章に、今の並びの i 番目の番号を割り当てる。
+    // 動かなかった章（範囲の外）は同じ番号に割り当たるので、除けば動く範囲だけが残る
+    let mut arranged = existing.clone();
+    move_item(&mut arranged, current, position);
+    let assignments: Vec<(ChapterId, ChapterId)> = arranged
+        .into_iter()
+        .zip(existing.iter().copied())
+        .filter(|(from, to)| from != to)
+        .collect();
+    // 位置が今と違うので、動かす章は必ず割り当ての中にある
+    let destination = assignments
+        .iter()
+        .find_map(|&(from, to)| (from == chapter).then_some(to))
+        .unwrap_or(chapter);
+
+    let wording = Wording::new(format!("{subject}を第{}章へ移し", destination.number()));
+    let mut changes = ChangeSet::new(wording.planned());
+    let mut renumbered = relocate(project, &mut changes, &assignments);
+    renumbered.sort_by_key(|chapter| chapter.from);
+    ensure_slots_free(
+        project,
+        &changes,
+        renumbered.iter().map(|chapter| chapter.to),
+    )?;
+
+    Ok(StructurePlan {
+        renumbered,
+        ..StructurePlan::new(changes, &wording)
+    })
+}
+
 fn ensure_chapter_exists(existing: &[ChapterId], chapter: ChapterId) -> Result<()> {
     if existing.contains(&chapter) {
         return Ok(());
     }
-    Err(EngineError::NotFound(format!(
+    Err(chapter_not_found(chapter))
+}
+
+fn chapter_not_found(chapter: ChapterId) -> EngineError {
+    EngineError::NotFound(format!(
         "第{}章（{}）がありません。",
         chapter.number(),
         layout::chapter_path(&chapter)
-    )))
+    ))
 }
 
 /// 番号が条件に合う章。
@@ -134,18 +192,34 @@ fn too_many_chapters() -> EngineError {
 }
 
 /// `chapters` の章立てと本文のフォルダを、番号を `delta` ずらした場所へ改名する変更を加える。
-/// 本文のフォルダがまだ無い章には、適用のときに移動元にまだ無いことと、移動先が空いたままであることの
-/// 確認を加える。
 fn renumber(
     project: &Project,
     changes: &mut ChangeSet,
     chapters: &[ChapterId],
     delta: i32,
 ) -> Result<Vec<RenumberedChapter>> {
-    let mut renumbered = Vec::with_capacity(chapters.len());
+    let assignments = chapters
+        .iter()
+        .map(|&from| {
+            from.shifted(delta)
+                .map(|to| (from, to))
+                .ok_or_else(too_many_chapters)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(relocate(project, changes, &assignments))
+}
+
+/// 章立てと本文のフォルダを、`(今の番号, 移す先の番号)` の組のとおりに改名する変更を加える。
+/// 本文のフォルダがまだ無い章には、適用のときに移動元にまだ無いことと、移動先が空いたままであることの
+/// 確認を加える。
+fn relocate(
+    project: &Project,
+    changes: &mut ChangeSet,
+    assignments: &[(ChapterId, ChapterId)],
+) -> Vec<RenumberedChapter> {
+    let mut renumbered = Vec::with_capacity(assignments.len());
     let mut destinations_without_text = Vec::new();
-    for &from in chapters {
-        let to = from.shifted(delta).ok_or_else(too_many_chapters)?;
+    for &(from, to) in assignments {
         changes.move_entry(layout::chapter_path(&from), layout::chapter_path(&to));
         let text_dir = layout::manuscript_chapter_dir(&from);
         if project.store().exists(&text_dir) {
@@ -166,7 +240,7 @@ fn renumber(
             changes.expect(destination, None);
         }
     }
-    Ok(renumbered)
+    renumbered
 }
 
 /// 同じ変更案が、`path` の今の状態を既に扱っているか（移動元・ゴミ箱・状態の確認のどれかになっているか）。

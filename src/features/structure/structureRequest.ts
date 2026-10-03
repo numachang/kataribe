@@ -6,6 +6,12 @@ export type RemoveEdit = Extract<
   { kind: "remove_character" | "remove_world_document" | "remove_chapter" | "remove_scene" }
 >;
 
+/** 並べ替える操作（確認なしで、そのまま適用する）。 */
+export type MoveEdit = Extract<
+  StructureEdit,
+  { kind: "move_character" | "move_chapter" | "move_scene" }
+>;
+
 /** 目次から求められた、構成の操作のダイアログ。 */
 export type StructureRequest =
   | { kind: "add_character" }

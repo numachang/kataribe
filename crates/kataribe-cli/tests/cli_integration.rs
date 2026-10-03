@@ -1595,3 +1595,227 @@ async fn remove_chapter_that_does_not_exist_fails_and_changes_nothing() {
     assert!(project_dir.join("plot/chapters/01.md").is_file());
     assert!(project_dir.join("plot/chapters/02.md").is_file());
 }
+
+// ---- move（人物・章・シーンの並べ替え） ----
+
+/// 作品を作り、順番を持つ人物を 2 人置く。
+async fn project_with_two_characters(project_dir: &std::path::Path) {
+    create_test_project(project_dir).await;
+    for (id, name, order) in [("rin", "霧島 凛", 1), ("kenji", "佐藤 健二", 2)] {
+        std::fs::write(
+            project_dir.join(format!("characters/{id}.md")),
+            format!("---\nname: {name}\norder: {order}\n---\n{name}の本文\n"),
+        )
+        .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn move_character_rewrites_the_orders_and_reports_the_files() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    project_with_two_characters(&project_dir).await;
+    let console = BufferConsole::new();
+
+    let code = run_plain(
+        &[
+            "move",
+            &path_arg(&project_dir),
+            "character:kenji",
+            "--to",
+            "1",
+        ],
+        &console,
+    )
+    .await;
+
+    assert_eq!(
+        code,
+        std::process::ExitCode::from(0),
+        "{}",
+        console.stderr()
+    );
+    let stderr = console.stderr();
+    assert!(stderr.contains("書き込み: characters/kenji.md"), "{stderr}");
+    assert!(stderr.contains("書き込み: characters/rin.md"), "{stderr}");
+    assert!(
+        stderr.contains("人物「佐藤 健二」を 1 番目に移しました。"),
+        "{stderr}"
+    );
+    let kenji = std::fs::read_to_string(project_dir.join("characters/kenji.md")).unwrap();
+    let rin = std::fs::read_to_string(project_dir.join("characters/rin.md")).unwrap();
+    assert!(kenji.contains("order: 1"), "{kenji}");
+    assert!(rin.contains("order: 2"), "{rin}");
+}
+
+#[tokio::test]
+async fn move_chapter_tells_which_chapters_change_number_before_moving_the_files() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    project_with_two_chapters(&project_dir).await;
+    let console = BufferConsole::new();
+
+    let code = run_plain(
+        &["move", &path_arg(&project_dir), "chapter:02", "--to", "1"],
+        &console,
+    )
+    .await;
+
+    assert_eq!(
+        code,
+        std::process::ExitCode::from(0),
+        "{}",
+        console.stderr()
+    );
+    let stderr = console.stderr();
+    assert!(stderr.contains("番号が変わる章"), "{stderr}");
+    assert!(stderr.contains("第1章「雨の匂い」 → 第2章"), "{stderr}");
+    assert!(
+        stderr.contains("第2章「閉ざされた書斎」 → 第1章"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("移動: plot/chapters/01.md → plot/chapters/02.md"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("移動: manuscript/01 → manuscript/02"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("第2章「閉ざされた書斎」を第1章へ移しました。"),
+        "{stderr}"
+    );
+    let first = std::fs::read_to_string(project_dir.join("plot/chapters/01.md")).unwrap();
+    let second = std::fs::read_to_string(project_dir.join("plot/chapters/02.md")).unwrap();
+    assert!(first.contains("title: 閉ざされた書斎"), "{first}");
+    assert!(second.contains("title: 雨の匂い"), "{second}");
+    assert!(!project_dir.join("manuscript/01").exists());
+    assert_eq!(
+        std::fs::read_to_string(project_dir.join("manuscript/02/s01.txt")).unwrap(),
+        "雨が降っていた。\n"
+    );
+    assert!(!project_dir.join(".kataribe/trash").exists());
+}
+
+#[tokio::test]
+async fn move_scene_reorders_the_chapter_plan_and_leaves_the_text_alone() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    project_with_a_chapter(&project_dir).await;
+    std::fs::create_dir_all(project_dir.join("manuscript/01")).unwrap();
+    std::fs::write(project_dir.join("manuscript/01/s02.txt"), "書斎の本文。\n").unwrap();
+    let console = BufferConsole::new();
+
+    let code = run_plain(
+        &["move", &path_arg(&project_dir), "scene:01/s02", "--to", "1"],
+        &console,
+    )
+    .await;
+
+    assert_eq!(
+        code,
+        std::process::ExitCode::from(0),
+        "{}",
+        console.stderr()
+    );
+    let stderr = console.stderr();
+    assert!(stderr.contains("書き込み: plot/chapters/01.md"), "{stderr}");
+    assert!(
+        stderr.contains("第1章のシーン「閉ざされた書斎」を 1 番目に移しました。"),
+        "{stderr}"
+    );
+    let chapter = std::fs::read_to_string(project_dir.join("plot/chapters/01.md")).unwrap();
+    assert!(
+        chapter.find("id: s02").unwrap() < chapter.find("id: s01").unwrap(),
+        "{chapter}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(project_dir.join("manuscript/01/s02.txt")).unwrap(),
+        "書斎の本文。\n"
+    );
+}
+
+#[tokio::test]
+async fn move_with_dry_run_prints_the_plan_and_changes_nothing() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    project_with_two_chapters(&project_dir).await;
+    let console = BufferConsole::new();
+
+    let code = run_plain(
+        &[
+            "move",
+            &path_arg(&project_dir),
+            "chapter:02",
+            "--to",
+            "1",
+            "--dry-run",
+        ],
+        &console,
+    )
+    .await;
+
+    assert_eq!(
+        code,
+        std::process::ExitCode::from(0),
+        "{}",
+        console.stderr()
+    );
+    let stdout = console.stdout();
+    assert!(
+        stdout.contains("=== 移動: plot/chapters/02.md → plot/chapters/01.md ==="),
+        "{stdout}"
+    );
+    assert!(console.stderr().contains("番号が変わる章"));
+    let first = std::fs::read_to_string(project_dir.join("plot/chapters/01.md")).unwrap();
+    assert!(first.contains("title: 雨の匂い"), "{first}");
+    assert!(project_dir.join("manuscript/01/s01.txt").is_file());
+}
+
+#[tokio::test]
+async fn move_to_an_impossible_position_fails_and_changes_nothing() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    project_with_two_chapters(&project_dir).await;
+    for (to, expected) in [("3", "3 番目"), ("2", "すでに 2 番目")] {
+        let console = BufferConsole::new();
+
+        let code = run_plain(
+            &["move", &path_arg(&project_dir), "chapter:02", "--to", to],
+            &console,
+        )
+        .await;
+
+        assert_eq!(code, std::process::ExitCode::from(1), "--to {to}");
+        assert!(console.stderr().contains(expected), "{}", console.stderr());
+    }
+    let first = std::fs::read_to_string(project_dir.join("plot/chapters/01.md")).unwrap();
+    assert!(first.contains("title: 雨の匂い"), "{first}");
+}
+
+#[tokio::test]
+async fn bad_arguments_for_move_are_usage_errors() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let folder = path_arg(temp_dir.path());
+    for args in [
+        vec!["move", &folder, "chapter:01"],
+        vec!["move", &folder, "chapter:01", "--to", "0"],
+        vec!["move", &folder, "chapter:01", "--to", "-1"],
+        vec!["move", &folder, "chapter:01", "--to", "first"],
+        vec!["move", &folder, "chapter:1", "--to", "1"],
+        vec!["move", &folder, "world:glossary", "--to", "1"],
+        vec!["move", &folder, "scene:01", "--to", "1"],
+    ] {
+        let console = BufferConsole::new();
+
+        let code = run_plain(&args, &console).await;
+
+        assert_eq!(
+            code,
+            std::process::ExitCode::from(2),
+            "{args:?}: {}",
+            console.stderr()
+        );
+    }
+}

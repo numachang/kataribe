@@ -1,14 +1,15 @@
-//! 作品の構成（人物・世界観の資料・章・シーン）を、利用者が自分で書いて足したり消したりする操作。
+//! 作品の構成（人物・世界観の資料・章・シーン）を、利用者が自分で書いて足したり消したり、並べ替えたりする操作。
 //!
 //! LLM も設定も使わないので、[`crate::Engine`] の外の関数にしてある（GUI と CLI が同じ関数を使う）。
 //! どの操作も作品フォルダを直接書き換えず、変更案（[`crate::ChangeSet`]）を [`StructurePlan`] に入れて返す。
-//! 追加は本人が入力した内容をそのまま反映してよいが、削除はゴミ箱へ移るものと参照が切れるものを
+//! 追加と並べ替えは本人が指示した内容をそのまま反映してよいが、削除はゴミ箱へ移るものと参照が切れるものを
 //! 見せてから適用する（その材料を [`StructurePlan`] が持つ）。
 
 mod chapters;
 mod characters;
 mod edit;
 mod plan;
+mod position;
 mod references;
 mod scenes;
 mod world;
@@ -46,6 +47,17 @@ pub fn plan_structure_edit(project: &Project, edit: &StructureEdit) -> Result<St
             scene,
         } => scenes::add(project, *chapter, *before, scene)?,
         StructureEdit::RemoveScene { chapter, scene } => scenes::remove(project, *chapter, *scene)?,
+        StructureEdit::MoveCharacter { path, position } => {
+            characters::move_to(project, path, *position)?
+        }
+        StructureEdit::MoveChapter { chapter, position } => {
+            chapters::move_to(project, *chapter, *position)?
+        }
+        StructureEdit::MoveScene {
+            chapter,
+            scene,
+            position,
+        } => scenes::move_to(project, *chapter, *scene, *position)?,
     };
     Ok(plan.made_for(project))
 }

@@ -100,25 +100,27 @@ async function openMenuOf(label: string, kind = ""): Promise<string[]> {
 }
 
 describe("目次の行のメニュー", () => {
-  it("人物の行には、削除だけが出る", async () => {
+  it("人物の行には、並べ替えと削除が出る。先頭には「上へ」、末尾には「下へ」を出さない", async () => {
     const backend = createMockBackend({ delayMs: 0 });
     await openSampleProject(backend);
     renderTree(backend);
 
-    expect(await openMenuOf("霧島 凛")).toEqual(["削除"]);
+    expect(await openMenuOf("霧島 凛")).toEqual(["下へ移す", "削除"]);
+    expect(await openMenuOf("佐藤 健二")).toEqual(["上へ移す", "削除"]);
   });
 
-  it("本文の章見出しには、シーンの追加と章の削除が出る", async () => {
+  it("本文の章見出しには、シーンの追加と章の並べ替えと削除が出る", async () => {
     const backend = createMockBackend({ delayMs: 0 });
     await openSampleProject(backend);
     renderTree(backend);
 
-    expect(await openMenuOf("雨の匂い")).toEqual(["シーンを追加", "章を削除"]);
+    expect(await openMenuOf("雨の匂い")).toEqual(["シーンを追加", "章を下へ移す", "章を削除"]);
+    expect(await openMenuOf("灯台のある岬")).toEqual(["シーンを追加", "章を上へ移す", "章を削除"]);
     // 同じ「雨の匂い」でも、章立てのファイルの行（プロットの節）は別のメニュー（「章立て」の操作）
     expect(screen.getAllByRole("button", { name: "「雨の匂い」の操作" })).toHaveLength(1);
   });
 
-  it("章立てのファイルの行には、この前・この後に章を追加と、削除が出る", async () => {
+  it("章立てのファイルの行には、この前・この後に章を追加と、並べ替えと削除が出る", async () => {
     const backend = createMockBackend({ delayMs: 0 });
     await openSampleProject(backend);
     renderTree(backend);
@@ -126,18 +128,39 @@ describe("目次の行のメニュー", () => {
     expect(await openMenuOf("雨の匂い", "章立ての")).toEqual([
       "この前に章を追加",
       "この後に章を追加",
+      "下へ移す",
+      "削除",
+    ]);
+    expect(await openMenuOf("灯台のある岬", "章立ての")).toEqual([
+      "この前に章を追加",
+      "この後に章を追加",
+      "上へ移す",
       "削除",
     ]);
   });
 
-  it("シーンの行には、前に追加・後に追加・削除が出る", async () => {
+  it("シーンの行には、前に追加・後に追加・並べ替え・削除が出る（先頭と末尾は片側だけ）", async () => {
     const backend = createMockBackend({ delayMs: 0 });
     await openSampleProject(backend);
     renderTree(backend);
 
+    expect(await openMenuOf("招かれざる客")).toEqual([
+      "この前にシーンを追加",
+      "この後にシーンを追加",
+      "下へ移す",
+      "削除",
+    ]);
     expect(await openMenuOf("遺言状の間")).toEqual([
       "この前にシーンを追加",
       "この後にシーンを追加",
+      "上へ移す",
+      "下へ移す",
+      "削除",
+    ]);
+    expect(await openMenuOf("消えた甥")).toEqual([
+      "この前にシーンを追加",
+      "この後にシーンを追加",
+      "上へ移す",
       "削除",
     ]);
   });

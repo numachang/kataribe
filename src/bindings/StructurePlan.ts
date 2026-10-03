@@ -26,7 +26,7 @@ created: RelPath | null,
  */
 references: Array<SceneReference>, 
 /**
- * 章を足す・消すときに、番号が変わる章（後ろの章）。番号の小さい順。
+ * 章を足す・消す・並べ替えるときに、番号が変わる章（後ろの章。並べ替えでは動く範囲の章）。番号の小さい順。
  */
 renumbered: Array<RenumberedChapter>, 
 /**

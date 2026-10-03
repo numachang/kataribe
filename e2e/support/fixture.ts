@@ -18,6 +18,8 @@ export const SECOND_CHAPTER_TITLE = "第二章";
 export const SECOND_CHAPTER_SCENE_TITLE = "灯台";
 export const SECOND_CHAPTER_SCENE_PATH = "manuscript/02/s01.txt";
 export const SECOND_CHAPTER_SCENE_TEXT = "　灯台の灯りが見えた。\n";
+/** 2 つ目の章の、本文のまだ無い 2 つ目のシーン。シーンを並べ替えても本文のファイルは変わらないことを確かめるのに使う。 */
+export const SECOND_CHAPTER_SECOND_SCENE_TITLE = "夜明け";
 export const CHARACTER_NAME = "霧島 凛";
 export const CHARACTER_PATH = "characters/kirishima-rin.md";
 /** 人物資料の本文（front matter より後ろ）。 */
@@ -70,6 +72,9 @@ const PROJECT_FILES: Record<string, string> = {
     "    summary: 灯台の場面。",
     "    pov: 霧島 凛",
     "    characters: [霧島 凛]",
+    "  - id: s02",
+    `    title: ${SECOND_CHAPTER_SECOND_SCENE_TITLE}`,
+    "    summary: 夜が明ける場面。",
     "---",
     "灯台の章。",
     "",

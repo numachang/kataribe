@@ -72,6 +72,29 @@ pub enum StructureEdit {
         /// 消すシーン。
         scene: SceneId,
     },
+    /// 人物の表示順を変える。読める人物の `order` を 1, 2, 3… に振り直す（値が変わる人物資料だけが書き直される）。
+    MoveCharacter {
+        /// 動かす人物資料。`characters/` 直下の Markdown で、YAML が読めるもの。
+        path: RelPath,
+        /// 並べ替えたあとに、目次の人物の何番目に来るか（0 始まり）。範囲外・今と同じ位置は `InvalidInput`。
+        position: usize,
+    },
+    /// 章の順を変える。動く範囲の章の番号を振り直す（章立てと本文のフォルダを改名する）。
+    MoveChapter {
+        /// 動かす章。
+        chapter: ChapterId,
+        /// 並べ替えたあとに、章の何番目に来るか（0 始まり）。範囲外・今と同じ位置は `InvalidInput`。
+        position: usize,
+    },
+    /// 章の中のシーンの順を変える。シーンの id と本文のファイルは変えない。
+    MoveScene {
+        /// シーンのある章。
+        chapter: ChapterId,
+        /// 動かすシーン。
+        scene: SceneId,
+        /// 並べ替えたあとに、章のシーンの何番目に来るか（0 始まり）。範囲外・今と同じ位置は `InvalidInput`。
+        position: usize,
+    },
 }
 
 /// 足すシーンの設計。[`kataribe_project::ScenePlan`] から、足すときに決まる項目（id・ビート）を除いたもの。

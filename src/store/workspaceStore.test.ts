@@ -44,6 +44,27 @@ describe("useWorkspaceStore", () => {
     expect(useWorkspaceStore.getState().pipeline).toEqual([]);
   });
 
+  it("構成の操作の途中は件数で数え、入れ子の操作が終わっただけでは終わりにならない", () => {
+    const store = useWorkspaceStore.getState();
+    store.beginStructureEdit();
+    store.beginStructureEdit();
+    store.endStructureEdit();
+
+    expect(useWorkspaceStore.getState().activeStructureEdits).toBe(1);
+
+    store.endStructureEdit();
+
+    expect(useWorkspaceStore.getState().activeStructureEdits).toBe(0);
+  });
+
+  it("作品を閉じて数が戻ったあとに終わりが来ても、負にならない", () => {
+    useWorkspaceStore.getState().beginStructureEdit();
+    useWorkspaceStore.getState().closeWorkspace();
+    useWorkspaceStore.getState().endStructureEdit();
+
+    expect(useWorkspaceStore.getState().activeStructureEdits).toBe(0);
+  });
+
   it("refreshOverview は Backend から取得した目次で置き換える", async () => {
     const backend = createStubBackend({ overview: async () => OVERVIEW });
     await useWorkspaceStore.getState().refreshOverview(backend);

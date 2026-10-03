@@ -40,3 +40,30 @@ export function described(
     completed_summary: `${stem}ました。`,
   };
 }
+
+/**
+ * 項目を動かせる位置か確かめる（本物の `ensure_new_position` と同じ）。範囲の外と、今と同じ位置は、利用者が直せる入力の誤り。
+ * 今と同じ位置を空の変更案にしないのは、何も起きない操作を成功として返すと、呼び出し側の数え間違いが見えなくなるため。
+ * `subject` は「人物「霧島 凛」」のような呼び方、`unit` は「人物」「章」「シーン」のような数え方の名前。
+ */
+export function ensureNewPosition(
+  subject: string,
+  unit: string,
+  current: number,
+  position: number,
+  count: number,
+): void {
+  if (!Number.isInteger(position) || position < 0 || position >= count) {
+    throw invalidInput(
+      `${subject}を ${position + 1} 番目へは移せません（${unit}は全部で ${count} 件です）。`,
+    );
+  }
+  if (position === current) {
+    throw invalidInput(`${subject}はすでに ${position + 1} 番目です。`);
+  }
+}
+
+/** `items` の `from` 番目を、並べ替えたあとに `position` 番目に来るよう動かした、新しい並び。 */
+export function movedItem<T>(items: T[], from: number, position: number): T[] {
+  return items.toSpliced(from, 1).toSpliced(position, 0, ...items.slice(from, from + 1));
+}
