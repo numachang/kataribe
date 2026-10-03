@@ -6,14 +6,15 @@
 use std::str::FromStr;
 
 use kataribe_engine::StructureEdit;
-use kataribe_project::{ChapterId, CharacterId, RelPath, SceneId, layout};
+use kataribe_project::{ChapterId, RelPath, SceneId, layout};
 
 use crate::task_spec::parse_chapter_and_scene;
 
 /// コマンドラインの `TARGET` 引数を解析した結果。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoveTarget {
-    Character(CharacterId),
+    /// `characters/` 直下の人物資料のパス。
+    Character(RelPath),
     /// `world/` 直下の資料のパス。
     World(RelPath),
     Scene {
@@ -27,7 +28,7 @@ impl RemoveTarget {
     #[must_use]
     pub fn into_edit(self) -> StructureEdit {
         match self {
-            RemoveTarget::Character(id) => StructureEdit::RemoveCharacter { id },
+            RemoveTarget::Character(path) => StructureEdit::RemoveCharacter { path },
             RemoveTarget::World(path) => StructureEdit::RemoveWorldDocument { path },
             RemoveTarget::Scene { chapter, scene } => StructureEdit::RemoveScene { chapter, scene },
         }
@@ -38,10 +39,8 @@ impl FromStr for RemoveTarget {
     type Err = String;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        if let Some(id) = input.strip_prefix("character:") {
-            return CharacterId::new(id)
-                .map(RemoveTarget::Character)
-                .map_err(|error| error.to_string());
+        if let Some(spec) = input.strip_prefix("character:") {
+            return parse_character(spec).map(RemoveTarget::Character);
         }
         if let Some(spec) = input.strip_prefix("world:") {
             return parse_world(spec).map(RemoveTarget::World);
@@ -57,36 +56,64 @@ impl FromStr for RemoveTarget {
     }
 }
 
+/// 人物の指定を、`characters/` 直下のパスにする。`rin` や `rin.md` は `characters/rin.md`。
+///
+/// 人物 ID の規則には照らさない。手で足した `Rin.md` や `凛.md` のように、規則に合わない名前の
+/// 人物資料も（目次に出るので）指定して消せるようにするため。
+fn parse_character(spec: &str) -> Result<RelPath, String> {
+    if spec.is_empty() || spec.contains('/') {
+        return Err(
+            "character: の後に、人物の ID（characters/ 直下のファイル名）を指定してください。"
+                .to_owned(),
+        );
+    }
+    markdown_path_in(layout::CHARACTERS_DIR, spec)
+}
+
 /// 世界観の資料の指定を、作品フォルダ内のパスにする。
 /// `glossary` や `glossary.md` は `world/glossary.md`、`/` を含むものはパスとしてそのまま使う。
 fn parse_world(spec: &str) -> Result<RelPath, String> {
     if spec.is_empty() {
         return Err("world: の後に、資料の名前かパスを指定してください。".to_owned());
     }
-    let path = if spec.contains('/') {
-        spec.to_owned()
-    } else if std::path::Path::new(spec)
+    if spec.contains('/') {
+        return RelPath::new(spec).map_err(|error| error.to_string());
+    }
+    markdown_path_in(layout::WORLD_DIR, spec)
+}
+
+/// `dir` 直下の Markdown のパス。`name` に拡張子 `.md` が無ければ付ける。
+fn markdown_path_in(dir: &str, name: &str) -> Result<RelPath, String> {
+    let has_extension = std::path::Path::new(name)
         .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
-    {
-        format!("{}/{spec}", layout::WORLD_DIR)
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("md"));
+    let file_name = if has_extension {
+        name.to_owned()
     } else {
-        format!("{}/{spec}.md", layout::WORLD_DIR)
+        format!("{name}.md")
     };
-    RelPath::new(&path).map_err(|error| error.to_string())
+    RelPath::new(&format!("{dir}/{file_name}")).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn character(path: &str) -> RemoveTarget {
+        RemoveTarget::Character(RelPath::new(path).unwrap())
+    }
+
     #[test]
-    fn parses_a_character_with_id() {
-        let target: RemoveTarget = "character:kirishima-rin".parse().unwrap();
-        assert_eq!(
-            target,
-            RemoveTarget::Character(CharacterId::new("kirishima-rin").unwrap())
-        );
+    fn parses_a_character_by_id_or_by_file_name() {
+        let expected = character("characters/kirishima-rin.md");
+        assert_eq!("character:kirishima-rin".parse(), Ok(expected.clone()));
+        assert_eq!("character:kirishima-rin.md".parse(), Ok(expected));
+    }
+
+    #[test]
+    fn a_character_name_that_breaks_the_id_rules_is_still_a_target() {
+        assert_eq!("character:Rin".parse(), Ok(character("characters/Rin.md")));
+        assert_eq!("character:凛".parse(), Ok(character("characters/凛.md")));
     }
 
     #[test]
@@ -126,7 +153,8 @@ mod tests {
 
     #[test]
     fn rejects_bad_arguments() {
-        assert!("character:Rin".parse::<RemoveTarget>().is_err());
+        assert!("character:".parse::<RemoveTarget>().is_err());
+        assert!("character:old/rin".parse::<RemoveTarget>().is_err());
         assert!("scene:01".parse::<RemoveTarget>().is_err());
         assert!("scene:1/s01".parse::<RemoveTarget>().is_err());
         assert!("scene:01/01".parse::<RemoveTarget>().is_err());
@@ -143,9 +171,9 @@ mod tests {
     #[test]
     fn into_edit_builds_the_matching_edit() {
         assert_eq!(
-            RemoveTarget::Character(CharacterId::new("rin").unwrap()).into_edit(),
+            character("characters/rin.md").into_edit(),
             StructureEdit::RemoveCharacter {
-                id: CharacterId::new("rin").unwrap()
+                path: RelPath::new("characters/rin.md").unwrap()
             }
         );
         assert_eq!(

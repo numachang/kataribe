@@ -397,10 +397,24 @@ class MockBackend implements Backend {
   }
 }
 
-const PROTECTED_TRASH_PATHS = [MANIFEST_PATH];
-const PROTECTED_TRASH_FOLDER = ".kataribe/";
+const PROTECTED_TRASH_FILE = MANIFEST_PATH;
+const PROTECTED_TRASH_FOLDER = ".kataribe";
 
-/** 本物と同じく、画面から戻ってくる変更案の形を確かめる（同じパスへの変更の重なり、ゴミ箱へ移せないパス）。 */
+/** ゴミ箱へ移せない場所か。Windows は大文字小文字を区別しないので、`Kataribe.yaml` や `.Kataribe/…` も同じ扱い。 */
+function isProtectedFromTrash(path: string): boolean {
+  const lowerCased = path.toLowerCase();
+  return (
+    lowerCased === PROTECTED_TRASH_FILE ||
+    lowerCased === PROTECTED_TRASH_FOLDER ||
+    lowerCased.startsWith(`${PROTECTED_TRASH_FOLDER}/`)
+  );
+}
+
+/**
+ * 本物と同じく、画面から戻ってくる変更案の形を確かめる。
+ * 同じパスへの変更が重ならないこと、ゴミ箱へ移せないパスを含まないこと、
+ * ゴミ箱へ移すファイルの一覧が、移す対象と同じファイル 1 つであること。
+ */
 function checkChangeSetShape(changeSet: ChangeSet): void {
   const seen = new Set<string>();
   for (const file of changeSet.files) {
@@ -409,11 +423,22 @@ function checkChangeSetShape(changeSet: ChangeSet): void {
       throw new BackendError("invalid_input", `「${file.path}」への変更が重なっています。`);
     }
     seen.add(key);
-    const isProtected =
-      PROTECTED_TRASH_PATHS.includes(file.path) || file.path.startsWith(PROTECTED_TRASH_FOLDER);
-    if (file.kind === "trash" && isProtected) {
-      throw new BackendError("invalid_input", `「${file.path}」はゴミ箱へ移せません。`);
+    if (file.kind === "trash") {
+      checkTrashShape(file);
     }
+  }
+}
+
+function checkTrashShape(file: TrashFileChange): void {
+  if (isProtectedFromTrash(file.path)) {
+    throw new BackendError("invalid_input", `「${file.path}」はゴミ箱へ移せません。`);
+  }
+  const [only] = file.files;
+  if (file.files.length !== 1 || only?.path !== file.path) {
+    throw new BackendError(
+      "invalid_input",
+      `「${file.path}」をゴミ箱へ移す変更の、移すファイルの一覧が合っていません（このファイル 1 つだけにしてください）。`,
+    );
   }
 }
 

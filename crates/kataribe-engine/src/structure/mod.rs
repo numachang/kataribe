@@ -26,9 +26,9 @@ use crate::error::Result;
 pub fn plan_structure_edit(project: &Project, edit: &StructureEdit) -> Result<StructurePlan> {
     let plan = match edit {
         StructureEdit::AddCharacter { id, meta, body } => {
-            characters::add(project, id.as_ref(), meta, body)?
+            characters::add(project, id.as_deref(), meta, body)?
         }
-        StructureEdit::RemoveCharacter { id } => characters::remove(project, id)?,
+        StructureEdit::RemoveCharacter { path } => characters::remove(project, path)?,
         StructureEdit::AddWorldDocument { name, title, body } => {
             world::add(project, name.as_deref(), title, body)?
         }

@@ -1171,6 +1171,85 @@ async fn remove_refuses_the_world_overview_and_a_missing_target() {
 }
 
 #[tokio::test]
+async fn add_character_with_an_unusable_id_says_why_and_writes_nothing() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    create_test_project(&project_dir).await;
+    let console = BufferConsole::new();
+
+    let code = run_plain(
+        &[
+            "add",
+            "character",
+            &path_arg(&project_dir),
+            "--name",
+            "凛",
+            "--id",
+            "Rin",
+        ],
+        &console,
+    )
+    .await;
+
+    assert_eq!(code, std::process::ExitCode::from(1));
+    assert!(
+        console.stderr().contains("ID「Rin」は使えません"),
+        "{}",
+        console.stderr()
+    );
+    assert!(!project_dir.join("characters/Rin.md").exists());
+    assert!(!project_dir.join("characters/rin.md").exists());
+}
+
+#[tokio::test]
+async fn remove_character_can_name_a_file_that_breaks_the_id_rules() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    create_test_project(&project_dir).await;
+    std::fs::write(
+        project_dir.join("characters/Rin.md"),
+        "---\nname: 霧島 凛\n---\n",
+    )
+    .unwrap();
+    let console = BufferConsole::new();
+
+    let code = run_plain(
+        &["remove", &path_arg(&project_dir), "character:Rin"],
+        &console,
+    )
+    .await;
+
+    assert_eq!(
+        code,
+        std::process::ExitCode::from(0),
+        "{}",
+        console.stderr()
+    );
+    assert!(console.stderr().contains("ゴミ箱へ: characters/Rin.md"));
+    assert!(!project_dir.join("characters/Rin.md").exists());
+}
+
+#[tokio::test]
+async fn remove_refuses_the_world_overview_written_in_capital_letters() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    create_test_project(&project_dir).await;
+    std::fs::write(project_dir.join("world/overview.md"), "# 世界観\n").unwrap();
+    let console = BufferConsole::new();
+
+    // Windows では world/Overview.md も world/overview.md と同じファイルを指す
+    let code = run_plain(
+        &["remove", &path_arg(&project_dir), "world:Overview"],
+        &console,
+    )
+    .await;
+
+    assert_eq!(code, std::process::ExitCode::from(1));
+    assert!(project_dir.join("world/overview.md").is_file());
+    assert!(!project_dir.join(".kataribe/trash").exists());
+}
+
+#[tokio::test]
 async fn bad_arguments_for_add_and_remove_are_usage_errors() {
     let temp_dir = tempfile::tempdir().unwrap();
     let folder = path_arg(temp_dir.path());

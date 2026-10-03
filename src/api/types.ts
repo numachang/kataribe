@@ -368,7 +368,11 @@ export type StructureEdit =
       meta: CharacterMeta;
       body: string;
     }
-  | { kind: "remove_character"; id: string }
+  | {
+      kind: "remove_character";
+      /** 人物資料のパス（`characters/` 直下の `.md`）。ファイル名が ID の規則に合わない資料も、目次に出ていれば消せる。 */
+      path: string;
+    }
   | {
       kind: "add_world_document";
       /** ファイル名（英小文字・数字・ハイフン。拡張子なし）。null なら題から決める。 */

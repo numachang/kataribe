@@ -1,6 +1,6 @@
 import type { OverviewEntry } from "../../../api/types";
 import type { RemoveEdit, StructureRequest } from "../../../features/structure/structureRequest";
-import { characterIdOfPath, isAdditionalWorldDocumentPath } from "../../../lib/entryPaths";
+import { isAdditionalWorldDocumentPath, isCharacterDocumentPath } from "../../../lib/entryPaths";
 
 /** 目次の行のメニューに出す、構成の操作。 */
 export interface EntryAction {
@@ -18,9 +18,9 @@ function removal(edit: RemoveEdit): EntryAction {
  */
 export function entryActionsFor(entry: OverviewEntry, nextSceneId: string | null): EntryAction[] {
   if (entry.path !== null) {
-    const characterId = entry.kind === "character" ? characterIdOfPath(entry.path) : null;
-    if (characterId !== null) {
-      return [removal({ kind: "remove_character", id: characterId })];
+    // 人物は ID ではなくパスで指す。ファイル名が ID の規則に合わない資料（`characters/Rin.md` など）も、目次に出ていれば消せる
+    if (entry.kind === "character" && isCharacterDocumentPath(entry.path)) {
+      return [removal({ kind: "remove_character", path: entry.path })];
     }
     if (isAdditionalWorldDocumentPath(entry.path)) {
       return [removal({ kind: "remove_world_document", path: entry.path })];

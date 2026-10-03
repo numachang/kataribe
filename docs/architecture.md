@@ -52,7 +52,10 @@
 - 人物・世界観の資料・シーンは、利用者が自分で書いて追加・削除できる（§4.8）。追加するときの名前は次のように決める。
   - 人物の `id`（`characters/<id>.md` の名前）は、読み（かな）をローマ字にして作る
     （`きりしま りん` → `kirishima-rin`。変換の規則は §3.1）。読みが無ければ名前から、それでも作れなければ `character`。
-    使用済みなら `-2`, `-3`, … を付ける。利用者が自分で決めてもよい。
+    使用済みなら `-2`, `-3`, … を付ける。利用者が自分で決めてもよく、そのときは規則（下の世界観の資料と同じ）に合わなければ
+    `InvalidInput` と理由（「ID「Rin」は使えません。小文字の英数字とハイフンで、…」）を返す。空白だけなら自動で決める。
+    使用済みかどうかは、ファイル名を小文字にして数える（Windows は大文字小文字を区別しないので、`characters/Kirishima-Rin.md` が
+    あれば `kirishima-rin` は使用済み。世界観の資料の名前と、シーンの id も同じ）。
   - 世界観の資料のファイル名（`world/<name>.md` の `name`）は、人物の `id` と同じ規則（小文字の英数字とハイフン、48 文字以内）。
     `overview` は世界観の概要（`world/overview.md`）の名前なので使えない。自動で決めるときは、題が全部かな・英数字・区切りで
     書けているときだけローマ字にし、それ以外（漢字を含む題）は `doc`、重なれば `doc-2`, `doc-3`, …にする。
@@ -61,7 +64,7 @@
     （生成した資料と同じ形で、目次の表示名は見出しから拾われる）。
 - 削除は完全には消さず、ゴミ箱 `.kataribe/trash/<日時>/<元の相対パス>` へ移す。1 回の適用につき `<日時>` のフォルダは 1 つで
   （同じ日時があれば `-1`, `-2`, … を付ける）、同時に消した本文なども同じフォルダに入る。
-  ゴミ箱から戻す操作はまだ無い（手で戻せる）。
+  ゴミ箱から戻す操作はまだ無い（手で戻せる）。ゴミ箱へ移すファイルはバックアップを取らないので、実物は `.kataribe/trash/` にしかない。
 
 ### kataribe.yaml
 
@@ -231,10 +234,11 @@ pub async fn collect(stream, on_event) -> Result<Completion, LlmError>;   // 全
 | `path` | `RelPath` | 作品フォルダ内の相対パス。`..`・絶対パス・ドライブ指定・`\`・Windows 予約名・末尾のドット／空白・制御文字を拒否する |
 | `store` | `ProjectStore`、`TextFile { content, hash }`、`ContentHash`、`WriteCondition`、`BackupMode`、`PendingChange`、`PendingWrite`、`normalize_text(&str) -> String` | フォルダ外に出られないファイル操作。アトミック書き込み、競合検出、バックアップ、ゴミ箱。基本の読み書きは `store/mod.rs`、複数の変更を「全部か無しか」で反映する処理は `store/batch.rs` |
 | `frontmatter` | `Document<M> { meta, body }`、`parse`、`render`、`replace_body(text, body)` | YAML front matter の分解・合成（未知の項目を保持）。`replace_body` は front matter を書かれたまま残して本文だけを差し替える |
-| `layout` | パス定数と `character_path(id)`・`world_document_path(name)`・`manuscript_chapter_dir(chapter)`・`is_additional_world_document(path)` などの関数、`document_kind(&RelPath) -> DocumentKind` | §2 のフォルダ構成の唯一の定義。`document_kind` は `characters/<有効な id>.md` を人物資料、`plot/chapters/<有効な NN>.md` を章立て、それ以外（サブフォルダの下・id として無効な名前・ほかのファイル）を「その他」と判定する。`Project::characters` / `chapters` が拾うファイルと同じ条件 |
+| `layout` | パス定数と `character_path(id)`・`world_document_path(name)`・`manuscript_chapter_dir(chapter)`・`is_character_document(path)`・`is_additional_world_document(path)` などの関数、`document_kind(&RelPath) -> DocumentKind` | §2 のフォルダ構成の唯一の定義。`document_kind` は `characters/<有効な id>.md` を人物資料、`plot/chapters/<有効な NN>.md` を章立て、それ以外（サブフォルダの下・id として無効な名前・ほかのファイル）を「その他」と判定する。`Project::characters` / `chapters` が拾うファイルと同じ条件。`is_character_document` は `characters/` 直下の Markdown、`is_additional_world_document` は `world/` 直下の概要以外の Markdown で、どちらもファイル名の規則には照らさず（手で足した `Rin.md` や `凛.md` も消せるように）、拡張子と概要かどうかは大文字小文字を無視して調べる（Windows では `world/Overview.md` も概要と同じファイル） |
 | `model` | `Manifest`・`Rating`・`MarkdownDoc`・`Character`/`CharacterMeta`・`Chapter`/`ChapterMeta`・`ScenePlan`・`ChapterId`・`SceneId`・`CharacterId`・`WorldDocumentName` | 各ファイルの型。`render()` でファイル内容を生成。`CharacterId` と `WorldDocumentName`（世界観の資料のファイル名。`overview` は不可）は slug の検証と、重なったときに番号を付ける処理を共有する |
 | （crate 直下） | `EditableDocument`、`LoadedDocument { document, hash, parse_error }`、`ParsedDocument { document, parse_error }`、`parse_document(&RelPath, &str) -> ParsedDocument` | 画面で編集する文書と、読み込んだ結果。人物資料と章立ては front matter を項目に分け、それ以外は文字列のまま扱う。実装は非公開の `document` モジュールにあり、型と関数を `lib.rs` から公開している（`Project::read_document` / `write_document` から使う） |
-| `project` | `Project` | 作品の作成・読み込み・型付きの取得。`update_manifest` で作品情報（`kataribe.yaml`）を書き換える。`read_document` / `write_document` で画面で編集する文書を読み書きする。`character_ids()`・`chapter_ids()`・`scene_text_ids(chapter)`・`world_document_names()` は、ファイル名だけから id の一覧を返す（中身は読まないので、YAML が壊れたファイルがあっても失敗しない。`characters()` / `chapters()` は 1 つでも壊れていると全体が失敗するので、追加の前に使用済みの id を知るのには使えない） |
+| `project` | `Project` | 作品の作成・読み込み・型付きの取得。`update_manifest` で作品情報（`kataribe.yaml`）を書き換える。`read_document` / `write_document` で画面で編集する文書を読み書きする。`character_ids()`・`chapter_ids()`・`scene_text_ids(chapter)`・`world_document_names()` は、ファイル名だけから id の一覧を返す（中身は読まないので、YAML が壊れたファイルがあっても失敗しない。
+`character_ids()`・`scene_text_ids(chapter)`・`world_document_names()` は、名前を小文字にしてから id として読み（`Kirishima-Rin.md` も `kirishima-rin` として数える）、使用済みの一覧として使う。`characters()` / `chapters()` は 1 つでも壊れていると全体が失敗するので、追加の前に使用済みの id を知るのには使えない） |
 
 - `ProjectStore::write_text(path, content, WriteOptions { condition, backup })`
   - `WriteCondition::{Any, Absent, Matches(ContentHash)}`。条件に合わなければ `Conflict` エラー（外部で変更された可能性）。
@@ -250,6 +254,10 @@ pub async fn collect(stream, on_event) -> Result<Completion, LlmError>;   // 全
   - 次に条件を確かめる（`Conflict`）。書き込みは `condition`、ゴミ箱へ移すのは今のハッシュが `expected` と一致すること。
   - 全ファイルの新しい内容を一時ファイルに書き、バックアップを取り、ゴミ箱へ移し、一時ファイルで置き換える。
     ここまでに失敗したら、反映済みの変更（置き換え・ゴミ箱への移動）を逆順に元へ戻し、戻せなければ `PartialWrite` を返す。
+    `PartialWrite` は、書き込み前の内容に戻せず新しい内容のまま残ったファイル（`not_restored`。バックアップを取っていれば
+    `.kataribe/backups` から戻せる）と、ゴミ箱から元の場所へ戻せなかったファイル（`still_trashed`。元の場所と、実物のある
+    `.kataribe/trash/<日時>/…` の置き場所を持ち、メッセージにも出す）を分けて持つ。
+    1 つ目のゴミ箱への移動が失敗したときも、そのために作った `.kataribe/trash/<日時>/…` の空のフォルダを片付ける。
     Windows でほかのアプリがファイルを開いていて移せないときも同じ（短く再試行してから、全部戻して失敗にする）。
   - 戻り値は、書き込みごとの、書き込み後のハッシュ。
 - 「条件の確認から反映まで」は同じプロセスの中で排他する（自動保存と変更案の適用が重なっても、
@@ -446,10 +454,10 @@ pub struct StructurePlan {
 
 | 操作（`StructureEdit`） | 変更案 | 備考 |
 |---|---|---|
-| `AddCharacter { id, meta, body }` | `characters/<id>.md` を `Write`（新規） | 名前が空なら `InvalidInput`。`id` が `None` なら読み（無ければ名前）からローマ字で決める（§2）。使用済みなら「ID「x」はもう使われています。」。`meta.order` が `None` なら今の最大の次（末尾）。本文が空でもよく、その人物は生成の工程に「人物資料: X」が取りかかれる工程として出る |
-| `RemoveCharacter { id }` | `Trash` | YAML が壊れていても消せる（名前を読めないので、参照は調べられず `notices` に出す） |
+| `AddCharacter { id, meta, body }` | `characters/<id>.md` を `Write`（新規） | 名前が空なら `InvalidInput`。`id` は文字列（`Option<String>`）で受け、ここで `CharacterId::new` により検証する（画面から戻ってくる値なので。使えなければ `InvalidInput` と日本語の理由「ID「Rin」は使えません。小文字の英数字とハイフンで、…」）。`None` か空白だけなら読み（無ければ名前）からローマ字で決める（§2）。使用済みなら「ID「x」はもう使われています。」。`meta.order` が `None` なら今の最大の次（末尾）。本文が空でもよく、その人物は生成の工程に「人物資料: X」が取りかかれる工程として出る |
+| `RemoveCharacter { path }` | `Trash` | ID ではなくパスで指す（世界観の資料の削除と同じ形）。`characters/` 直下の `.md` ならよく、ファイル名が ID の規則に合わない資料（手で足した `characters/Rin.md`・`characters/凛.md`。目次には出る）も消せる。それ以外のパスは `InvalidInput`。YAML が読めれば名前でシーンの参照を確かめ、読めなければ（名前を読めないので）参照は調べられず `notices` に出す |
 | `AddWorldDocument { name, title, body }` | `world/<name>.md` を `Write`（新規）。中身は `# 題` と本文 | `name` が `None`（空欄）なら題から決める（§2）。題が空・複数行なら `InvalidInput` |
-| `RemoveWorldDocument { path }` | `Trash` | `world/` 直下の `.md` だけ。`world/overview.md` は `InvalidInput` |
+| `RemoveWorldDocument { path }` | `Trash` | `world/` 直下の `.md` だけ。`world/overview.md` は `InvalidInput`（`Overview.md` など大文字小文字の違いも同じ。Windows では同じファイル） |
 | `AddScene { chapter, before, scene }` | 章立てを `Write`（今の内容を条件にする） | `scene` は `ScenePlan` から id とビートを除いたもの（`NewScenePlan`）。`before` が `None` なら章の末尾。新しい id は、章立てにある id と、本文のフォルダに残っている本文（章立てから消えたシーンのもの）の id を避けて決める（消したシーンの本文を引き継がないため）。章立てが壊れている・シーンの id が重複しているときは `InvalidInput`（直してから操作する） |
 | `RemoveScene { chapter, scene }` | 章立てを `Write`、本文があれば本文を `Trash` | |
 
@@ -480,7 +488,12 @@ pub struct StructurePlan {
   構成の操作（§4.8）も同じ形で動く。世界観の資料（`world/<name>.md`）は概要とは別に持ち、`planStructureEdit` は Rust と同じ形の変更案
   （`Write` / `Trash`。ハッシュは `hashText`）と、人物を消すときの参照（名前の一致の規則は `names.rs` と同じ）を返す。
   `applyChangeSet` は、並び順に頼らず「ゴミ箱へ移す → 書く」の順に、それぞれ競合を確かめ（状態を書き換えずに進め、競合したら何も変えない）、
-  同じパスへの変更の重なりと `kataribe.yaml`・`.kataribe/` のゴミ箱への移動は `invalid_input` にする。
+  同じパスへの変更の重なり・`kataribe.yaml` や `.kataribe/` のゴミ箱への移動・ゴミ箱へ移す変更の `files` が移す対象と同じファイル 1 つでないことは
+  `invalid_input` にする（Windows は大文字小文字を区別しないので、`Kataribe.yaml` や `.Kataribe/…` も、パスの重なりも、区別せずに拒む）。
+  世界観の概要の判定も大文字小文字を無視し、`world/Overview.md` を足した資料として扱わない。
+  人物の ID（`add_character` の `id`）は、本物と同じ規則（小文字の英数字とハイフン・48 文字まで・先頭末尾と連続のハイフン不可・Windows の予約名不可。
+  `src/lib/slug.ts` を画面と共有する）で確かめ、合わなければ `invalid_input` と理由を返す。空白だけなら自動。人物の削除（`remove_character`）は
+  ID ではなくパスで指し、`characters/` 直下の Markdown なら、ファイル名が ID の規則に合わない資料（`characters/Rin.md` など）も消せる。
   本物との違いは、かなをローマ字にしないこと（変換表を二重に持たないため）。`suggestCharacterId` は読み（無ければ名前）の英数字だけを
   slug にし、作れなければ `character`（使用済みなら番号を付ける）。世界観の資料の自動のファイル名も、英数字だけの題なら slug、
   それ以外は `doc`（重なれば `doc-2`, …）になる。かなの変換を画面のテストで確かめるときは、スタブで差し替える。
@@ -514,15 +527,20 @@ pub struct StructurePlan {
 - 目次（`ProjectTree`）から、人物・世界観の資料・シーンを追加・削除する（§4.8。章の追加・削除と並べ替えはまだ無い）。
   - 世界観と登場人物の節の見出しに「＋」（「資料を追加」「人物を追加」）、行ごとに「⋯」の操作メニュー（`ActionMenu`。
     Escape・メニューの外のクリック・フォーカスが外へ移ったときに閉じる）を置く。メニューの中身は項目の種類で決まる
-    （`entryActionsFor`）。人物と、足した世界観の資料（概要は除く）は「削除」、本文の章見出しは「シーンを追加」（末尾）、
+    （`entryActionsFor`）。人物（`characters/` 直下の Markdown なら、ファイル名が ID の規則に合わなくても。パスで指す）と、
+    足した世界観の資料（概要は除く。大文字小文字は区別しない）は「削除」、本文の章見出しは「シーンを追加」（末尾）、
     シーンは「この前にシーンを追加」「この後にシーンを追加」「削除」。企画・あらすじ・章立てのファイルなどにはメニューを出さない。
   - 生成のセッションが落ち着いていない間（実行中・変更案の確認中・生成の失敗の表示中・自動で進め中）は、追加も削除も無効にし、
     理由を `title` に出す。確認中の変更案の書き先（新規に書く本文など）がずれるのを防ぐため。
+    「空の本文から書き始める」も同じ理由で、同じ間は押せない（まだ無い本文を開いて生成し、実行中や確認中に空の本文を作ると、
+    生成した本文の新規作成の条件が合わなくなり、適用が必ず競合するため）。
   - 追加は、入力のダイアログ（人物・世界観の資料・シーン）を見直しとみなし、「追加」で変更案を作ってそのまま適用する
     （AI パネルの変更案は通さない）。送れるのはボタンだけで、入力欄の Enter では送らない（日本語入力の確定の Enter で送らないため）。
     失敗したら理由をダイアログの中に出して、閉じない。人物の ID の欄は、利用者が触るまでは読み・名前の入力に合わせて
     `suggestCharacterId` の提案に追従し（入力が止まって少し待ってから問い合わせ、古い入力への答えは捨てる）、触ったら追従を止める。
-    触っていなければ ID は送らず（`null`）、Rust に決めさせる。シーンの入力欄は、章立てのシーンのカード（`SceneCard`）と共有する
+    触っていなければ ID は送らず（`null`）、Rust に決めさせる。触って書いた ID は、送る前に Rust と同じ規則で確かめ
+    （`Rin`・`霧島` など。`lib/slug.ts`）、使えなければ欄の下に理由を出して「追加」を無効にする（空欄は自動なので有効）。
+    シーンの入力欄は、章立てのシーンのカード（`SceneCard`）と共有する
     （`SceneFields`）。
   - 削除は、先に変更案を作り（`planStructureEdit`）、確認のダイアログで、ゴミ箱へ移るもの（本文は「本文 N ファイル（計 X 字）も
     ゴミ箱へ移ります」と強調）・人物を消すときにその人物の名前を挙げているシーン・注意書き・ゴミ箱の場所を見せてから、
@@ -567,7 +585,7 @@ Tauri コマンド名と引数（JS 側の名前。Rust 側は snake_case で受
 | textStats / parseRuby / analyzeQuality | `text_stats` / `parse_ruby` / `analyze_quality` | `text` / `text` / `text, targetChars` |
 | generate / cancelGeneration | `generate` / `cancel_generation` | `jobId, task, onEvent`（`Channel<GenerationEvent>`）/ `jobId` |
 | applyChangeSet | `apply_change_set` | `changeSet`（`files` の各要素は `kind` が `write` か `trash`。構成の変更もこれで適用する） |
-| planStructureEdit | `plan_structure_edit` | `edit`（`StructureEdit`。`kind` が `add_character`・`remove_character`・`add_world_document`・`remove_world_document`・`add_scene`・`remove_scene` のどれか）。`StructurePlan` を返す。作品フォルダは書き換えない（§4.8）。入力の誤り・消せない資料は `invalid_input`、対象が無ければ `not_found` |
+| planStructureEdit | `plan_structure_edit` | `edit`（`StructureEdit`。`kind` が `add_character`・`remove_character`・`add_world_document`・`remove_world_document`・`add_scene`・`remove_scene` のどれか。`add_character` の `id` は文字列か `null`、`remove_character` は ID ではなく `path` で指す）。`StructurePlan` を返す。作品フォルダは書き換えない（§4.8）。入力の誤り・消せない資料は `invalid_input`、対象が無ければ `not_found` |
 | suggestCharacterId | `suggest_character_id` | `reading, name`。人物の ID の案（文字列）を返す。使用済みの ID は避ける |
 
 コマンドの失敗は `{ kind: BackendErrorKind, message: string }` で返り、画面側で `BackendError` に変換する。
@@ -625,10 +643,12 @@ kataribe-cli [グローバルオプション] <サブコマンド>
   add scene     <FOLDER> <NN> --title <T> [--summary <T>] [--pov <名前>] [--characters <A,B>] [--place <T>]
                          [--time <T>] [--target-chars <N>] [--before <sNN>] [--dry-run]
       人物・世界観の資料・シーンを、自分で書いて足す（LLM は使わない。§4.8）。
-      人物の --id を省くと、読み（無ければ名前）からローマ字で決める。世界観の --name を省くと題から決める（§2）
+      人物の --id を省くと、読み（無ければ名前）からローマ字で決める。--id が使えない文字列なら、エンジンが理由を返す。
+      世界観の --name を省くと題から決める（§2）
   remove <FOLDER> <TARGET> [--dry-run]
       TARGET = character:<id> | world:<name または path> | scene:<NN>/<sNN>
-      ゴミ箱（.kataribe/trash/）へ移して消す。書式は generate の TASK と同じ
+      ゴミ箱（.kataribe/trash/）へ移して消す。書式は generate の TASK と同じ。character:<id> は characters/<id>.md の人物資料を
+      指す（ID の規則は確かめないので、手で足した character:Rin のような名前も指定できる）
   quality <FOLDER> [--json]           シーンごとの品質レポート
   export <FOLDER> [--output <FILE>] [--force]
       本文を章題付きの一つのテキストにまとめる。--output は作品フォルダの外を指定すること

@@ -212,6 +212,50 @@ describe("人物を追加する", () => {
     expect(screen.getByRole("dialog", { name: "人物を追加" })).toBeInTheDocument();
   });
 
+  it("使えない ID を書くと、理由を出して追加を無効にし、直すと追加できる", async () => {
+    const user = userEvent.setup();
+    const { backend, planStructureEdit } = planned(createMockBackend({ delayMs: 0 }));
+    await renderWorkspace(backend);
+    const dialog = await openAddCharacterDialog(user);
+    const idField = within(dialog).getByRole("textbox", { name: "ID" });
+    const addButton = within(dialog).getByRole("button", { name: "追加" });
+    await user.type(within(dialog).getByRole("textbox", { name: "名前" }), "新山");
+    expect(addButton).toBeEnabled();
+
+    await user.type(idField, "Rin");
+    expect(
+      within(dialog).getByText("ID「Rin」は使えません。大文字は使えません。小文字にしてください。"),
+    ).toBeInTheDocument();
+    expect(idField).toBeInvalid();
+    expect(addButton).toBeDisabled();
+
+    await user.clear(idField);
+    await user.type(idField, "霧島");
+    expect(
+      within(dialog).getByText(
+        "ID「霧島」は使えません。小文字の英数字とハイフンだけにしてください。",
+      ),
+    ).toBeInTheDocument();
+    expect(addButton).toBeDisabled();
+
+    await user.clear(idField);
+    await user.type(idField, "rin-");
+    expect(within(dialog).getByText(/先頭と末尾にハイフンは使えません/)).toBeInTheDocument();
+    expect(addButton).toBeDisabled();
+    expect(planStructureEdit).not.toHaveBeenCalled();
+
+    // 空欄に戻すと自動に戻る
+    await user.clear(idField);
+    expect(idField).toBeValid();
+    expect(addButton).toBeEnabled();
+
+    await user.type(idField, "niiyama");
+    expect(within(dialog).queryByText(/使えません/)).not.toBeInTheDocument();
+    await user.click(addButton);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(useWorkspaceStore.getState().currentPath).toBe("characters/niiyama.md");
+  });
+
   it("使用済みの ID を指定すると、ダイアログの中に理由を出し、閉じない", async () => {
     const user = userEvent.setup();
     await renderWorkspace(createMockBackend({ delayMs: 0 }));
@@ -485,6 +529,35 @@ describe("削除の確認", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
+  it("ファイル名が ID の規則に合わない人物資料にも「削除」が出て、実際に消せる", async () => {
+    const user = userEvent.setup();
+    const backend = createMockBackend({ delayMs: 0 });
+    await backend.openProject(SAMPLE_PROJECT_FOLDER);
+    await backend.applyChangeSet({
+      summary: "人物資料を置きます。",
+      project_root: SAMPLE_PROJECT_FOLDER,
+      files: [
+        {
+          kind: "write",
+          path: "characters/Rin.md",
+          content: "---\nname: リン\n---\n",
+          previous: null,
+          base_hash: null,
+        },
+      ],
+    });
+    await renderWorkspace(backend);
+
+    await openRowMenu(user, "リン", "削除");
+    const dialog = await screen.findByRole("dialog", { name: "削除の確認" });
+    expect(await within(dialog).findByText("characters/Rin.md")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "ゴミ箱へ移す" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /^リン/ })).not.toBeInTheDocument();
+    expect(hasToast("人物「リン」をゴミ箱へ移しました。")).toBe(true);
+  });
+
   it("消す対象が見つからなければ、理由を出し、移すボタンは使えない", async () => {
     const user = userEvent.setup();
     const inner = createMockBackend({ delayMs: 0 });
@@ -594,5 +667,43 @@ describe("生成のセッションが落ち着いていない間", () => {
     await user.click(screen.getByRole("button", { name: "破棄" }));
 
     await waitFor(() => expect(screen.getByRole("button", { name: "人物を追加" })).toBeEnabled());
+  });
+});
+
+describe("まだ無い本文を、空で作って書き始める操作", () => {
+  async function selectUnwrittenScene(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(await screen.findByRole("button", { name: /^消えた甥/ }));
+    return screen.findByRole("button", { name: "空の本文から書き始める" });
+  }
+
+  it("生成している間は押せず、理由を title に出す（生成した本文の書き先がずれないように）", async () => {
+    const user = userEvent.setup();
+    const backend = wrapBackend(createMockBackend({ delayMs: 0 }), {
+      generate: () => new Promise(() => {}),
+    });
+    await renderWorkspace(backend);
+    await user.click(screen.getByRole("button", { name: "次の工程を実行" }));
+    await screen.findByRole("button", { name: "中止" });
+
+    const startButton = await selectUnwrittenScene(user);
+
+    expect(startButton).toBeDisabled();
+    expect(startButton).toHaveAttribute("title", "生成している間は、本文を作成できません。");
+  });
+
+  it("生成した変更案を確認している間も押せず、適用か破棄をすると押せる", async () => {
+    const user = userEvent.setup();
+    await renderWorkspace(createMockBackend({ delayMs: 0 }));
+    await user.click(screen.getByRole("button", { name: "次の工程を実行" }));
+    await screen.findByRole("button", { name: "破棄" });
+
+    const startButton = await selectUnwrittenScene(user);
+    expect(startButton).toBeDisabled();
+    expect(startButton).toHaveAttribute("title", expect.stringContaining("確認している間"));
+
+    await user.click(screen.getByRole("button", { name: "破棄" }));
+
+    await waitFor(() => expect(startButton).toBeEnabled());
+    expect(startButton).not.toHaveAttribute("title");
   });
 });

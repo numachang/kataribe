@@ -1,6 +1,8 @@
 //! 人物の追加と削除。
 
-use kataribe_project::{Character, CharacterId, CharacterMeta, Project, layout};
+use kataribe_project::{
+    Character, CharacterId, CharacterMeta, Project, RelPath, frontmatter, layout,
+};
 use kataribe_text::romaji::to_romaji;
 
 use super::plan::{StructurePlan, Wording};
@@ -12,7 +14,7 @@ use crate::stages::materials::non_empty;
 /// 人物を足す変更案。`characters/<id>.md` を新規に書く。
 pub(super) fn add(
     project: &Project,
-    requested_id: Option<&CharacterId>,
+    requested_id: Option<&str>,
     meta: &CharacterMeta,
     body: &str,
 ) -> Result<StructurePlan> {
@@ -22,8 +24,8 @@ pub(super) fn add(
             "人物の名前を入力してください。".into(),
         ));
     }
-    let id = match requested_id {
-        Some(id) => ensure_unused(project, id)?,
+    let id = match requested_id.map(str::trim).filter(|id| !id.is_empty()) {
+        Some(requested) => ensure_unused(project, parse_requested_id(requested)?)?,
         None => suggest_id(project, meta.reading.as_deref().unwrap_or_default(), name)?,
     };
     let meta = CharacterMeta {
@@ -51,33 +53,38 @@ pub(super) fn add(
 
 /// 人物を消す（ゴミ箱へ移す）変更案。
 ///
+/// `characters/` 直下の Markdown なら、ファイル名が人物 ID の規則に合わないもの（`Rin.md`・`凛.md`）も消せる。
 /// YAML が壊れた人物資料も消せる。その場合は名前を読めないので、シーンでの参照は調べられない。
-pub(super) fn remove(project: &Project, id: &CharacterId) -> Result<StructurePlan> {
-    let path = layout::character_path(id);
+pub(super) fn remove(project: &Project, path: &RelPath) -> Result<StructurePlan> {
+    if !layout::is_character_document(path) {
+        return Err(EngineError::InvalidInput(format!(
+            "{path} は消せる人物資料ではありません（消せるのは、characters/ 直下の Markdown です）。"
+        )));
+    }
     let file = project
         .store()
-        .read_text_opt(&path)?
+        .read_text_opt(path)?
         .ok_or_else(|| EngineError::NotFound(format!("人物資料 {path} がありません。")))?;
 
     let mut plan_references = Vec::new();
     let mut notices = Vec::new();
-    let label = match Character::parse(id.clone(), &file.content) {
-        Ok(character) => {
-            let report = references::scenes_mentioning(project, &character.meta.name)?;
+    let label = match frontmatter::parse::<CharacterMeta>(&file.content) {
+        Ok(document) => {
+            let report = references::scenes_mentioning(project, &document.meta.name)?;
             plan_references = report.references;
             notices = report.notices;
-            character.meta.name
+            document.meta.name
         }
         Err(error) => {
             notices.push(format!(
                 "{path} を読めないため、人物の名前を確かめられず、シーンでの参照を調べられませんでした（{error}）。"
             ));
-            id.to_string()
+            path.file_stem().to_owned()
         }
     };
     let wording = Wording::new(format!("人物「{label}」をゴミ箱へ移し"));
     let mut changes = ChangeSet::new(wording.planned());
-    changes.trash_file(path, &file);
+    changes.trash_file(path.clone(), &file);
     Ok(StructurePlan {
         references: plan_references,
         notices,
@@ -96,17 +103,29 @@ pub(super) fn suggest_id(project: &Project, reading: &str, name: &str) -> Result
     Ok(CharacterId::from_hint(&hint, &taken))
 }
 
+/// 利用者が指定した ID を検証する。
+///
+/// 画面から戻ってくる値なので、規則に合わなければ、直せる入力の誤りとして知らせる。
+fn parse_requested_id(requested: &str) -> Result<CharacterId> {
+    CharacterId::new(requested).map_err(|_| {
+        EngineError::InvalidInput(format!(
+            "ID「{requested}」は使えません。小文字の英数字とハイフンで、48 文字以内にしてください\
+             （ハイフンは先頭・末尾・連続に置けません。con など Windows の予約名も使えません）。"
+        ))
+    })
+}
+
 /// 指定された ID がまだ使われていなければ、そのまま返す。
 ///
 /// ID の一覧ではなくファイルの有無で調べる。大文字小文字の違うファイルや壊れたファイルでも、
 /// 同じパスに書こうとすれば競合するので、先に利用者へ分かる言葉で知らせる。
-fn ensure_unused(project: &Project, id: &CharacterId) -> Result<CharacterId> {
-    if project.store().exists(&layout::character_path(id)) {
+fn ensure_unused(project: &Project, id: CharacterId) -> Result<CharacterId> {
+    if project.store().exists(&layout::character_path(&id)) {
         return Err(EngineError::InvalidInput(format!(
             "ID「{id}」はもう使われています。"
         )));
     }
-    Ok(id.clone())
+    Ok(id)
 }
 
 /// 今の最大の表示順の次の番号。

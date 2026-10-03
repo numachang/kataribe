@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
-use kataribe_project::{ChapterId, CharacterId, SceneId};
+use kataribe_project::{ChapterId, SceneId};
 
 use crate::target_spec::RemoveTarget;
 
@@ -64,7 +64,7 @@ pub struct AddCharacterArgs {
 
     /// ID（ファイル名。省略すると読み、無ければ名前からローマ字で決める）。
     #[arg(long, value_name = "ID")]
-    pub id: Option<CharacterId>,
+    pub id: Option<String>,
 
     #[command(flatten)]
     pub body: BodySource,

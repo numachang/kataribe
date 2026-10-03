@@ -33,7 +33,7 @@ mod tests {
     use crate::error::CommandErrorKind;
     use kataribe_engine::{FileChange, NewProject, create_project};
     use kataribe_project::{
-        BackupMode, CharacterId, CharacterMeta, Rating, RelPath, WriteCondition, WriteOptions,
+        BackupMode, CharacterMeta, Rating, RelPath, WriteCondition, WriteOptions,
     };
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
@@ -80,6 +80,23 @@ mod tests {
         }
     }
 
+    fn add_character_with_id(id: &str) -> StructureEdit {
+        StructureEdit::AddCharacter {
+            id: Some(id.to_owned()),
+            meta: CharacterMeta {
+                name: "凛".to_owned(),
+                ..CharacterMeta::default()
+            },
+            body: String::new(),
+        }
+    }
+
+    fn remove_character(file_stem: &str) -> StructureEdit {
+        StructureEdit::RemoveCharacter {
+            path: RelPath::new(&format!("characters/{file_stem}.md")).unwrap(),
+        }
+    }
+
     #[test]
     fn plan_structure_edit_returns_the_change_set_and_what_to_open() {
         let dir = TempDir::new().unwrap();
@@ -114,13 +131,7 @@ mod tests {
             "---\ntitle: 一\nscenes:\n  - id: s01\n    title: 朝\n    summary: 要約\n    pov: 凛\n---\n",
         );
 
-        let plan = plan_structure_edit(
-            &project,
-            &StructureEdit::RemoveCharacter {
-                id: CharacterId::new("rin").unwrap(),
-            },
-        )
-        .unwrap();
+        let plan = plan_structure_edit(&project, &remove_character("rin")).unwrap();
 
         assert!(matches!(plan.change_set.files[0], FileChange::Trash { .. }));
         assert_eq!(plan.references.len(), 1);
@@ -139,17 +150,65 @@ mod tests {
     }
 
     #[test]
-    fn plan_structure_edit_maps_a_missing_target_to_not_found() {
+    fn plan_structure_edit_maps_an_unusable_character_id_to_invalid_input() {
         let dir = TempDir::new().unwrap();
         let project = open_project(&dir);
+
+        let error = plan_structure_edit(&project, &add_character_with_id("Rin")).unwrap_err();
+
+        assert_eq!(error.kind, CommandErrorKind::InvalidInput);
+        assert!(
+            error.message.starts_with("ID「Rin」は使えません。"),
+            "{}",
+            error.message
+        );
+        let unwritten = RelPath::new("characters/Rin.md").unwrap();
+        assert!(!project.store().exists(&unwritten));
+    }
+
+    #[test]
+    fn a_character_file_named_against_the_id_rules_can_be_removed() {
+        let dir = TempDir::new().unwrap();
+        let project = open_project(&dir);
+        put(&project, "characters/Rin.md", "---\nname: 霧島 凛\n---\n");
+        put(&project, "characters/凛.md", "---\nname: [\n---\n");
+
+        let readable = plan_structure_edit(&project, &remove_character("Rin")).unwrap();
+        let broken = plan_structure_edit(&project, &remove_character("凛")).unwrap();
+        readable.change_set.apply(&project).unwrap();
+        broken.change_set.apply(&project).unwrap();
+
+        assert_eq!(readable.notices, Vec::<String>::new());
+        assert_eq!(broken.notices.len(), 1);
+        for path in ["characters/Rin.md", "characters/凛.md"] {
+            let removed = RelPath::new(path).unwrap();
+            assert!(!project.store().exists(&removed), "{path}");
+        }
+    }
+
+    #[test]
+    fn plan_structure_edit_maps_a_non_character_path_to_invalid_input() {
+        let dir = TempDir::new().unwrap();
+        let project = open_project(&dir);
+        put(&project, "world/glossary.md", "# 用語集\n");
 
         let error = plan_structure_edit(
             &project,
             &StructureEdit::RemoveCharacter {
-                id: CharacterId::new("rin").unwrap(),
+                path: RelPath::new("world/glossary.md").unwrap(),
             },
         )
         .unwrap_err();
+
+        assert_eq!(error.kind, CommandErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn plan_structure_edit_maps_a_missing_target_to_not_found() {
+        let dir = TempDir::new().unwrap();
+        let project = open_project(&dir);
+
+        let error = plan_structure_edit(&project, &remove_character("rin")).unwrap_err();
 
         assert_eq!(error.kind, CommandErrorKind::NotFound);
     }

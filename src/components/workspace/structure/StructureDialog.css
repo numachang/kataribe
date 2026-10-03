@@ -16,6 +16,10 @@
   color: var(--color-ink-faint);
 }
 
+.structure-dialog__hint--error {
+  color: var(--color-error);
+}
+
 .structure-dialog__error {
   margin: 0;
   font-size: 13px;

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useBackend } from "../../api/context";
+import { slugProblem } from "../../lib/slug";
 
 const SUGGESTION_DELAY_MS = 250;
 
@@ -11,6 +12,8 @@ const SUGGESTION_DELAY_MS = 250;
  * 返ってきたときにはもう古い入力への答えなら捨てる。
  * 利用者が触ったら追従を止め、書いた ID をそのまま使う。触っていなければ ID は送らず、Rust に決めさせる
  * （画面に出ている提案と、実際に使われる ID がずれないよう、同じ関数で決まる）。
+ * 利用者が書いた ID は、送る前に規則（小文字の英数字とハイフン）に合うか確かめ、合わなければ理由を返す
+ * （本物に送ってから失敗するより、書いている最中に知らせるため）。提案は規則に合うものだけが返るので確かめない。
  */
 export function useCharacterIdField(reading: string, name: string) {
   const backend = useBackend();
@@ -44,6 +47,8 @@ export function useCharacterIdField(reading: string, name: string) {
     };
   }, [backend, reading, name, isEdited]);
 
+  const idToSend = isEdited && idText.trim() !== "" ? idText.trim() : null;
+
   return {
     idText,
     /** 利用者が欄に入力したとき。空にしたら、また提案に追従する。 */
@@ -52,6 +57,8 @@ export function useCharacterIdField(reading: string, name: string) {
       setEdited(text !== "");
     },
     /** 追加の操作に渡す ID。触っていない（または空）なら null。 */
-    idToSend: isEdited && idText.trim() !== "" ? idText.trim() : null,
+    idToSend,
+    /** 書いた ID が使えない理由。使える、または送らない（自動）なら null。 */
+    problem: idToSend !== null ? slugProblem(idToSend) : null,
   };
 }

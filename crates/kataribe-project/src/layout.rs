@@ -53,12 +53,31 @@ pub fn world_document_path(name: &WorldDocumentName) -> RelPath {
     RelPath::trusted(format!("{WORLD_DIR}/{}.md", name.as_str()))
 }
 
+/// `characters/` 直下の Markdown か。人物資料の判定。
+///
+/// 手で足したファイルも目次に出るので、ファイル名は [`CharacterId`] の規則に合っていなくてよい
+/// （`Rin.md` や `凛.md` も人物資料として消せるように）。
+#[must_use]
+pub fn is_character_document(path: &RelPath) -> bool {
+    is_markdown_directly_in(path, CHARACTERS_DIR)
+}
+
 /// `world/` 直下の、世界観の概要（`overview.md`）以外の Markdown か。利用者が足した世界観の資料の判定。
 ///
 /// 手で足したファイルも対象にするので、ファイル名は [`WorldDocumentName`] の規則に合っていなくてよい。
+/// Windows は大文字小文字を区別せず、`world/Overview.md` も概要として読めてしまうので、
+/// 概要かどうかは大文字小文字を無視して調べる（概要を資料として消せないように）。
 #[must_use]
 pub fn is_additional_world_document(path: &RelPath) -> bool {
-    markdown_stem_in(path, WORLD_DIR).is_some() && path.as_str() != WORLD_OVERVIEW
+    is_markdown_directly_in(path, WORLD_DIR) && !path.as_str().eq_ignore_ascii_case(WORLD_OVERVIEW)
+}
+
+/// `dir` の直下の Markdown か。拡張子の大文字小文字は区別しない（Windows では `a.MD` も `a.md` と同じファイル）。
+fn is_markdown_directly_in(path: &RelPath, dir: &str) -> bool {
+    path.parent().is_some_and(|parent| parent.as_str() == dir)
+        && path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
 }
 
 /// `plot/chapters/<NN>.md` のパス。
@@ -164,9 +183,39 @@ mod tests {
         assert!(is_additional("world/用語集.md"));
         assert!(!is_additional("world/overview.md"));
         assert!(!is_additional("world/notes.txt"));
+        assert!(is_additional("world/glossary.MD"));
         assert!(!is_additional("world/maps/town.md"));
         assert!(!is_additional("characters/rin.md"));
         assert!(!is_additional("world"));
+    }
+
+    #[test]
+    fn character_documents_are_markdown_files_directly_under_characters_whatever_their_name() {
+        let is_character = |path: &str| is_character_document(&RelPath::new(path).unwrap());
+        assert!(is_character("characters/kirishima-rin.md"));
+        assert!(is_character("characters/Rin.md"));
+        assert!(is_character("characters/凛.md"));
+        assert!(is_character("characters/rin.MD"));
+        assert!(!is_character("characters/rin.txt"));
+        assert!(!is_character("characters/old/rin.md"));
+        assert!(!is_character("world/rin.md"));
+        assert!(!is_character("characters"));
+    }
+
+    #[test]
+    fn the_overview_is_never_an_additional_document_whatever_its_letter_case() {
+        // Windows では、これらは全部 world/overview.md と同じファイル
+        for path in [
+            "world/Overview.md",
+            "world/OVERVIEW.md",
+            "world/overview.MD",
+            "world/OVERVIEW.MD",
+        ] {
+            assert!(
+                !is_additional_world_document(&RelPath::new(path).unwrap()),
+                "{path}"
+            );
+        }
     }
 
     #[test]

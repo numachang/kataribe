@@ -1,6 +1,6 @@
 //! 構成の操作の種類。
 
-use kataribe_project::{ChapterId, CharacterId, CharacterMeta, RelPath, SceneId};
+use kataribe_project::{ChapterId, CharacterMeta, RelPath, SceneId};
 use serde::{Deserialize, Serialize};
 
 /// 構成に対する 1 つの操作。
@@ -10,8 +10,11 @@ use serde::{Deserialize, Serialize};
 pub enum StructureEdit {
     /// 人物を足す。
     AddCharacter {
-        /// ID（ファイル名）。`None` なら、読み（無ければ名前）からローマ字で決める。
-        id: Option<CharacterId>,
+        /// ID（ファイル名）。`None` か空白だけなら、読み（無ければ名前）からローマ字で決める。
+        ///
+        /// 文字列のまま受けて、使えるかどうかは変更案を作るときに確かめる
+        /// （使えない ID は、利用者が直せる入力の誤りとして知らせる）。
+        id: Option<String>,
         /// 項目。`order` が `None` なら、今の最大の次の番号（末尾）にする。
         meta: CharacterMeta,
         /// 人物資料の本文。空でもよい（空なら、生成の工程に「人物資料」が取りかかれる工程として出る）。
@@ -19,8 +22,11 @@ pub enum StructureEdit {
     },
     /// 人物を消す（ゴミ箱へ移す）。シーンの視点・登場人物の名前は書き換えない。
     RemoveCharacter {
-        /// 消す人物。
-        id: CharacterId,
+        /// 消す人物資料。`characters/` 直下の Markdown。
+        ///
+        /// ID ではなくパスで指す。ファイル名が人物 ID の規則に合わない資料（手で足した `Rin.md` や `凛.md`）も
+        /// 目次に出るので、消せるようにするため。
+        path: RelPath,
     },
     /// 世界観の資料を足す。
     AddWorldDocument {

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { CharacterMeta } from "../../../api/types";
 import { useCharacterIdField } from "../../../features/structure/useCharacterIdField";
 import { useStructureEdit } from "../../../features/structure/useStructureEdit";
@@ -28,6 +28,7 @@ export function AddCharacterDialog({ onClose }: AddCharacterDialogProps) {
   const [meta, setMeta] = useState<CharacterMeta>(EMPTY_CHARACTER);
   const [body, setBody] = useState("");
   const idField = useCharacterIdField(meta.reading ?? "", meta.name);
+  const idNoteElementId = useId();
 
   async function submit(): Promise<void> {
     const succeeded = await submission.run(() =>
@@ -47,18 +48,26 @@ export function AddCharacterDialog({ onClose }: AddCharacterDialogProps) {
           <input
             value={idField.idText}
             placeholder="読みや名前から自動で決めます"
+            aria-invalid={idField.problem !== null}
+            aria-describedby={idNoteElementId}
             onChange={(event) => idField.changeId(event.target.value)}
           />
         </label>
-        <p className="structure-dialog__hint">
-          ファイル名になります（小文字の英数字とハイフン）。空欄のままなら自動で決めます。
-        </p>
+        {idField.problem !== null ? (
+          <p id={idNoteElementId} className="structure-dialog__hint structure-dialog__hint--error">
+            ID「{idField.idText.trim()}」は使えません。{idField.problem}
+          </p>
+        ) : (
+          <p id={idNoteElementId} className="structure-dialog__hint">
+            ファイル名になります（小文字の英数字とハイフン）。空欄のままなら自動で決めます。
+          </p>
+        )}
         <TextAreaField label="詳細" rows={6} value={body} onChange={setBody} />
         <SubmitActions
           submitLabel="追加"
           submittingLabel="追加しています…"
           isSubmitting={submission.isSubmitting}
-          canSubmit={meta.name.trim() !== ""}
+          canSubmit={meta.name.trim() !== "" && idField.problem === null}
           errorMessage={submission.errorMessage}
           onSubmit={() => void submit()}
           onCancel={onClose}

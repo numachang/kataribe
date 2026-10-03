@@ -38,6 +38,27 @@ function addCharacter(
   return { kind: "add_character", id, meta: characterMeta(meta), body };
 }
 
+function removeCharacter(id: string): StructureEdit {
+  return { kind: "remove_character", path: `characters/${id}.md` };
+}
+
+/** ID の規則に合わないファイル名の人物資料を、作品に直接置く（外で作られたファイルを模す）。 */
+async function putCharacterFile(path: string, name: string): Promise<void> {
+  await backend.applyChangeSet({
+    summary: "人物資料を置きます。",
+    project_root: SAMPLE_PROJECT_FOLDER,
+    files: [
+      {
+        kind: "write",
+        path,
+        content: `---\nname: ${name}\n---\n`,
+        previous: null,
+        base_hash: null,
+      },
+    ],
+  });
+}
+
 async function planAndApply(edit: StructureEdit) {
   const plan = await backend.planStructureEdit(edit);
   const overview = await backend.applyChangeSet(plan.change_set);
@@ -118,10 +139,25 @@ describe("人物を足す", () => {
     });
   });
 
-  it("ID に使えない文字があれば invalid_input", async () => {
-    await expect(backend.planStructureEdit(addCharacter("Kirishima Rin"))).rejects.toMatchObject({
+  it.each([
+    ["Rin", "大文字は使えません"],
+    ["霧島", "小文字の英数字とハイフンだけ"],
+    ["Kirishima Rin", "大文字は使えません"],
+    ["-rin", "先頭と末尾にハイフン"],
+    ["rin--x", "ハイフンは続けて使えません"],
+    ["a".repeat(49), "48 文字まで"],
+    ["con", "予約"],
+  ])("使えない ID「%s」は invalid_input で、理由を返す", async (id, reason) => {
+    await expect(backend.planStructureEdit(addCharacter(id))).rejects.toMatchObject({
       kind: "invalid_input",
+      message: expect.stringContaining(reason),
     });
+  });
+
+  it("空白だけの ID は「決めない」と同じで、名前から自動で決める", async () => {
+    const plan = await backend.planStructureEdit(addCharacter("  ", { name: "Niiyama Yuki" }));
+
+    expect(plan.created).toBe("characters/niiyama-yuki.md");
   });
 });
 
@@ -144,7 +180,7 @@ describe("人物の ID の提案", () => {
 
 describe("人物を消す", () => {
   it("ゴミ箱へ移す変更案と、その人物を挙げているシーンを返す", async () => {
-    const plan = await backend.planStructureEdit({ kind: "remove_character", id: "sato-kenji" });
+    const plan = await backend.planStructureEdit(removeCharacter("sato-kenji"));
 
     expect(plan.change_set.summary).toBe("人物「佐藤 健二」をゴミ箱へ移します。");
     const [trash] = trashChanges(plan.change_set);
@@ -164,14 +200,14 @@ describe("人物を消す", () => {
 
   it("名前だけ・空白の違いの書き方も、同じ人物として数える", async () => {
     // 視点の「霧島 凛」と、登場人物の「霧島 凛」がそろって挙がる。
-    const plan = await backend.planStructureEdit({ kind: "remove_character", id: "kirishima-rin" });
+    const plan = await backend.planStructureEdit(removeCharacter("kirishima-rin"));
 
     expect(plan.references).toHaveLength(3);
     expect(plan.references[0]).toMatchObject({ as_pov: true, as_character: true });
   });
 
   it("適用すると、目次から消える", async () => {
-    const { overview } = await planAndApply({ kind: "remove_character", id: "sato-kenji" });
+    const { overview } = await planAndApply(removeCharacter("sato-kenji"));
 
     const characters = overview.sections.find((section) => section.kind === "characters");
     expect(characters?.entries.map((entry) => entry.label)).toEqual(["霧島 凛"]);
@@ -181,7 +217,7 @@ describe("人物を消す", () => {
   });
 
   it("確かめたあとに人物資料が書き換えられたら、競合で何も変えない", async () => {
-    const plan = await backend.planStructureEdit({ kind: "remove_character", id: "sato-kenji" });
+    const plan = await backend.planStructureEdit(removeCharacter("sato-kenji"));
     const { document, hash } = await backend.readDocument("characters/sato-kenji.md");
     if (document.kind !== "character") {
       throw new Error("人物資料として読めるはず");
@@ -201,9 +237,30 @@ describe("人物を消す", () => {
   });
 
   it("人物資料が無ければ not_found", async () => {
-    await expect(
-      backend.planStructureEdit({ kind: "remove_character", id: "nobody" }),
-    ).rejects.toMatchObject({ kind: "not_found" });
+    await expect(backend.planStructureEdit(removeCharacter("nobody"))).rejects.toMatchObject({
+      kind: "not_found",
+    });
+  });
+
+  it("ファイル名が ID の規則に合わない人物資料も、パスで指せば消せる", async () => {
+    await putCharacterFile("characters/Rin.md", "リン");
+    await putCharacterFile("characters/凛.md", "凛");
+
+    const plan = await backend.planStructureEdit(removeCharacter("Rin"));
+    expect(trashChanges(plan.change_set)[0]?.path).toBe("characters/Rin.md");
+    await backend.applyChangeSet(plan.change_set);
+    const { overview } = await planAndApply(removeCharacter("凛"));
+
+    const characters = overview.sections.find((section) => section.kind === "characters");
+    expect(characters?.entries.map((entry) => entry.label)).toEqual(["霧島 凛", "佐藤 健二"]);
+  });
+
+  it("characters/ 直下の Markdown でないパスは invalid_input", async () => {
+    for (const path of ["characters/sub/rin.md", "characters/rin.txt", "concept.md"]) {
+      await expect(
+        backend.planStructureEdit({ kind: "remove_character", path }),
+      ).rejects.toMatchObject({ kind: "invalid_input" });
+    }
   });
 });
 
@@ -278,6 +335,22 @@ describe("世界観の資料を消す", () => {
     expect(plan.change_set.summary).toBe("世界観の資料「用語集」をゴミ箱へ移します。");
     expect(trashChanges(plan.change_set)[0]?.path).toBe("world/glossary.md");
     const world = overview.sections.find((section) => section.kind === "world");
+    expect(world?.entries.map((entry) => entry.path)).toEqual(["world/overview.md"]);
+  });
+
+  it("概要は大文字小文字が違っても足した資料として扱わない（Windows は区別しない）", async () => {
+    await expect(
+      backend.planStructureEdit({ kind: "remove_world_document", path: "world/Overview.md" }),
+    ).rejects.toMatchObject({ kind: "invalid_input" });
+    await backend.applyChangeSet({
+      summary: "置きます。",
+      project_root: SAMPLE_PROJECT_FOLDER,
+      files: [
+        { kind: "write", path: "world/Overview.md", content: "x", previous: null, base_hash: null },
+      ],
+    });
+
+    const world = (await backend.overview()).sections.find((section) => section.kind === "world");
     expect(world?.entries.map((entry) => entry.path)).toEqual(["world/overview.md"]);
   });
 
@@ -483,7 +556,7 @@ describe("シーンを消す", () => {
 
 describe("変更案の適用の検証", () => {
   it("同じパスへの変更が重なる変更案は invalid_input で、何も変えない", async () => {
-    const plan = await backend.planStructureEdit({ kind: "remove_character", id: "sato-kenji" });
+    const plan = await backend.planStructureEdit(removeCharacter("sato-kenji"));
     const duplicated = {
       ...plan.change_set,
       files: [...plan.change_set.files, ...plan.change_set.files],
@@ -496,19 +569,49 @@ describe("変更案の適用の検証", () => {
     await expect(backend.readDocument("characters/sato-kenji.md")).resolves.toBeDefined();
   });
 
-  it("kataribe.yaml や .kataribe/ はゴミ箱へ移せない（invalid_input）", async () => {
-    const plan = await backend.planStructureEdit({ kind: "remove_character", id: "sato-kenji" });
-    for (const path of ["kataribe.yaml", ".kataribe/cache/summary.json"]) {
-      const trash = {
-        kind: "trash" as const,
-        path,
-        files: [{ path, base_hash: "00000000", chars: 0 }],
-      };
+  it.each([
+    "kataribe.yaml",
+    "Kataribe.yaml",
+    ".kataribe/cache/summary.json",
+    ".Kataribe/cache/summary.json",
+    ".KATARIBE",
+  ])("%s はゴミ箱へ移せない（大文字小文字の違いも拒む。invalid_input）", async (path) => {
+    const plan = await backend.planStructureEdit(removeCharacter("sato-kenji"));
+    const trash = {
+      kind: "trash" as const,
+      path,
+      files: [{ path, base_hash: "00000000", chars: 0 }],
+    };
 
+    await expect(
+      backend.applyChangeSet({ ...plan.change_set, files: [trash] }),
+    ).rejects.toMatchObject({ kind: "invalid_input" });
+  });
+
+  it("ゴミ箱へ移す変更の、移すファイルの一覧が対象と同じ 1 つでなければ invalid_input で、何も変えない", async () => {
+    const plan = await backend.planStructureEdit(removeCharacter("sato-kenji"));
+    const [trash] = trashChanges(plan.change_set);
+    if (trash === undefined) {
+      throw new Error("ゴミ箱へ移す変更があるはず");
+    }
+    const [only] = trash.files;
+    if (only === undefined) {
+      throw new Error("移すファイルがあるはず");
+    }
+    const mismatches = [
+      [],
+      [only, only],
+      [{ ...only, path: "characters/kirishima-rin.md" }],
+      [only, { ...only, path: "concept.md" }],
+    ];
+
+    for (const files of mismatches) {
       await expect(
-        backend.applyChangeSet({ ...plan.change_set, files: [trash] }),
+        backend.applyChangeSet({ ...plan.change_set, files: [{ ...trash, files }] }),
       ).rejects.toMatchObject({ kind: "invalid_input" });
     }
+
+    await expect(backend.readDocument("characters/sato-kenji.md")).resolves.toBeDefined();
   });
 
   it("別の作品の変更案は適用しない", async () => {

@@ -13,7 +13,7 @@ use super::{
     check_condition_against, create_parent_dir, decode_text, normalize_text, persist_temp_file,
     rename_with_retry, stage_temp_file, timestamp_stamp,
 };
-use crate::error::ProjectError;
+use crate::error::{ProjectError, StillTrashed};
 use crate::layout;
 use crate::path::RelPath;
 
@@ -61,7 +61,7 @@ impl ProjectStore {
     ///
     /// ゴミ箱へ移したファイルは、この呼び出しごとに 1 つ作る `.kataribe/trash/<日時>/` の下に、元の相対パスのまま
     /// 置く（同じ日時のフォルダが既にあれば `-1`, `-2`, … を付ける）。反映の途中で失敗したら、反映済みの変更を
-    /// 逆順に元へ戻す。戻せなかったものがあれば [`ProjectError::PartialWrite`]。
+    /// 逆順に元へ戻す。戻せなかったものがあれば [`ProjectError::PartialWrite`]（書き込みと、ゴミ箱へ移したものとを分けて持つ）。
     ///
     /// 戻り値は、`changes` に現れる書き込みごとの、書き込み後の内容のハッシュ（書き込みの並び順）。
     pub fn apply_changes(
@@ -200,23 +200,41 @@ impl ProjectStore {
         let batch_dir = self.new_trash_batch_dir()?;
         let resolved_batch_dir = self.resolve(&batch_dir)?;
         for trash in trashes {
-            let destination = RelPath::new(&format!("{batch_dir}/{}", trash.path))?;
-            let resolved_destination = self.resolve(&destination)?;
-            create_parent_dir(&resolved_destination, &destination)?;
+            let moved = self.move_into_trash(trash, &batch_dir, &resolved_batch_dir)?;
+            applied.push(Applied::Trashed(moved));
+        }
+        Ok(())
+    }
+
+    /// 1 つのファイルを今回のゴミ箱フォルダへ移す。失敗したら、そのために作った空のフォルダを片付ける
+    /// （移せたものが 1 つも無いまま、`.kataribe/trash/<日時>/` の空のフォルダが残らないように）。
+    fn move_into_trash<'a>(
+        &self,
+        trash: &'a PlannedTrash<'a>,
+        batch_dir: &RelPath,
+        resolved_batch_dir: &Path,
+    ) -> Result<TrashMove<'a>, ProjectError> {
+        let destination = RelPath::new(&format!("{batch_dir}/{}", trash.path))?;
+        let resolved_destination = self.resolve(&destination)?;
+        let moved = create_parent_dir(&resolved_destination, &destination).and_then(|()| {
             rename_with_retry(&trash.resolved, &resolved_destination).map_err(|source| {
                 ProjectError::Io {
                     path: trash.path.clone(),
                     source,
                 }
-            })?;
-            applied.push(Applied::Trashed(TrashMove {
-                path: trash.path,
-                original: &trash.resolved,
-                trashed: resolved_destination,
-                batch_dir: resolved_batch_dir.clone(),
-            }));
+            })
+        });
+        if let Err(error) = moved {
+            remove_empty_dirs(resolved_destination.parent(), resolved_batch_dir);
+            return Err(error);
         }
-        Ok(())
+        Ok(TrashMove {
+            path: trash.path,
+            original: &trash.resolved,
+            trashed: destination,
+            resolved_trashed: resolved_destination,
+            batch_dir: resolved_batch_dir.to_path_buf(),
+        })
     }
 
     /// まだ無い `.kataribe/trash/<日時>/` のパス。同じ日時のフォルダが既にあれば `-1`, `-2`, … を付ける
@@ -328,19 +346,14 @@ enum Applied<'a> {
 struct TrashMove<'a> {
     path: &'a RelPath,
     original: &'a Path,
-    trashed: PathBuf,
+    /// ゴミ箱の中の置き場所（元へ戻せなかったとき、利用者へ知らせる）。
+    trashed: RelPath,
+    resolved_trashed: PathBuf,
     /// 今回のゴミ箱フォルダ（`.kataribe/trash/<日時>/`）。戻したあとに空になったフォルダを片付ける範囲の上限。
     batch_dir: PathBuf,
 }
 
 impl Applied<'_> {
-    fn path(&self) -> &RelPath {
-        match self {
-            Self::Replaced(plan) => plan.path,
-            Self::Trashed(moved) => moved.path,
-        }
-    }
-
     fn undo(&self) -> Result<(), ProjectError> {
         match self {
             Self::Replaced(plan) => plan.restore(),
@@ -351,11 +364,13 @@ impl Applied<'_> {
 
 impl TrashMove<'_> {
     fn restore(&self) -> Result<(), ProjectError> {
-        rename_with_retry(&self.trashed, self.original).map_err(|source| ProjectError::Io {
-            path: self.path.clone(),
-            source,
+        rename_with_retry(&self.resolved_trashed, self.original).map_err(|source| {
+            ProjectError::Io {
+                path: self.path.clone(),
+                source,
+            }
         })?;
-        remove_empty_dirs(self.trashed.parent(), &self.batch_dir);
+        remove_empty_dirs(self.resolved_trashed.parent(), &self.batch_dir);
         Ok(())
     }
 }
@@ -376,17 +391,26 @@ fn remove_empty_dirs(start: Option<&Path>, top: &Path) {
 
 /// 反映の途中で失敗したとき、反映済みの変更を逆順に元へ戻し、返すエラーを決める。
 fn roll_back(applied: &[Applied<'_>], error: ProjectError) -> ProjectError {
-    let not_restored: Vec<RelPath> = applied
-        .iter()
-        .rev()
-        .filter(|step| step.undo().is_err())
-        .map(|step| step.path().clone())
-        .collect();
-    if not_restored.is_empty() {
+    let mut not_restored = Vec::new();
+    let mut still_trashed = Vec::new();
+    for step in applied.iter().rev() {
+        if step.undo().is_ok() {
+            continue;
+        }
+        match step {
+            Applied::Replaced(plan) => not_restored.push(plan.path.clone()),
+            Applied::Trashed(moved) => still_trashed.push(StillTrashed {
+                original: moved.path.clone(),
+                trashed: moved.trashed.clone(),
+            }),
+        }
+    }
+    if not_restored.is_empty() && still_trashed.is_empty() {
         error
     } else {
         ProjectError::PartialWrite {
             not_restored,
+            still_trashed,
             source: Box::new(error),
         }
     }
@@ -919,5 +943,180 @@ mod tests {
                 store.remove(&path).unwrap();
             }
         }
+    }
+
+    /// 元の場所の親フォルダが無い（戻せない）、ゴミ箱へ移したあとの状態を作る。
+    struct StrandedTrash {
+        path: RelPath,
+        original: PathBuf,
+        trashed: RelPath,
+        resolved_trashed: PathBuf,
+        batch_dir: PathBuf,
+    }
+
+    fn stranded_trash(dir: &TempDir, path: &str) -> StrandedTrash {
+        let trashed = rel(&format!(".kataribe/trash/20231114-221320-000/{path}"));
+        let resolved_trashed = dir.path().join(trashed.as_str());
+        fs::create_dir_all(resolved_trashed.parent().unwrap()).unwrap();
+        fs::write(&resolved_trashed, "ゴミ箱の中の本文").unwrap();
+        StrandedTrash {
+            path: rel(path),
+            original: dir.path().join("moved-away").join(path),
+            trashed,
+            resolved_trashed,
+            batch_dir: dir.path().join(".kataribe/trash/20231114-221320-000"),
+        }
+    }
+
+    impl StrandedTrash {
+        fn applied(&self) -> Applied<'_> {
+            Applied::Trashed(TrashMove {
+                path: &self.path,
+                original: &self.original,
+                trashed: self.trashed.clone(),
+                resolved_trashed: self.resolved_trashed.clone(),
+                batch_dir: self.batch_dir.clone(),
+            })
+        }
+    }
+
+    fn some_failure() -> ProjectError {
+        ProjectError::NotFound {
+            path: rel("plot/chapters/01.md"),
+        }
+    }
+
+    #[test]
+    fn a_file_that_cannot_leave_the_trash_is_reported_with_its_place_in_the_trash() {
+        let dir = TempDir::new().unwrap();
+        let stranded = stranded_trash(&dir, "characters/rin.md");
+
+        let error = roll_back(&[stranded.applied()], some_failure());
+
+        let ProjectError::PartialWrite {
+            not_restored,
+            still_trashed,
+            ..
+        } = &error
+        else {
+            panic!("PartialWrite になるはず: {error:?}");
+        };
+        assert_eq!(*not_restored, Vec::<RelPath>::new());
+        assert_eq!(
+            *still_trashed,
+            vec![StillTrashed {
+                original: rel("characters/rin.md"),
+                trashed: rel(".kataribe/trash/20231114-221320-000/characters/rin.md"),
+            }]
+        );
+        let message = error.to_string();
+        assert!(
+            message.contains(".kataribe/trash/20231114-221320-000/characters/rin.md"),
+            "{message}"
+        );
+        assert!(
+            !message.contains(".kataribe/backups"),
+            "ゴミ箱へ移したファイルのバックアップは無い: {message}"
+        );
+        assert_eq!(
+            fs::read_to_string(&stranded.resolved_trashed).unwrap(),
+            "ゴミ箱の中の本文",
+            "戻せなかった実物はゴミ箱に残す"
+        );
+    }
+
+    #[test]
+    fn a_written_file_that_cannot_be_restored_is_reported_apart_from_the_trashed_ones() {
+        let dir = TempDir::new().unwrap();
+        let stranded = stranded_trash(&dir, "manuscript/01/s02.txt");
+        let chapter = rel("plot/chapters/01.md");
+        let unwritable = PlannedWrite {
+            path: &chapter,
+            resolved: dir.path().join("moved-away/plot/chapters/01.md"),
+            previous: Some(PreviousFile {
+                text: TextFile {
+                    content: "元".to_owned(),
+                    hash: ContentHash::of("元".as_bytes()),
+                },
+                bytes: "元".as_bytes().to_vec(),
+            }),
+            content: "新".to_owned(),
+            hash: ContentHash::of("新".as_bytes()),
+        };
+
+        let error = roll_back(
+            &[stranded.applied(), Applied::Replaced(&unwritable)],
+            some_failure(),
+        );
+
+        let ProjectError::PartialWrite {
+            not_restored,
+            still_trashed,
+            ..
+        } = error
+        else {
+            panic!("PartialWrite になるはず: {error:?}");
+        };
+        assert_eq!(not_restored, vec![chapter]);
+        assert_eq!(still_trashed.len(), 1);
+        assert_eq!(still_trashed[0].original, rel("manuscript/01/s02.txt"));
+    }
+
+    #[test]
+    fn roll_back_returns_the_original_error_when_everything_was_restored() {
+        let error = roll_back(&[], some_failure());
+
+        assert!(matches!(error, ProjectError::NotFound { .. }), "{error:?}");
+    }
+
+    #[test]
+    fn a_failed_first_move_to_the_trash_leaves_no_empty_folder_behind() {
+        let dir = TempDir::new().unwrap();
+        let store = open_store(&dir);
+        let missing = rel("characters/rin.md");
+
+        let result = store.trash_only(&missing, dir.path().join("characters/rin.md"));
+
+        assert!(matches!(result, Err(ProjectError::Io { .. })), "{result:?}");
+        assert_eq!(
+            fs::read_dir(dir.path().join(".kataribe/trash")).map_or(0, Iterator::count),
+            0,
+            "失敗したのに、空のゴミ箱フォルダが残っている"
+        );
+    }
+
+    #[test]
+    fn a_failed_move_cleans_only_the_folders_it_made_and_keeps_the_ones_already_moved() {
+        let dir = TempDir::new().unwrap();
+        let store = open_store(&dir);
+        write(&store, "characters/rin.md", "霧島 凛");
+        let (moved, missing) = (rel("characters/rin.md"), rel("manuscript/01/s02.txt"));
+        let trashes = [
+            PlannedTrash {
+                path: &moved,
+                resolved: dir.path().join("characters/rin.md"),
+            },
+            PlannedTrash {
+                path: &missing,
+                resolved: dir.path().join("manuscript/01/s02.txt"),
+            },
+        ];
+        let mut applied = Vec::new();
+
+        let result = store.move_to_trash(&trashes, &mut applied);
+
+        assert!(matches!(result, Err(ProjectError::Io { path, .. }) if path == missing));
+        assert_eq!(applied.len(), 1, "移せた 1 つ目は記録されているはず");
+        let batch_dir = fs::read_dir(dir.path().join(".kataribe/trash"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert!(batch_dir.join("characters/rin.md").exists());
+        assert!(
+            !batch_dir.join("manuscript").exists(),
+            "失敗した 2 つ目のために作ったフォルダが残っている"
+        );
     }
 }

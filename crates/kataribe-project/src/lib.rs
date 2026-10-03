@@ -16,7 +16,7 @@ mod slug;
 pub mod store;
 
 pub use document::{EditableDocument, LoadedDocument, ParsedDocument, parse_document};
-pub use error::ProjectError;
+pub use error::{ProjectError, StillTrashed};
 pub use frontmatter::YamlError;
 pub use model::{
     Chapter, ChapterId, ChapterMeta, Character, CharacterId, CharacterMeta, DocMeta,

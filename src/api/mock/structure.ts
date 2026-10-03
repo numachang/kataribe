@@ -1,3 +1,4 @@
+import { isValidSlug, slugProblem } from "../../lib/slug";
 import { BackendError } from "../backend";
 import type {
   CharacterMeta,
@@ -12,7 +13,6 @@ import { refersTo } from "./names";
 import {
   chapterPath,
   characterPath,
-  isValidSlug,
   isValidWorldDocumentName,
   scenePath,
   worldDocumentNameFromPath,
@@ -27,6 +27,7 @@ import { findChapter, findCharacter, findWorldDocument, worldDocumentTitle } fro
 // 本物と違い、かなはローマ字にしない（変換表を二重に持たないため）。ID の提案は英数字だけで作る。
 
 const SLUG_MAX_LENGTH = 48;
+const CHARACTER_FILE_PATTERN = /^characters\/([^/]+)\.md$/;
 const CHARACTER_ID_FALLBACK = "character";
 const WORLD_DOCUMENT_NAME_FALLBACK = "doc";
 
@@ -97,11 +98,14 @@ function planAddCharacter(
   if (name === "") {
     throw invalidInput("人物の名前を入力してください。");
   }
-  const id = requestedId ?? suggestMockCharacterId(state, meta.reading ?? "", name);
-  if (!isValidSlug(id)) {
-    throw invalidInput(
-      `ID「${id}」は使えません。小文字の英数字とハイフンだけで、48 文字までにしてください。`,
-    );
+  // 空白だけの ID は「決めない」と同じ（本物と同じく、自動で決める）
+  const id =
+    requestedId !== null && requestedId.trim() !== ""
+      ? requestedId
+      : suggestMockCharacterId(state, meta.reading ?? "", name);
+  const idProblem = slugProblem(id);
+  if (idProblem !== null) {
+    throw invalidInput(`ID「${id}」は使えません。${idProblem}`);
   }
   if (findCharacter(state, id) !== null) {
     throw invalidInput(`ID「${id}」はもう使われています。`);
@@ -146,15 +150,25 @@ function scenesMentioning(state: ProjectState, characterName: string): SceneRefe
   return references;
 }
 
-function planRemoveCharacter(state: ProjectState, id: string): StructurePlan {
-  const character = findCharacter(state, id);
+/** 人物資料のパス（`characters/` 直下の `.md`）の、ファイル名の部分。 */
+function characterFileStem(path: string): string | null {
+  return CHARACTER_FILE_PATTERN.exec(path)?.[1] ?? null;
+}
+
+/** 人物の削除は、ID ではなくパスで指す。ファイル名が ID の規則に合わない資料も消せるように。 */
+function planRemoveCharacter(state: ProjectState, path: string): StructurePlan {
+  const stem = characterFileStem(path);
+  if (stem === null) {
+    throw invalidInput(
+      `${path} は人物資料ではありません（消せるのは、characters/ 直下の Markdown です）。`,
+    );
+  }
+  const character = findCharacter(state, stem);
   if (character === null) {
-    throw notFound(`人物資料 ${characterPath(id)} がありません。`);
+    throw notFound(`人物資料 ${path} がありません。`);
   }
   return {
-    ...described(state, `人物「${character.name}」をゴミ箱へ移し`, [
-      trashChange(state, characterPath(id)),
-    ]),
+    ...described(state, `人物「${character.name}」をゴミ箱へ移し`, [trashChange(state, path)]),
     created: null,
     references: scenesMentioning(state, character.name),
     notices: [],
@@ -372,7 +386,7 @@ export function planMockStructureEdit(state: ProjectState, edit: StructureEdit):
     case "add_character":
       return planAddCharacter(state, edit.id, edit.meta, edit.body);
     case "remove_character":
-      return planRemoveCharacter(state, edit.id);
+      return planRemoveCharacter(state, edit.path);
     case "add_world_document":
       return planAddWorldDocument(state, edit.name, edit.title, edit.body);
     case "remove_world_document":

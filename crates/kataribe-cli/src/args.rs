@@ -514,18 +514,27 @@ mod tests {
         assert_eq!(args.name, "霧島 凛");
         assert_eq!(args.reading.as_deref(), Some("きりしま りん"));
         assert_eq!(args.order, Some(2));
-        assert_eq!(args.id.unwrap().as_str(), "rin");
+        assert_eq!(args.id.as_deref(), Some("rin"));
         assert_eq!(args.body.body.as_deref(), Some("本文"));
         assert!(args.dry_run);
     }
 
     #[test]
-    fn add_character_requires_a_name_and_a_valid_id() {
+    fn add_character_requires_a_name() {
         assert!(parse(&["add", "character", "folder"]).is_err());
-        assert!(
-            parse(&["add", "character", "folder", "--name", "凛", "--id", "Rin"]).is_err(),
-            "大文字の ID は使えない"
-        );
+    }
+
+    #[test]
+    fn an_unusable_id_is_left_to_the_engine_so_the_reason_is_told_in_one_place() {
+        let cli = parse(&["add", "character", "folder", "--name", "凛", "--id", "Rin"]).unwrap();
+
+        let Command::Add(AddArgs {
+            target: AddTarget::Character(args),
+        }) = cli.command
+        else {
+            panic!("add character が来るはず");
+        };
+        assert_eq!(args.id.as_deref(), Some("Rin"));
     }
 
     #[test]

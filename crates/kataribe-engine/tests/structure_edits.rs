@@ -38,7 +38,7 @@ fn character_meta(name: &str, reading: &str) -> CharacterMeta {
 
 fn add_character(id: Option<&str>, name: &str, reading: &str, body: &str) -> StructureEdit {
     StructureEdit::AddCharacter {
-        id: id.map(character_id),
+        id: id.map(str::to_owned),
         meta: character_meta(name, reading),
         body: body.to_owned(),
     }
@@ -76,6 +76,12 @@ fn remove_scene(chapter: u32, scene: &str) -> StructureEdit {
     StructureEdit::RemoveScene {
         chapter: ChapterId::from_number(chapter),
         scene: SceneId::new(scene).unwrap(),
+    }
+}
+
+fn remove_character(file_stem: &str) -> StructureEdit {
+    StructureEdit::RemoveCharacter {
+        path: rel(&format!("characters/{file_stem}.md")),
     }
 }
 
@@ -323,6 +329,72 @@ fn suggesting_a_character_id_uses_the_reading_and_avoids_used_ids() {
     assert_eq!(nothing.as_str(), "character");
 }
 
+#[test]
+fn adding_a_character_with_an_unusable_id_explains_why_and_writes_nothing() {
+    let dir = TempDir::new().unwrap();
+    let project = new_project(dir.path());
+
+    for unusable in [
+        "Rin",
+        "rin_x",
+        "凛",
+        "-rin",
+        "rin--x",
+        "con",
+        &"a".repeat(49),
+    ] {
+        let result = plan_structure_edit(&project, &add_character(Some(unusable), "凛", "", ""));
+
+        let message = invalid_input_message(result);
+        assert!(
+            message.starts_with(&format!("ID「{unusable}」は使えません。")),
+            "{unusable}: {message}"
+        );
+        assert!(message.contains("小文字の英数字とハイフン"), "{message}");
+    }
+    assert_eq!(
+        section_entries(&project, SectionKind::Characters),
+        Vec::new()
+    );
+}
+
+#[test]
+fn a_blank_id_is_the_same_as_no_id_and_surrounding_spaces_are_ignored() {
+    let dir = TempDir::new().unwrap();
+    let project = new_project(dir.path());
+
+    let automatic = plan_structure_edit(
+        &project,
+        &add_character(Some("   "), "霧島 凛", "きりしま りん", ""),
+    )
+    .unwrap();
+    let padded =
+        plan_structure_edit(&project, &add_character(Some(" rin "), "凛", "", "")).unwrap();
+
+    assert_eq!(automatic.created, Some(rel("characters/kirishima-rin.md")));
+    assert_eq!(padded.created, Some(rel("characters/rin.md")));
+}
+
+#[test]
+fn an_id_that_differs_only_in_letter_case_from_a_file_in_use_is_not_offered() {
+    let dir = TempDir::new().unwrap();
+    let project = new_project(dir.path());
+    put(
+        &project,
+        "characters/Kirishima-Rin.md",
+        "---\nname: 霧島 凛\n---\n",
+    );
+
+    let suggested = suggest_character_id(&project, "きりしま りん", "霧島 凛").unwrap();
+    let plan = plan_and_apply(
+        &project,
+        &add_character(None, "別の霧島 凛", "きりしま りん", ""),
+    );
+
+    assert_eq!(suggested.as_str(), "kirishima-rin-2");
+    assert_eq!(plan.created, Some(rel("characters/kirishima-rin-2.md")));
+}
+
 // ---- 人物を消す ----
 
 #[test]
@@ -335,13 +407,7 @@ fn removing_a_character_moves_the_file_to_the_trash() {
         "---\nname: 霧島 凛\n---\n本文です。\n",
     );
 
-    let plan = plan_structure_edit(
-        &project,
-        &StructureEdit::RemoveCharacter {
-            id: character_id("rin"),
-        },
-    )
-    .unwrap();
+    let plan = plan_structure_edit(&project, &remove_character("rin")).unwrap();
 
     let [FileChange::Trash { path, files }] = plan.change_set.files.as_slice() else {
         panic!("ゴミ箱へ移す変更が 1 つのはず: {:?}", plan.change_set.files);
@@ -376,13 +442,7 @@ fn removing_a_character_lists_the_scenes_that_name_them() {
     put(&project, "characters/rin.md", "---\nname: 霧島 凛\n---\n");
     put(&project, "plot/chapters/01.md", CHAPTER_WITH_TWO_SCENES);
 
-    let plan = plan_structure_edit(
-        &project,
-        &StructureEdit::RemoveCharacter {
-            id: character_id("rin"),
-        },
-    )
-    .unwrap();
+    let plan = plan_structure_edit(&project, &remove_character("rin")).unwrap();
 
     // s01: 視点にも登場にも「霧島 凛」。s02: 登場人物に名前だけの「凛」。視点の「佐藤健二」は別人
     assert_eq!(plan.references.len(), 2);
@@ -412,13 +472,7 @@ fn name_references_ignore_differences_in_spacing() {
     );
     put(&project, "plot/chapters/01.md", CHAPTER_WITH_TWO_SCENES);
 
-    let plan = plan_structure_edit(
-        &project,
-        &StructureEdit::RemoveCharacter {
-            id: character_id("kenji"),
-        },
-    )
-    .unwrap();
+    let plan = plan_structure_edit(&project, &remove_character("kenji")).unwrap();
 
     let scenes: Vec<String> = plan
         .references
@@ -440,13 +494,7 @@ fn a_broken_chapter_is_reported_in_the_notices_and_the_other_chapters_are_still_
     put(&project, "plot/chapters/01.md", CHAPTER_WITH_TWO_SCENES);
     put(&project, "plot/chapters/02.md", "---\ntitle: [\n---\n");
 
-    let plan = plan_structure_edit(
-        &project,
-        &StructureEdit::RemoveCharacter {
-            id: character_id("rin"),
-        },
-    )
-    .unwrap();
+    let plan = plan_structure_edit(&project, &remove_character("rin")).unwrap();
 
     assert_eq!(plan.references.len(), 2);
     assert_eq!(plan.notices.len(), 1);
@@ -464,13 +512,7 @@ fn a_character_with_broken_yaml_can_still_be_removed_but_references_are_not_chec
     put(&project, "characters/rin.md", "---\nname: [\n---\n");
     put(&project, "plot/chapters/01.md", CHAPTER_WITH_TWO_SCENES);
 
-    let plan = plan_structure_edit(
-        &project,
-        &StructureEdit::RemoveCharacter {
-            id: character_id("rin"),
-        },
-    )
-    .unwrap();
+    let plan = plan_structure_edit(&project, &remove_character("rin")).unwrap();
     plan.change_set.apply(&project).unwrap();
 
     assert_eq!(plan.references, Vec::new());
@@ -488,12 +530,7 @@ fn removing_a_missing_character_is_not_found() {
     let dir = TempDir::new().unwrap();
     let project = new_project(dir.path());
 
-    let result = plan_structure_edit(
-        &project,
-        &StructureEdit::RemoveCharacter {
-            id: character_id("rin"),
-        },
-    );
+    let result = plan_structure_edit(&project, &remove_character("rin"));
 
     assert!(
         matches!(result, Err(EngineError::NotFound(_))),
@@ -506,13 +543,7 @@ fn removing_a_character_conflicts_when_the_file_changed_after_the_plan() {
     let dir = TempDir::new().unwrap();
     let project = new_project(dir.path());
     put(&project, "characters/rin.md", "---\nname: 霧島 凛\n---\n");
-    let plan = plan_structure_edit(
-        &project,
-        &StructureEdit::RemoveCharacter {
-            id: character_id("rin"),
-        },
-    )
-    .unwrap();
+    let plan = plan_structure_edit(&project, &remove_character("rin")).unwrap();
     put(
         &project,
         "characters/rin.md",
@@ -530,6 +561,83 @@ fn removing_a_character_conflicts_when_the_file_changed_after_the_plan() {
             .unwrap()
             .contains("外で書き足した本文")
     );
+}
+
+#[test]
+fn a_character_file_whose_name_breaks_the_id_rules_can_be_removed_by_its_path() {
+    let dir = TempDir::new().unwrap();
+    let project = new_project(dir.path());
+    put(&project, "characters/Rin.md", "---\nname: 霧島 凛\n---\n");
+    put(&project, "plot/chapters/01.md", CHAPTER_WITH_TWO_SCENES);
+
+    let plan = plan_structure_edit(&project, &remove_character("Rin")).unwrap();
+
+    assert_eq!(
+        plan.references.len(),
+        2,
+        "名前を読めるので、シーンでの参照を確かめられる"
+    );
+    assert_eq!(plan.notices, Vec::<String>::new());
+    assert_eq!(
+        plan.completed_summary,
+        "人物「霧島 凛」をゴミ箱へ移しました。"
+    );
+    plan.change_set.apply(&project).unwrap();
+    assert_eq!(read(&project, "characters/Rin.md"), None);
+}
+
+#[test]
+fn a_japanese_named_character_file_with_broken_yaml_can_be_removed_with_a_notice() {
+    let dir = TempDir::new().unwrap();
+    let project = new_project(dir.path());
+    put(&project, "characters/凛.md", "---\nname: [\n---\n");
+
+    let plan = plan_structure_edit(&project, &remove_character("凛")).unwrap();
+    plan.change_set.apply(&project).unwrap();
+
+    assert_eq!(plan.references, Vec::new());
+    assert_eq!(plan.notices.len(), 1);
+    assert!(
+        plan.notices[0].contains("characters/凛.md"),
+        "{}",
+        plan.notices[0]
+    );
+    assert_eq!(plan.completed_summary, "人物「凛」をゴミ箱へ移しました。");
+    assert_eq!(read(&project, "characters/凛.md"), None);
+}
+
+#[test]
+fn only_markdown_files_directly_under_characters_can_be_removed_as_characters() {
+    let dir = TempDir::new().unwrap();
+    let project = new_project(dir.path());
+    put(&project, "world/glossary.md", "# 用語集\n");
+    put(
+        &project,
+        "characters/old/rin.md",
+        "---\nname: 古い凛\n---\n",
+    );
+    put(&project, "characters/rin.txt", "メモ");
+
+    for path in [
+        "world/glossary.md",
+        "characters/old/rin.md",
+        "characters/rin.txt",
+        "concept.md",
+        "kataribe.yaml",
+        "characters",
+    ] {
+        let result = plan_structure_edit(
+            &project,
+            &StructureEdit::RemoveCharacter { path: rel(path) },
+        );
+
+        let message = invalid_input_message(result);
+        assert!(
+            message.contains("消せる人物資料ではありません"),
+            "{message}"
+        );
+    }
+    assert!(read(&project, "world/glossary.md").is_some());
 }
 
 // ---- 世界観の資料を足す・消す ----
@@ -685,6 +793,8 @@ fn the_world_overview_and_files_outside_world_cannot_be_removed_as_world_documen
 
     for path in [
         "world/overview.md",
+        "world/Overview.md",
+        "world/OVERVIEW.MD",
         "world/notes.txt",
         "world/maps/town.md",
         "concept.md",
@@ -718,6 +828,17 @@ fn removing_a_missing_world_document_is_not_found() {
         matches!(result, Err(EngineError::NotFound(_))),
         "{result:?}"
     );
+}
+
+#[test]
+fn a_world_file_name_that_differs_only_in_letter_case_counts_as_in_use() {
+    let dir = TempDir::new().unwrap();
+    let project = new_project(dir.path());
+    put(&project, "world/Doc.md", "# 手で足した資料\n");
+
+    let plan = plan_and_apply(&project, &add_world_document(None, "港町の歴史", ""));
+
+    assert_eq!(plan.created, Some(rel("world/doc-2.md")));
 }
 
 // ---- シーンを足す ----
@@ -790,6 +911,18 @@ fn a_new_scene_does_not_reuse_the_id_of_a_removed_scene_whose_text_remains() {
         read(&project, "manuscript/01/s03.txt").unwrap(),
         "章立てから消えたシーンの本文が残っている。"
     );
+}
+
+#[test]
+fn a_new_scene_does_not_reuse_an_id_whose_text_file_differs_only_in_letter_case() {
+    let dir = TempDir::new().unwrap();
+    let project = new_project(dir.path());
+    put(&project, "plot/chapters/01.md", CHAPTER_WITH_TWO_SCENES);
+    put(&project, "manuscript/01/S03.txt", "古い本文が残っている。");
+
+    plan_and_apply(&project, &add_scene(1, None, "新しいシーン"));
+
+    assert_eq!(scene_ids(&project, 1), vec!["s01", "s02", "s04"]);
 }
 
 #[test]
