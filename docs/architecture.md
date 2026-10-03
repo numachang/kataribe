@@ -334,17 +334,19 @@ Gemma には前者だけ、Qwen には後者だけが効き、両方を指定す
 
 ### 4.7 生成中のイベント
 
-`Engine::generate` は、生成の経過を `EventSink` に `GenerationEvent` として送る。GUI は「工程」タブに、CLI は標準エラー出力に出す。
+`Engine::generate` は、生成の経過を `EventSink` に `GenerationEvent` として送る。GUI は右の AI パネルに（どのタブから始めた生成でも同じ場所に）、CLI は標準エラー出力に出す。
 
 | イベント | 中身 | 画面での使い方 |
 |---|---|---|
-| `started` | `model`: 使う LLM の名前（`ChatModel::describe`。例 `Claude Code（haiku）`） | 見出しに「使う LLM」として出す。作品の設定を重ねた後の、実際の接続先 |
+| `started` | `model`: 使う LLM の名前（`ChatModel::describe`。例 `Claude Code（haiku）`） | 見出しに「使う LLM」として出す。作品の設定を重ねた後の、実際の接続先。URL はホスト名とポートだけを出す（認証情報やクエリは秘密を含みうるので出さない） |
 | `step_started` | `label`・`index`・`total`（LLM を呼ぶ 1 回ごと） | 回ごとの枠を作り、経過時間を数え始める |
 | `content` / `reasoning` | 本文 / 思考の断片 | 本文は流して見せ、受け取った文字数を数える。思考は畳んで見せる |
 | `step_finished` | 使用トークン数・かかった時間 | 「完了（23.2 秒、入力 … トークン・出力 … トークン）」 |
 | `notice` | 注意書き | その回の下に出す |
 
 - 本文を流さない回（要約や、JSON で答えさせる回）でも、経過時間が進むので、動いていることが分かる。
+- 経過時間を数えるのは最後の回だけ。`step_finished` が来ないまま次の `step_started` が来た回
+  （JSON Schema の指定を断られて、指示文で JSON を求め直した回）は「やり直しました」と出す。
 - 見出しには、工程全体のうち済んだ数（例 工程 13/15 済み）も出す。
 
 ## 5. アプリ（src-tauri）と画面（src）

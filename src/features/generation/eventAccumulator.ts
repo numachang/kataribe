@@ -1,4 +1,5 @@
 import type { GenerationEvent } from "../../api/types";
+import { countGraphemes } from "../../lib/graphemes";
 
 // generate() が届ける GenerationEvent の並びを、画面に表示できる形へ積み上げていく。
 // バックエンドや React に依存しない純粋な関数なので、単体テストしやすい。
@@ -15,6 +16,11 @@ export interface GenerationStepDisplay {
   /** この回を始めた時刻（エポックからのミリ秒）。経過時間の表示に使う。 */
   startedAt: number;
   content: string;
+  /**
+   * 受け取った本文の文字数（書記素単位）。届くたびに全文を数え直すと長い本文で重くなるので、断片の分だけ足す。
+   * 断片の境目で 1 文字が分かれると多めに数えることがあるが、進み具合の目安なので許す。
+   */
+  receivedCharacters: number;
   reasoning: string;
   notices: GenerationNotice[];
   finished: boolean;
@@ -66,6 +72,7 @@ export function applyGenerationEvent(
         total: event.total,
         startedAt: receivedAt,
         content: "",
+        receivedCharacters: 0,
         reasoning: "",
         notices: [],
         finished: false,
@@ -76,7 +83,11 @@ export function applyGenerationEvent(
       return { ...display, steps: [...display.steps, step] };
     }
     case "content":
-      return updateLastStep(display, (step) => ({ ...step, content: step.content + event.text }));
+      return updateLastStep(display, (step) => ({
+        ...step,
+        content: step.content + event.text,
+        receivedCharacters: step.receivedCharacters + countGraphemes(event.text),
+      }));
     case "reasoning":
       return updateLastStep(display, (step) => ({
         ...step,

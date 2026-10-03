@@ -9,7 +9,14 @@ import { useWorkspaceStore } from "../../../store/workspaceStore";
 import { renderWithBackend } from "../../../test/renderWithBackend";
 import { resetAllStores } from "../../../test/resetStores";
 import { WorkspaceScreen } from "../WorkspaceScreen";
-import { describeFinishedStep, ElapsedSeconds } from "./GenerationProgress";
+import {
+  describeFinishedStep,
+  ElapsedSeconds,
+  reasoningSummary,
+  type StepState,
+  StepStatus,
+  stepState,
+} from "./GenerationProgress";
 
 beforeEach(resetAllStores);
 afterEach(resetAllStores);
@@ -87,6 +94,31 @@ describe("生成中の進み具合", () => {
       ),
     ).toBeInTheDocument();
   });
+
+  it("自動で進める間に LLM の設定を変えると、次の工程から新しい LLM の名前を出す", async () => {
+    const user = userEvent.setup();
+    const backend = createMockBackend({ delayMs: 30 });
+    await createEmptyProject(backend);
+    renderWithBackend(<WorkspaceScreen />, backend);
+
+    await user.click(await screen.findByRole("button", { name: "自動で進める" }));
+    expect(
+      await screen.findByText(
+        "使う LLM: OpenAI 互換 API（localhost:1234）・サーバーの既定のモデル",
+      ),
+    ).toBeInTheDocument();
+
+    const settings = await backend.loadSettings();
+    await backend.saveSettings({
+      ...settings,
+      llm: { ...settings.llm, provider: "claude_code", claude_model: "haiku" },
+    });
+
+    expect(
+      await screen.findByText("使う LLM: Claude Code（haiku）", {}, { timeout: 3000 }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "自動で進めるのを止める" }));
+  });
 });
 
 describe("describeFinishedStep", () => {
@@ -96,6 +128,7 @@ describe("describeFinishedStep", () => {
     total: 1,
     startedAt: 0,
     content: "企画",
+    receivedCharacters: 2,
     reasoning: "",
     notices: [],
     finished: true,
@@ -134,4 +167,99 @@ describe("ElapsedSeconds", () => {
 
     expect(document.body.textContent).toBe("経過 3 秒");
   });
+
+  it("画面から消えたら、数え直すタイマーも止める", () => {
+    vi.useFakeTimers();
+    const { unmount } = render(<ElapsedSeconds since={Date.now()} />);
+    expect(vi.getTimerCount()).toBe(1);
+
+    unmount();
+
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+const runningStep: GenerationStepDisplay = {
+  label: "本文を生成",
+  index: 1,
+  total: 1,
+  startedAt: Date.now(),
+  content: "",
+  receivedCharacters: 0,
+  reasoning: "",
+  notices: [],
+  finished: false,
+  promptTokens: null,
+  completionTokens: null,
+  elapsedMs: null,
+};
+
+describe("stepState", () => {
+  it("終わった回は、最後でなくても、生成が止まっていても終わった回とする", () => {
+    const finished = { ...runningStep, finished: true };
+    expect(stepState(finished, false, true)).toBe("finished");
+    expect(stepState(finished, true, false)).toBe("finished");
+  });
+
+  it("終わらないまま次の回が始まった回は、生成が止まっていてもやり直した回とする", () => {
+    expect(stepState(runningStep, false, true)).toBe("retried");
+    expect(stepState(runningStep, false, false)).toBe("retried");
+  });
+
+  it("終わっていない最後の回は、生成が続いていれば進行中、止まっていれば止まった回とする", () => {
+    expect(stepState(runningStep, true, true)).toBe("inProgress");
+    expect(stepState(runningStep, true, false)).toBe("stopped");
+  });
+});
+
+describe("StepStatus", () => {
+  function statusText(step: GenerationStepDisplay, state: StepState) {
+    render(<StepStatus step={step} state={state} />);
+    return document.body.textContent;
+  }
+
+  it("何も届いていない回は、応答を待っていると出す", () => {
+    expect(statusText(runningStep, "inProgress")).toMatch(/^経過 \d+ 秒・応答を待っています$/);
+  });
+
+  it("思考だけが届いている回は、考えていると出す", () => {
+    expect(statusText({ ...runningStep, reasoning: "構成を検討中" }, "inProgress")).toMatch(
+      /^経過 \d+ 秒・考えています$/,
+    );
+  });
+
+  it("本文が届いている回は、受け取った文字数を桁区切りで出す", () => {
+    expect(
+      statusText({ ...runningStep, content: "……", receivedCharacters: 12_345 }, "inProgress"),
+    ).toMatch(/^経過 \d+ 秒・受け取った文字 12,345 字$/);
+  });
+
+  it("止まった回は、途中で止まったと出す", () => {
+    expect(statusText(runningStep, "stopped")).toBe("途中で止まりました");
+  });
+
+  it("やり直した回は、経過時間を数えずにやり直したと出す", () => {
+    expect(statusText(runningStep, "retried")).toBe("やり直しました");
+  });
+});
+
+describe("reasoningSummary", () => {
+  const thinking = { ...runningStep, reasoning: "構成を検討中" };
+
+  it("進行中の回で思考だけが届いているあいだは、考え中と出す", () => {
+    expect(reasoningSummary(thinking, "inProgress")).toBe("考え中…（思考過程）");
+  });
+
+  it("本文が届き始めたら、普通の見出しに戻す", () => {
+    expect(
+      reasoningSummary({ ...thinking, content: "本文", receivedCharacters: 2 }, "inProgress"),
+    ).toBe("思考過程");
+  });
+
+  it.each(["stopped", "retried", "finished"] as const)(
+    "進行中でない回（%s）は、本文が無くても考え中と出さない",
+    (state) => {
+      expect(reasoningSummary(thinking, state)).toBe("思考過程");
+    },
+  );
 });
