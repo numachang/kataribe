@@ -1,5 +1,4 @@
 import { isValidSlug, slugProblem } from "../../lib/slug";
-import { BackendError } from "../backend";
 import type {
   CharacterMeta,
   FileChange,
@@ -8,7 +7,8 @@ import type {
   StructureEdit,
   StructurePlan,
 } from "../types";
-import { trashChange, writeChange } from "./fileChange";
+import { planAddChapter, planRemoveChapter } from "./chapters";
+import { expectAbsentChange, trashChange, writeChange } from "./fileChange";
 import { refersTo } from "./names";
 import {
   chapterPath,
@@ -20,7 +20,14 @@ import {
 } from "./paths";
 import { renderChapterFile, renderCharacterFile } from "./render";
 import type { MockChapter, MockScene, ProjectState } from "./state";
-import { findChapter, findCharacter, findWorldDocument, worldDocumentTitle } from "./state";
+import { findCharacter, findWorldDocument, worldDocumentTitle } from "./state";
+import {
+  chapterNumber,
+  described,
+  invalidInput,
+  notFound,
+  requireChapter,
+} from "./structureSupport";
 
 // 構成の操作（人物・世界観の資料・シーンの追加と削除）の変更案を作る。kataribe-engine の `structure/` と同じ形の
 // 変更案（Write / Trash）と、削除の確認に見せる材料（参照・注意書き）を返す。状態は書き換えない。
@@ -30,14 +37,6 @@ const SLUG_MAX_LENGTH = 48;
 const CHARACTER_FILE_PATTERN = /^characters\/([^/]+)\.md$/;
 const CHARACTER_ID_FALLBACK = "character";
 const WORLD_DOCUMENT_NAME_FALLBACK = "doc";
-
-function invalidInput(message: string): BackendError {
-  return new BackendError("invalid_input", message);
-}
-
-function notFound(message: string): BackendError {
-  return new BackendError("not_found", message);
-}
 
 function nonEmpty(text: string | null | undefined): string | null {
   const trimmed = text?.trim() ?? "";
@@ -124,6 +123,7 @@ function planAddCharacter(
     ...described(state, `人物「${name}」を追加し`, [writeChange(state, path, content)]),
     created: path,
     references: [],
+    renumbered: [],
     notices: [],
   };
 }
@@ -171,6 +171,7 @@ function planRemoveCharacter(state: ProjectState, path: string): StructurePlan {
     ...described(state, `人物「${character.name}」をゴミ箱へ移し`, [trashChange(state, path)]),
     created: null,
     references: scenesMentioning(state, character.name),
+    renumbered: [],
     notices: [],
   };
 }
@@ -228,6 +229,7 @@ function planAddWorldDocument(
     ]),
     created: path,
     references: [],
+    renumbered: [],
     notices: [],
   };
 }
@@ -248,23 +250,12 @@ function planRemoveWorldDocument(state: ProjectState, path: string): StructurePl
     ...described(state, `世界観の資料「${label}」をゴミ箱へ移し`, [trashChange(state, path)]),
     created: null,
     references: [],
+    renumbered: [],
     notices: [],
   };
 }
 
 // ---- シーン ----
-
-function chapterNumber(chapterId: string): number {
-  return Number.parseInt(chapterId, 10);
-}
-
-function requireChapter(state: ProjectState, chapterId: string): MockChapter {
-  const chapter = findChapter(state, chapterId);
-  if (chapter === null) {
-    throw notFound(`第${chapterNumber(chapterId)}章（${chapterPath(chapterId)}）がありません。`);
-  }
-  return chapter;
-}
 
 function sceneNumber(sceneId: string): number {
   return Number.parseInt(sceneId.slice(1), 10);
@@ -329,6 +320,7 @@ function planAddScene(
     ]),
     created: chapterPath(chapterId),
     references: [],
+    renumbered: [],
     notices: [],
   };
 }
@@ -347,10 +339,9 @@ function planRemoveScene(state: ProjectState, chapterId: string, sceneId: string
       scenes.filter((scene) => scene.id !== sceneId),
     ),
   ];
-  const hasText = removed.draft !== null;
-  if (hasText) {
-    files.push(trashChange(state, scenePath(chapterId, sceneId)));
-  }
+  // 本文が無いときも、適用のときに「まだ無いこと」を確かめる（確認している間に外で本文ができて、章立てだけ書き換わらないように）
+  const path = scenePath(chapterId, sceneId);
+  files.push(removed.draft !== null ? trashChange(state, path) : expectAbsentChange(path));
   return {
     ...described(
       state,
@@ -359,26 +350,12 @@ function planRemoveScene(state: ProjectState, chapterId: string, sceneId: string
     ),
     created: null,
     references: [],
+    renumbered: [],
     notices: [],
   };
 }
 
 // ---- 入口 ----
-
-/**
- * 変更の言い回し（「ます」「ました」の前まで）から、適用する前の説明（「〜します。」）と
- * 適用したあとの知らせ（「〜しました。」）を作る（本物の Wording と同じ）。
- */
-function described(
-  state: ProjectState,
-  stem: string,
-  files: FileChange[],
-): Pick<StructurePlan, "change_set" | "completed_summary"> {
-  return {
-    change_set: { summary: `${stem}ます。`, files, project_root: state.folder },
-    completed_summary: `${stem}ました。`,
-  };
-}
 
 /** 構成の操作の変更案を作る。状態は書き換えない。 */
 export function planMockStructureEdit(state: ProjectState, edit: StructureEdit): StructurePlan {
@@ -391,6 +368,10 @@ export function planMockStructureEdit(state: ProjectState, edit: StructureEdit):
       return planAddWorldDocument(state, edit.name, edit.title, edit.body);
     case "remove_world_document":
       return planRemoveWorldDocument(state, edit.path);
+    case "add_chapter":
+      return planAddChapter(state, edit.before, edit.title, edit.storyline);
+    case "remove_chapter":
+      return planRemoveChapter(state, edit.chapter);
     case "add_scene":
       return planAddScene(state, edit.chapter, edit.before, edit.scene);
     case "remove_scene":

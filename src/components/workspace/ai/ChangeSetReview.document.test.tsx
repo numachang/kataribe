@@ -549,3 +549,35 @@ describe("ゴミ箱へ移す変更案", () => {
     expect(await screen.findByText("テキストとして読めないため、移せません")).toBeInTheDocument();
   });
 });
+
+describe("移動と状態の確認を含む変更案", () => {
+  const move: FileChange = {
+    kind: "move",
+    from: "manuscript/02",
+    to: "manuscript/03",
+  };
+  const expectAbsent: FileChange = { kind: "expect", path: "manuscript/04", base_hash: null };
+
+  it("移動は、移動元と移動先を「移動」の印つきで見せる（内容や変更前の切り替えは出さない）", async () => {
+    await showChangeSet([move]);
+
+    const card = (
+      await screen.findByText("manuscript/02 → manuscript/03", {
+        selector: ".changeset-review__file-path",
+      })
+    ).closest(".changeset-review__file") as HTMLElement;
+    expect(within(card).getByText("移動")).toBeInTheDocument();
+    expect(within(card).getByText("中身は変わりません。")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "変更前を見る" })).not.toBeInTheDocument();
+  });
+
+  it("状態を確かめるだけの変更（expect）は、何も変えないので見せない", async () => {
+    await showChangeSet([move, expectAbsent]);
+
+    await screen.findByText("manuscript/02 → manuscript/03", {
+      selector: ".changeset-review__file-path",
+    });
+    expect(screen.queryByText("manuscript/04")).not.toBeInTheDocument();
+    expect(document.querySelectorAll(".changeset-review__file")).toHaveLength(1);
+  });
+});

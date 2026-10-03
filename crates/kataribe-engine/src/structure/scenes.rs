@@ -75,7 +75,7 @@ pub(super) fn add(
     Ok(StructurePlan::new(changes, &wording).opening(layout::chapter_path(&chapter_id)))
 }
 
-/// 章のシーンを消す変更案。章立てを書き直し、本文があれば本文をゴミ箱へ移す。
+/// 章のシーンを消す変更案。章立てを書き直し、本文があれば本文をゴミ箱へ移す（無ければ、まだ無いことを確かめる）。
 pub(super) fn remove(
     project: &Project,
     chapter_id: ChapterId,
@@ -94,8 +94,11 @@ pub(super) fn remove(
     ));
     let mut changes = ChangeSet::new(wording.planned());
     put_chapter(&mut changes, chapter)?;
-    if let Some(text) = &text {
-        changes.trash_file(text_path, text);
+    match &text {
+        Some(text) => changes.trash_file(text_path, text),
+        // 確認している間に、外のエディタや CLI で本文が作られたら、章立てだけが書き換わって本文が章立てに無いまま
+        // 残る。適用のときに「まだ無いこと」を確かめて、そのときは競合にする
+        None => changes.expect(text_path, None),
     }
     Ok(StructurePlan::new(changes, &wording))
 }

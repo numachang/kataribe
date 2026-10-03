@@ -192,7 +192,7 @@ fn two_changes_to_the_same_path_are_refused() {
 }
 
 #[test]
-fn a_trash_whose_file_list_is_not_exactly_the_one_file_is_refused() {
+fn a_trash_whose_file_list_does_not_fit_the_path_is_refused() {
     let dir = TempDir::new().unwrap();
     let project = new_project(dir.path());
     put(&project, "characters/rin.md", "凛");
@@ -203,8 +203,9 @@ fn a_trash_whose_file_list_is_not_exactly_the_one_file_is_refused() {
         chars: 1,
     };
     let malformed_lists = [
-        vec![],
+        // ハッシュが無い（テキストとして読めなかった）
         vec![trashed("characters/rin.md", None)],
+        // フォルダの中にないファイル
         vec![trashed("characters/kenji.md", Some(hash.clone()))],
         vec![
             trashed("characters/rin.md", Some(hash.clone())),
@@ -229,6 +230,30 @@ fn a_trash_whose_file_list_is_not_exactly_the_one_file_is_refused() {
 }
 
 #[test]
+fn a_trash_with_an_empty_file_list_is_an_empty_folder_and_conflicts_for_a_file() {
+    let dir = TempDir::new().unwrap();
+    let project = new_project(dir.path());
+    put(&project, "characters/rin.md", "凛");
+    let changes = ChangeSet {
+        summary: "削除".into(),
+        files: vec![FileChange::Trash {
+            path: rel("characters/rin.md"),
+            files: Vec::new(),
+        }],
+        project_root: String::new(),
+    }
+    .made_for(&project);
+
+    let error = changes.apply(&project).unwrap_err();
+
+    assert!(
+        matches!(error, EngineError::Project(ProjectError::Conflict { .. })),
+        "{error:?}"
+    );
+    assert!(read(&project, "characters/rin.md").is_some());
+}
+
+#[test]
 fn a_change_set_made_for_another_project_is_not_applied() {
     let first_dir = TempDir::new().unwrap();
     let second_dir = TempDir::new().unwrap();
@@ -245,4 +270,147 @@ fn a_change_set_made_for_another_project_is_not_applied() {
 
     assert!(matches!(error, EngineError::InvalidInput(_)), "{error:?}");
     assert!(read(&first, "characters/rin.md").is_some());
+}
+
+#[test]
+fn move_and_expect_are_tagged_with_their_kind_in_json_and_survive_a_round_trip() {
+    let dir = TempDir::new().unwrap();
+    let project = new_project(dir.path());
+    put(&project, "plot/chapters/01.md", "章");
+    let mut changes = ChangeSet::new("まとめ");
+    changes.move_entry(rel("plot/chapters/01.md"), rel("plot/chapters/02.md"));
+    changes.expect(rel("manuscript/01"), None);
+    changes.expect(
+        rel("plot/chapters/01.md"),
+        Some(&text_file(&project, "plot/chapters/01.md")),
+    );
+
+    let json = serde_json::to_value(&changes).unwrap();
+
+    assert_eq!(json["files"][0]["kind"], "move");
+    assert_eq!(json["files"][0]["from"], "plot/chapters/01.md");
+    assert_eq!(json["files"][0]["to"], "plot/chapters/02.md");
+    assert_eq!(json["files"][1]["kind"], "expect");
+    assert_eq!(json["files"][1]["path"], "manuscript/01");
+    assert_eq!(json["files"][1]["base_hash"], serde_json::Value::Null);
+    assert_eq!(
+        json["files"][2]["base_hash"],
+        text_file(&project, "plot/chapters/01.md").hash.as_str()
+    );
+    let restored: ChangeSet = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, changes);
+}
+
+#[test]
+fn trash_folder_records_every_file_with_its_hash_and_character_count() {
+    let dir = TempDir::new().unwrap();
+    let project = new_project(dir.path());
+    put(&project, "manuscript/03/s01.txt", "|霧《きり》の 朝\n");
+    put(&project, "manuscript/03/s02.txt", "昼\n");
+    let folder = project
+        .store()
+        .read_folder(&rel("manuscript/03"))
+        .unwrap()
+        .unwrap();
+    let mut changes = ChangeSet::new("削除");
+
+    changes.trash_folder(rel("manuscript/03"), &folder);
+
+    let [FileChange::Trash { path, files }] = changes.files.as_slice() else {
+        panic!("ゴミ箱へ移す変更が 1 つのはず: {:?}", changes.files);
+    };
+    assert_eq!(path, &rel("manuscript/03"));
+    let listed: Vec<(&str, usize)> = files
+        .iter()
+        .map(|file| (file.path.as_str(), file.chars))
+        .collect();
+    assert_eq!(
+        listed,
+        vec![("manuscript/03/s01.txt", 3), ("manuscript/03/s02.txt", 1)]
+    );
+    assert_eq!(
+        files[0].base_hash,
+        Some(text_file(&project, "manuscript/03/s01.txt").hash)
+    );
+}
+
+#[test]
+fn a_change_set_that_moves_a_chapter_and_writes_a_new_one_in_its_place_applies_in_any_order() {
+    let dir = TempDir::new().unwrap();
+    let project = new_project(dir.path());
+    put(&project, "plot/chapters/03.md", "元の三章");
+    put(&project, "manuscript/03/s01.txt", "三章の本文");
+    let mut changes = ChangeSet::new("章を足す").made_for(&project);
+    changes.put(rel("plot/chapters/03.md"), "新しい三章".into(), None);
+    changes.move_entry(rel("plot/chapters/03.md"), rel("plot/chapters/04.md"));
+    changes.move_entry(rel("manuscript/03"), rel("manuscript/04"));
+    changes.expect(rel("manuscript/05"), None);
+
+    changes.apply(&project).unwrap();
+
+    assert_eq!(read(&project, "plot/chapters/03.md").unwrap(), "新しい三章");
+    assert_eq!(read(&project, "plot/chapters/04.md").unwrap(), "元の三章");
+    assert_eq!(
+        read(&project, "manuscript/04/s01.txt").unwrap(),
+        "三章の本文"
+    );
+    assert_eq!(read(&project, "manuscript/03/s01.txt"), None);
+}
+
+#[test]
+fn a_failed_expectation_stops_the_moves_and_writes_in_the_same_change_set() {
+    let dir = TempDir::new().unwrap();
+    let project = new_project(dir.path());
+    put(&project, "plot/chapters/03.md", "三章");
+    put(&project, "manuscript/05/s01.txt", "外で作られた本文");
+    let mut changes = ChangeSet::new("章を足す").made_for(&project);
+    changes.move_entry(rel("plot/chapters/03.md"), rel("plot/chapters/04.md"));
+    changes.expect(rel("manuscript/05"), None);
+
+    let error = changes.apply(&project).unwrap_err();
+
+    assert!(
+        matches!(error, EngineError::Project(ProjectError::Conflict { .. })),
+        "{error:?}"
+    );
+    assert_eq!(read(&project, "plot/chapters/03.md").unwrap(), "三章");
+    assert_eq!(read(&project, "plot/chapters/04.md"), None);
+}
+
+#[test]
+fn moving_internal_data_or_into_itself_is_refused() {
+    let dir = TempDir::new().unwrap();
+    let project = new_project(dir.path());
+    put(&project, "manuscript/03/s01.txt", "本文");
+    put(&project, ".kataribe/cache/summary.json", "{}");
+    for (from, to) in [
+        (".kataribe/cache/summary.json", "manuscript/09"),
+        ("kataribe.yaml", "manuscript/09"),
+        ("manuscript/03", ".kataribe/trash"),
+        ("manuscript/03", "manuscript/03/old"),
+    ] {
+        let mut changes = ChangeSet::new("移動").made_for(&project);
+        changes.move_entry(rel(from), rel(to));
+
+        assert_invalid_change_set(&changes.apply(&project));
+    }
+
+    assert_eq!(read(&project, "manuscript/03/s01.txt").unwrap(), "本文");
+    assert!(read(&project, "kataribe.yaml").is_some());
+}
+
+#[test]
+fn a_move_is_not_applied_to_another_project() {
+    let first_dir = TempDir::new().unwrap();
+    let second_dir = TempDir::new().unwrap();
+    let first = new_project(first_dir.path());
+    let second = new_project(second_dir.path());
+    put(&second, "concept.md", "別の作品の企画");
+    let mut changes = ChangeSet::new("移動").made_for(&first);
+    changes.move_entry(rel("concept.md"), rel("moved.md"));
+
+    let error = changes.apply(&second).unwrap_err();
+
+    assert!(matches!(error, EngineError::InvalidInput(_)), "{error:?}");
+    assert!(read(&second, "concept.md").is_some());
 }

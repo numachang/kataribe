@@ -9,8 +9,10 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use anyhow::Context;
-use kataribe_engine::{FileChange, SceneReference, StructureEdit, StructurePlan};
-use kataribe_project::Project;
+use kataribe_engine::{
+    FileChange, RenumberedChapter, SceneReference, StructureEdit, StructurePlan, TrashedFile,
+};
+use kataribe_project::{Project, RelPath};
 
 use crate::ApplyGuard;
 use crate::output::Console;
@@ -42,13 +44,25 @@ pub(super) async fn run(
 /// 適用で起きることのうち、利用者が知っておくべきこと。何も無ければ空文字列。
 fn render_consequences(plan: &StructurePlan) -> String {
     let mut rendered = String::new();
-    for change in &plan.change_set.files {
-        if let FileChange::Trash { files, .. } = change {
-            let _ = write!(
-                rendered,
-                "ゴミ箱（.kataribe/trash/）へ移るもの:\n{}",
-                render_trashed_files(files)
-            );
+    let trashed: Vec<(&RelPath, &[TrashedFile])> = plan
+        .change_set
+        .files
+        .iter()
+        .filter_map(|change| match change {
+            FileChange::Trash { path, files } => Some((path, files.as_slice())),
+            FileChange::Write { .. } | FileChange::Move { .. } | FileChange::Expect { .. } => None,
+        })
+        .collect();
+    if !trashed.is_empty() {
+        rendered.push_str("ゴミ箱（.kataribe/trash/）へ移るもの:\n");
+        for (path, files) in trashed {
+            rendered.push_str(&render_trashed(path, files));
+        }
+    }
+    if !plan.renumbered.is_empty() {
+        rendered.push_str("番号が変わる章（フォルダの名前も一緒に変わります）:\n");
+        for chapter in &plan.renumbered {
+            let _ = writeln!(rendered, "  {}", render_renumbered(chapter));
         }
     }
     if !plan.references.is_empty() {
@@ -63,6 +77,28 @@ fn render_consequences(plan: &StructurePlan) -> String {
         let _ = writeln!(rendered, "注意: {notice}");
     }
     rendered
+}
+
+/// ゴミ箱へ移るもの。フォルダなら中のファイルを並べ、空のフォルダならそう書く。
+fn render_trashed(path: &RelPath, files: &[TrashedFile]) -> String {
+    if files.is_empty() {
+        format!("  {path}（空のフォルダ）\n")
+    } else {
+        render_trashed_files(files)
+    }
+}
+
+fn render_renumbered(chapter: &RenumberedChapter) -> String {
+    let title = chapter
+        .title
+        .as_deref()
+        .map(|title| format!("「{title}」"))
+        .unwrap_or_default();
+    format!(
+        "第{}章{title} → 第{}章",
+        chapter.from.number(),
+        chapter.to.number()
+    )
 }
 
 fn render_reference(reference: &SceneReference) -> String {
@@ -131,6 +167,7 @@ mod tests {
             completed_summary: String::new(),
             created: None,
             references: vec![reference(false, true)],
+            renumbered: Vec::new(),
             notices: vec!["第3章は読めません。".to_owned()],
         };
 
@@ -152,9 +189,75 @@ mod tests {
             completed_summary: String::new(),
             created: None,
             references: Vec::new(),
+            renumbered: Vec::new(),
             notices: Vec::new(),
         };
 
         assert_eq!(render_consequences(&plan), "");
+    }
+
+    #[test]
+    fn the_consequences_list_a_trashed_folder_once_and_the_renumbered_chapters() {
+        let folder = RelPath::new("manuscript/03").unwrap();
+        let file = |name: &str, chars| TrashedFile {
+            path: RelPath::new(&format!("manuscript/03/{name}")).unwrap(),
+            base_hash: None,
+            chars,
+        };
+        let mut change_set = ChangeSet::new("削除");
+        change_set.files.push(FileChange::Trash {
+            path: RelPath::new("plot/chapters/03.md").unwrap(),
+            files: vec![TrashedFile {
+                path: RelPath::new("plot/chapters/03.md").unwrap(),
+                base_hash: None,
+                chars: 10,
+            }],
+        });
+        change_set.files.push(FileChange::Trash {
+            path: folder,
+            files: vec![file("s01.txt", 1200), file("s02.txt", 800)],
+        });
+        let plan = StructurePlan {
+            change_set,
+            completed_summary: String::new(),
+            created: None,
+            references: Vec::new(),
+            renumbered: vec![
+                RenumberedChapter {
+                    from: ChapterId::from_number(4),
+                    to: ChapterId::from_number(3),
+                    title: Some("雨の匂い".to_owned()),
+                },
+                RenumberedChapter {
+                    from: ChapterId::from_number(5),
+                    to: ChapterId::from_number(4),
+                    title: None,
+                },
+            ],
+            notices: Vec::new(),
+        };
+
+        let rendered = render_consequences(&plan);
+
+        assert_eq!(
+            rendered,
+            "ゴミ箱（.kataribe/trash/）へ移るもの:\n\
+             \x20 plot/chapters/03.md（10 字）\n\
+             \x20 manuscript/03/s01.txt（1200 字）\n\
+             \x20 manuscript/03/s02.txt（800 字）\n\
+             番号が変わる章（フォルダの名前も一緒に変わります）:\n\
+             \x20 第4章「雨の匂い」 → 第3章\n\
+             \x20 第5章 → 第4章\n"
+        );
+    }
+
+    #[test]
+    fn an_empty_trashed_folder_is_said_to_be_empty() {
+        let folder = RelPath::new("manuscript/03").unwrap();
+
+        assert_eq!(
+            render_trashed(&folder, &[]),
+            "  manuscript/03（空のフォルダ）\n"
+        );
     }
 }

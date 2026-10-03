@@ -37,6 +37,7 @@ import type { QualityIssue as GeneratedQualityIssue } from "../bindings/QualityI
 import type { QualityMetrics as GeneratedQualityMetrics } from "../bindings/QualityMetrics";
 import type { QualityReport as GeneratedQualityReport } from "../bindings/QualityReport";
 import type { Rating as GeneratedRating } from "../bindings/Rating";
+import type { RenumberedChapter as GeneratedRenumberedChapter } from "../bindings/RenumberedChapter";
 import type { ScenePlan as GeneratedScenePlan } from "../bindings/ScenePlan";
 import type { SceneReference as GeneratedSceneReference } from "../bindings/SceneReference";
 import type { SectionKind as GeneratedSectionKind } from "../bindings/SectionKind";
@@ -100,6 +101,7 @@ export type BindingsContract = [
   Expect<Equal<Api.NewScenePlan, GeneratedNewScenePlan>>,
   Expect<Equal<Api.StructureEdit, GeneratedStructureEdit>>,
   Expect<Equal<Api.SceneReference, GeneratedSceneReference>>,
+  Expect<Equal<Api.RenumberedChapter, GeneratedRenumberedChapter>>,
   Expect<Equal<Api.StructurePlan, GeneratedStructurePlan>>,
   Expect<Equal<BackendErrorKind, GeneratedCommandErrorKind>>,
 ];

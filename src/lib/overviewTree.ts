@@ -38,3 +38,13 @@ export function findManuscriptChapter(
   const manuscript = overview?.sections.find((section) => section.kind === "manuscript");
   return manuscript?.entries.find((entry) => entry.chapter === chapterId) ?? null;
 }
+
+/** あらすじ・章立ての節にある、章立てのファイル（`plot/chapters/<NN>.md`）の項目。章の順に並ぶ。 */
+export function listPlanChapters(overview: ProjectOverview | null): OverviewEntry[] {
+  const plot = overview?.sections.find((section) => section.kind === "plot");
+  return (
+    plot?.entries.filter(
+      (entry) => entry.kind === "chapter" && entry.path !== null && entry.chapter !== null,
+    ) ?? []
+  );
+}

@@ -82,6 +82,7 @@ async function refreshWorkspace(backend: Backend): Promise<void> {
  * 実行中に別の保存が要求されたら、今の保存が終わったあとにもう一度だけ実行する（最新の内容で）。
  * 保存の結果は、対象のパスが今も表示中の文書と一致するときだけエディタの状態に反映する。
  * こうすることで、保存の完了が別の文書に切り替わったあとに届いても、無関係な文書の状態を壊さない。
+ * 開いている文書のパスが書き換えの最中に変わりうるとき（章の改名）は、`holdSaves` で保存の開始を止める。
  */
 class DocumentSaveController {
   private conflict: ConflictState | null = null;
@@ -89,6 +90,10 @@ class DocumentSaveController {
   private latestBackend: Backend | null = null;
   private saving: Promise<void> | null = null;
   private saveAgainFor: Backend | null = null;
+  /** 保存の開始を止めている数（`holdSaves`）。0 でなければ、保存は要求を覚えるだけで始めない。 */
+  private holdCount = 0;
+  /** 保存の保留が解けるのを待っている `flush`。 */
+  private readonly releaseWaiters = new Set<() => void>();
   /** 目次・工程の読み直しの待ち行列。古い読み直しの結果が新しいものを上書きしないよう、1 つずつ行う。 */
   private refreshQueue: Promise<void> = Promise.resolve();
 
@@ -131,28 +136,72 @@ class DocumentSaveController {
   /**
    * 保留中の自動保存があれば今すぐ実行し、実行中の保存も終わるまで待つ。
    * ファイルを切り替える・作品を閉じる・ウィンドウを閉じる・変更案を適用する、それぞれの直前に呼ぶ。
+   * 保存の保留（`holdSaves`）の間は、解けて保存が済むまで待つ（保留中に文書を切り替えて、未保存の編集を失わないため）。
    */
   flush = async (backend: Backend): Promise<void> => {
     this.latestBackend = backend;
     this.scheduler.flushIfPending();
-    while (this.saving) {
-      await this.saving;
+    while (this.saving || this.holdCount > 0) {
+      await (this.saving ?? this.waitForRelease());
     }
   };
 
+  /**
+   * 保存の開始を止める。止めている間の保存の要求（入力・Ctrl+S）は覚えておき、解いたときに、そのときの
+   * 文書とパスで 1 回だけ保存する。返す関数で解く（何度呼んでも 1 回ぶん）。
+   *
+   * 保存先のパスは保存を始めるときに決まるので、改名をまたぐ書き換えの最中に始めると、改名の前のパスへ
+   * 書いてしまう（移動で空いた場所にある別の文書を壊す・競合が古いパスを指す）。呼ぶ前に `flush` しておくこと
+   * （実行中の保存は止められない）。
+   */
+  holdSaves = (): (() => void) => {
+    this.holdCount += 1;
+    let released = false;
+    return () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      this.holdCount -= 1;
+      if (this.holdCount === 0) {
+        this.startPendingSave();
+        this.notifyReleased();
+      }
+    };
+  };
+
+  private waitForRelease(): Promise<void> {
+    return new Promise((resolve) => {
+      this.releaseWaiters.add(resolve);
+    });
+  }
+
+  private notifyReleased(): void {
+    for (const resolve of this.releaseWaiters) {
+      resolve();
+    }
+    this.releaseWaiters.clear();
+  }
+
   private enqueueSave(backend: Backend): void {
-    if (this.saving) {
+    if (this.saving || this.holdCount > 0) {
       this.saveAgainFor = backend;
       return;
     }
     this.saving = this.runSave(backend).finally(() => {
       this.saving = null;
-      const again = this.saveAgainFor;
-      this.saveAgainFor = null;
-      if (again) {
-        this.enqueueSave(again);
-      }
+      this.startPendingSave();
     });
+  }
+
+  /** 覚えておいた保存の要求があれば、保留が無い限り始める。 */
+  private startPendingSave(): void {
+    const again = this.saveAgainFor;
+    if (again === null || this.holdCount > 0) {
+      return;
+    }
+    this.saveAgainFor = null;
+    this.enqueueSave(again);
   }
 
   private async runSave(backend: Backend): Promise<void> {

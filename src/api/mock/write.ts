@@ -9,7 +9,13 @@ import {
   worldDocumentNameFromPath,
 } from "./paths";
 import type { ProjectState } from "./state";
-import { findChapter, findCharacter, findWorldDocument } from "./state";
+import {
+  findChapter,
+  findCharacter,
+  findWorldDocument,
+  sortedByNumber,
+  withChapter,
+} from "./state";
 
 const CHARACTER_PATH_PATTERN = /^characters\/(.+)\.md$/;
 const CHAPTER_PATH_PATTERN = /^plot\/chapters\/(.+)\.md$/;
@@ -76,7 +82,7 @@ export function writeMockFile(state: ProjectState, path: string, content: string
     const chapters = state.chapters ?? [];
     const next = existing
       ? chapters.map((candidate) => (candidate.id === id ? chapter : candidate))
-      : [...chapters, chapter];
+      : sortedByNumber([...chapters, chapter]);
     return { ...state, chapters: next };
   }
 
@@ -104,7 +110,7 @@ export function writeMockFile(state: ProjectState, path: string, content: string
 
 /**
  * ファイルをゴミ箱へ移した後の状態を返す（状態を書き換えない）。
- * 人物資料・足した世界観の資料はそのまま取り除き、シーンの本文は「未生成」に戻す。
+ * 人物資料・足した世界観の資料・章立てはそのまま取り除き、シーンの本文は「未生成」に戻す。
  * 構成の操作が消せるのはそれだけなので、ほかのパスは invalid_input にする（本物の Trash と同じく、消すものを選ぶのは呼び出し側）。
  */
 export function trashMockFile(state: ProjectState, path: string): ProjectState {
@@ -124,6 +130,15 @@ export function trashMockFile(state: ProjectState, path: string): ProjectState {
     return {
       ...state,
       characters: state.characters?.filter((character) => character.id !== id) ?? null,
+    };
+  }
+
+  const chapterMatch = CHAPTER_PATH_PATTERN.exec(path);
+  if (chapterMatch?.[1] !== undefined) {
+    const id = chapterMatch[1];
+    return {
+      ...state,
+      chapters: state.chapters?.filter((chapter) => chapter.id !== id) ?? null,
     };
   }
 
@@ -149,4 +164,12 @@ export function trashMockFile(state: ProjectState, path: string): ProjectState {
   }
 
   throw new BackendError("invalid_input", `「${path}」はゴミ箱へ移せません。`);
+}
+
+/** 章の本文のフォルダをゴミ箱へ移した後の状態を返す。章のシーンの本文は、全部「未生成」に戻る。 */
+export function trashMockChapterText(state: ProjectState, chapterId: string): ProjectState {
+  return withChapter(state, chapterId, (chapter) => ({
+    ...chapter,
+    scenes: chapter.scenes?.map((scene) => ({ ...scene, draft: null })) ?? null,
+  }));
 }

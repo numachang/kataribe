@@ -1049,7 +1049,7 @@ fn removing_a_scene_with_text_moves_the_text_to_the_trash_too() {
         .iter()
         .filter_map(|change| match change {
             FileChange::Trash { path, .. } => Some(path),
-            FileChange::Write { .. } => None,
+            FileChange::Write { .. } | FileChange::Move { .. } | FileChange::Expect { .. } => None,
         })
         .collect();
     assert_eq!(trashed, vec![&rel("manuscript/01/s02.txt")]);
@@ -1075,21 +1075,61 @@ fn removing_a_scene_with_text_moves_the_text_to_the_trash_too() {
 }
 
 #[test]
-fn removing_a_scene_without_text_only_rewrites_the_chapter() {
+fn removing_a_scene_without_text_only_rewrites_the_chapter_and_expects_the_text_to_stay_absent() {
     let dir = TempDir::new().unwrap();
     let project = new_project(dir.path());
     put(&project, "plot/chapters/01.md", CHAPTER_WITH_TWO_SCENES);
 
     let plan = plan_structure_edit(&project, &remove_scene(1, "s01")).unwrap();
 
-    assert_eq!(plan.change_set.files.len(), 1);
-    assert!(matches!(plan.change_set.files[0], FileChange::Write { .. }));
+    let [
+        FileChange::Write { .. },
+        FileChange::Expect { path, base_hash },
+    ] = plan.change_set.files.as_slice()
+    else {
+        panic!(
+            "章立ての書き込みと、本文がまだ無いことの確認のはず: {:?}",
+            plan.change_set.files
+        );
+    };
+    assert_eq!(path, &rel("manuscript/01/s01.txt"));
+    assert_eq!(base_hash, &None);
     assert_eq!(plan.created, None);
     assert!(!plan.change_set.summary.contains("ゴミ箱"));
 
     plan.change_set.apply(&project).unwrap();
 
     assert_eq!(scene_ids(&project, 1), vec!["s02"]);
+}
+
+#[test]
+fn removing_a_scene_conflicts_when_its_text_was_written_after_the_plan() {
+    let dir = TempDir::new().unwrap();
+    let project = new_project(dir.path());
+    put(&project, "plot/chapters/01.md", CHAPTER_WITH_TWO_SCENES);
+    let plan = plan_structure_edit(&project, &remove_scene(1, "s01")).unwrap();
+    // 確認のダイアログを開いている間に、外のエディタや CLI で本文ができた
+    put(
+        &project,
+        "manuscript/01/s01.txt",
+        "あとから書かれた本文。\n",
+    );
+
+    let error = plan.change_set.apply(&project).unwrap_err();
+
+    assert!(
+        matches!(error, EngineError::Project(ProjectError::Conflict { .. })),
+        "{error:?}"
+    );
+    assert_eq!(
+        scene_ids(&project, 1),
+        vec!["s01", "s02"],
+        "章立てだけが書き換わり、本文が章立てに無いまま残ってはいけない"
+    );
+    assert_eq!(
+        read(&project, "manuscript/01/s01.txt").unwrap(),
+        "あとから書かれた本文。\n"
+    );
 }
 
 #[test]

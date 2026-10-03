@@ -6,7 +6,7 @@ import type { FileChange } from "./FileChange";
  */
 export type ChangeSet = { summary: string, 
 /**
- * ファイルへの変更。適用の順は並び順に頼らず、ゴミ箱へ移す → 書く。
+ * ファイルへの変更。適用の順は並び順に頼らず、状態の確認（Expect）→ ゴミ箱へ移す → 改名 → 書く。
  */
 files: Array<FileChange>, 
 /**

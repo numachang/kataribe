@@ -17,6 +17,8 @@ pub enum RemoveTarget {
     Character(RelPath),
     /// `world/` 直下の資料のパス。
     World(RelPath),
+    /// 章。章立てと本文のフォルダがゴミ箱へ移り、後ろの章の番号が詰まる。
+    Chapter(ChapterId),
     Scene {
         chapter: ChapterId,
         scene: SceneId,
@@ -30,6 +32,7 @@ impl RemoveTarget {
         match self {
             RemoveTarget::Character(path) => StructureEdit::RemoveCharacter { path },
             RemoveTarget::World(path) => StructureEdit::RemoveWorldDocument { path },
+            RemoveTarget::Chapter(chapter) => StructureEdit::RemoveChapter { chapter },
             RemoveTarget::Scene { chapter, scene } => StructureEdit::RemoveScene { chapter, scene },
         }
     }
@@ -45,15 +48,25 @@ impl FromStr for RemoveTarget {
         if let Some(spec) = input.strip_prefix("world:") {
             return parse_world(spec).map(RemoveTarget::World);
         }
+        if let Some(spec) = input.strip_prefix("chapter:") {
+            return parse_chapter(spec).map(RemoveTarget::Chapter);
+        }
         if let Some(rest) = input.strip_prefix("scene:") {
             return parse_chapter_and_scene(rest, "scene")
                 .map(|(chapter, scene)| RemoveTarget::Scene { chapter, scene });
         }
         Err(format!(
             "不明な対象です: {input}\n\
-             次のいずれかを指定してください: character:<id> | world:<name または path> | scene:<NN>/<sNN>"
+             次のいずれかを指定してください: character:<id> | world:<name または path> | chapter:<NN> | scene:<NN>/<sNN>"
         ))
     }
+}
+
+/// 章の指定（`01` など）を章の id にする。
+fn parse_chapter(spec: &str) -> Result<ChapterId, String> {
+    spec.parse().map_err(|_| {
+        format!("chapter: の後に、章の番号（01 など、2〜3 桁）を指定してください: {spec}")
+    })
 }
 
 /// 人物の指定を、`characters/` 直下のパスにする。`rin` や `rin.md` は `characters/rin.md`。
@@ -134,6 +147,18 @@ mod tests {
     }
 
     #[test]
+    fn parses_a_chapter_by_its_number() {
+        assert_eq!(
+            "chapter:03".parse(),
+            Ok(RemoveTarget::Chapter(ChapterId::from_number(3)))
+        );
+        assert_eq!(
+            "chapter:003".parse(),
+            Ok(RemoveTarget::Chapter(ChapterId::new("003").unwrap()))
+        );
+    }
+
+    #[test]
     fn parses_a_scene_with_chapter_and_scene() {
         let target: RemoveTarget = "scene:01/s02".parse().unwrap();
         assert_eq!(
@@ -147,7 +172,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_kinds() {
-        assert!("chapter:01".parse::<RemoveTarget>().is_err());
+        assert!("chapters:01".parse::<RemoveTarget>().is_err());
         assert!("rin".parse::<RemoveTarget>().is_err());
     }
 
@@ -155,6 +180,9 @@ mod tests {
     fn rejects_bad_arguments() {
         assert!("character:".parse::<RemoveTarget>().is_err());
         assert!("character:old/rin".parse::<RemoveTarget>().is_err());
+        assert!("chapter:".parse::<RemoveTarget>().is_err());
+        assert!("chapter:1".parse::<RemoveTarget>().is_err());
+        assert!("chapter:01/s01".parse::<RemoveTarget>().is_err());
         assert!("scene:01".parse::<RemoveTarget>().is_err());
         assert!("scene:1/s01".parse::<RemoveTarget>().is_err());
         assert!("scene:01/01".parse::<RemoveTarget>().is_err());
@@ -180,6 +208,12 @@ mod tests {
             RemoveTarget::World(RelPath::new("world/glossary.md").unwrap()).into_edit(),
             StructureEdit::RemoveWorldDocument {
                 path: RelPath::new("world/glossary.md").unwrap()
+            }
+        );
+        assert_eq!(
+            RemoveTarget::Chapter(ChapterId::from_number(3)).into_edit(),
+            StructureEdit::RemoveChapter {
+                chapter: ChapterId::from_number(3)
             }
         );
         assert_eq!(

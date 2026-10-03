@@ -328,8 +328,24 @@ export type FileChange =
   | {
       kind: "trash";
       path: string;
-      /** 移すファイルの一覧。今は path のファイル 1 つだけ。 */
+      /**
+       * 移すファイルの一覧。ファイルを移すときは path のファイル 1 つだけ。フォルダを移すときは、
+       * フォルダの中のファイル全部。
+       */
       files: TrashedFile[];
+    }
+  | {
+      kind: "move";
+      /** 移動元（ファイルまたはフォルダ）。 */
+      from: string;
+      /** 移動先。 */
+      to: string;
+    }
+  | {
+      kind: "expect";
+      path: string;
+      /** そのファイルの今のハッシュ。null なら「何も無いこと」。 */
+      base_hash: string | null;
     };
 
 /** 変更案のうち、ファイルの新規作成・上書き。 */
@@ -338,15 +354,21 @@ export type WriteFileChange = Extract<FileChange, { kind: "write" }>;
 /** 変更案のうち、ゴミ箱へ移す変更。 */
 export type TrashFileChange = Extract<FileChange, { kind: "trash" }>;
 
+/** 変更案のうち、ファイルまたはフォルダの改名（章の番号の振り直し）。 */
+export type MoveFileChange = Extract<FileChange, { kind: "move" }>;
+
+/** 変更案のうち、書かずに状態だけを確かめる変更。 */
+export type ExpectFileChange = Extract<FileChange, { kind: "expect" }>;
+
 export interface ChangeSet {
   summary: string;
-  /** ファイルへの変更。適用の順は並び順に頼らず、ゴミ箱へ移す → 書く。 */
+  /** ファイルへの変更。適用の順は並び順に頼らず、確かめる（expect）→ ゴミ箱へ移す → 移動 → 書く。 */
   files: FileChange[];
   /** この変更案を作った作品フォルダ。別の作品を開き直したあとに適用すると拒否される。 */
   project_root: string;
 }
 
-// ---- 構成の操作（人物・世界観の資料・シーンの追加と削除） ----
+// ---- 構成の操作（人物・世界観の資料・章・シーンの追加と削除） ----
 
 /** 足すシーンの設計。ScenePlan から、足すときに決まる項目（id・ビート）を除いたもの。 */
 export interface NewScenePlan {
@@ -382,6 +404,15 @@ export type StructureEdit =
     }
   | { kind: "remove_world_document"; path: string }
   | {
+      kind: "add_chapter";
+      /** この章の前に足す。null なら末尾。 */
+      before: string | null;
+      title: string;
+      /** ストーリーライン（章立ての本文）。空でもよい。 */
+      storyline: string;
+    }
+  | { kind: "remove_chapter"; chapter: string }
+  | {
       kind: "add_scene";
       chapter: string;
       /** このシーンの前に足す。null なら章の末尾。 */
@@ -402,6 +433,14 @@ export interface SceneReference {
   as_character: boolean;
 }
 
+/** 番号が変わる章。 */
+export interface RenumberedChapter {
+  from: string;
+  to: string;
+  /** 章題。章立てが読めなければ null。 */
+  title: string | null;
+}
+
 /** 構成の操作の変更案と、利用者に見せる材料。 */
 export interface StructurePlan {
   /** 作る変更案。summary は適用する前に見せる説明（「人物「霧島 凛」を追加します。」）。 */
@@ -412,6 +451,8 @@ export interface StructurePlan {
   created: string | null;
   /** 人物を消すとき、その人物の名前を挙げているシーン。 */
   references: SceneReference[];
+  /** 章を足す・消すときに、番号が変わる章（後ろの章）。番号の小さい順。 */
+  renumbered: RenumberedChapter[];
   /** 利用者への注意書き。 */
   notices: string[];
 }

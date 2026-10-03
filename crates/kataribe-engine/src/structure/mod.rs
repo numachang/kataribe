@@ -1,10 +1,11 @@
-//! 作品の構成（人物・世界観の資料・シーン）を、利用者が自分で書いて足したり消したりする操作。
+//! 作品の構成（人物・世界観の資料・章・シーン）を、利用者が自分で書いて足したり消したりする操作。
 //!
 //! LLM も設定も使わないので、[`crate::Engine`] の外の関数にしてある（GUI と CLI が同じ関数を使う）。
 //! どの操作も作品フォルダを直接書き換えず、変更案（[`crate::ChangeSet`]）を [`StructurePlan`] に入れて返す。
 //! 追加は本人が入力した内容をそのまま反映してよいが、削除はゴミ箱へ移るものと参照が切れるものを
 //! 見せてから適用する（その材料を [`StructurePlan`] が持つ）。
 
+mod chapters;
 mod characters;
 mod edit;
 mod plan;
@@ -15,7 +16,7 @@ mod world;
 use kataribe_project::{CharacterId, Project};
 
 pub use edit::{NewScenePlan, StructureEdit};
-pub use plan::{SceneReference, StructurePlan};
+pub use plan::{RenumberedChapter, SceneReference, StructurePlan};
 
 use crate::error::Result;
 
@@ -33,6 +34,12 @@ pub fn plan_structure_edit(project: &Project, edit: &StructureEdit) -> Result<St
             world::add(project, name.as_deref(), title, body)?
         }
         StructureEdit::RemoveWorldDocument { path } => world::remove(project, path)?,
+        StructureEdit::AddChapter {
+            before,
+            title,
+            storyline,
+        } => chapters::add(project, *before, title, storyline)?,
+        StructureEdit::RemoveChapter { chapter } => chapters::remove(project, *chapter)?,
         StructureEdit::AddScene {
             chapter,
             before,

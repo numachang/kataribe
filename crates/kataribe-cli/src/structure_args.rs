@@ -1,4 +1,4 @@
-//! `add` / `remove` サブコマンドの引数（clap）。作品の構成（人物・世界観の資料・シーン）を自分で足したり消したりする。
+//! `add` / `remove` サブコマンドの引数（clap）。作品の構成（人物・世界観の資料・章・シーン）を自分で足したり消したりする。
 
 use std::path::PathBuf;
 
@@ -19,6 +19,8 @@ pub enum AddTarget {
     Character(AddCharacterArgs),
     /// 世界観の資料を足す（world/<name>.md を作る）。
     World(AddWorldArgs),
+    /// 章を足す（後ろの章の番号を振り直し、plot/chapters/<NN>.md を作る）。
+    Chapter(AddChapterArgs),
     /// 章にシーンを足す（章立てを書き直す）。
     Scene(AddSceneArgs),
 }
@@ -34,6 +36,19 @@ pub struct BodySource {
     /// 本文を書いたファイル。
     #[arg(long, value_name = "PATH")]
     pub body_file: Option<PathBuf>,
+}
+
+/// ストーリーラインは、直接の文章かファイルのどちらか一方で指定する（どちらも省略すると空）。
+#[derive(Debug, Args)]
+#[group(multiple = false)]
+pub struct StorylineSource {
+    /// ストーリーライン（章立ての本文）。
+    #[arg(long, value_name = "TEXT")]
+    pub storyline: Option<String>,
+
+    /// ストーリーラインを書いたファイル。
+    #[arg(long, value_name = "PATH")]
+    pub storyline_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -97,6 +112,28 @@ pub struct AddWorldArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct AddChapterArgs {
+    /// 作品フォルダ。
+    #[arg(value_name = "FOLDER")]
+    pub folder: PathBuf,
+
+    /// 章題。
+    #[arg(long, value_name = "TEXT")]
+    pub title: String,
+
+    #[command(flatten)]
+    pub storyline: StorylineSource,
+
+    /// この章の前に足す。その番号以降の章は、番号が 1 つ後ろへずれる（省略すると末尾）。
+    #[arg(long, value_name = "NN")]
+    pub before: Option<ChapterId>,
+
+    /// 変更案を表示するだけで、書き込まない。
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Args)]
 pub struct AddSceneArgs {
     /// 作品フォルダ。
     #[arg(value_name = "FOLDER")]
@@ -151,7 +188,7 @@ pub struct RemoveArgs {
 
     /// 消すもの（ゴミ箱 .kataribe/trash/ へ移す）。
     ///
-    /// character:<id> | world:<name または path> | scene:<NN>/<sNN>
+    /// character:<id> | world:<name または path> | chapter:<NN> | scene:<NN>/<sNN>
     #[arg(value_name = "TARGET")]
     pub target: RemoveTarget,
 

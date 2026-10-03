@@ -135,6 +135,7 @@
   color: var(--color-error);
 }
 
-.change-mark--moved {
+.change-mark--moved,
+.change-mark--renamed {
   color: var(--color-focus);
 }

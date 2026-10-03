@@ -1,8 +1,8 @@
 //! 変更案。利用者が確認してから作品フォルダに適用する。
 
 use kataribe_project::{
-    BackupMode, ContentHash, PendingChange, PendingWrite, Project, ProjectError, RelPath, TextFile,
-    WriteCondition,
+    BackupMode, ContentHash, EntryCondition, FolderFile, PendingChange, PendingWrite, Project,
+    ProjectError, RelPath, TextFile, WriteCondition,
 };
 use kataribe_text::count::count_chars;
 use serde::{Deserialize, Serialize};
@@ -25,12 +25,30 @@ pub enum FileChange {
         /// 変更前の内容のハッシュ。適用時に、その後の編集と競合していないか確かめる。
         base_hash: Option<ContentHash>,
     },
-    /// ファイルをゴミ箱（`.kataribe/trash/`）へ移す。今はファイルだけを移せる（フォルダは扱わない）。
+    /// ファイルまたはフォルダをゴミ箱（`.kataribe/trash/`）へ移す。
     Trash {
         /// 移すもの。
         path: RelPath,
-        /// 移すファイルの一覧。今は `path` のファイル 1 つだけ。
+        /// 移すファイルの一覧。ファイルを移すときは `path` のファイル 1 つだけ。フォルダを移すときは、
+        /// フォルダの中のファイル全部（サブフォルダの下も含む。空のフォルダなら空）。適用するときは、
+        /// 今の中身がこの一覧と完全に一致しなければ競合にする（利用者が確かめた中身だけを移すため）。
         files: Vec<TrashedFile>,
+    },
+    /// ファイルまたはフォルダの改名。中身は変えない（章の番号の振り直し）。
+    /// 中身のハッシュは条件にしない（移動では中身が失われず、関係のない自動保存のたびに競合になるため）。
+    Move {
+        /// 移動元。
+        from: RelPath,
+        /// 移動先。同じ変更案のゴミ箱や移動で空く場所を除いて、空いていなければならない。
+        to: RelPath,
+    },
+    /// 何も書かず、適用するときにこのパスがこの状態であることだけを確かめる。
+    /// 計画のあとに外で状態が変わったら競合にするために使う。
+    Expect {
+        /// 確かめるパス。
+        path: RelPath,
+        /// そのファイルの今のハッシュ。`None` なら「何も無いこと」。
+        base_hash: Option<ContentHash>,
     },
 }
 
@@ -48,11 +66,12 @@ pub struct TrashedFile {
 }
 
 impl FileChange {
-    /// 変更の対象のパス。
+    /// 変更の対象のパス。改名は移動元。
     #[must_use]
     pub fn path(&self) -> &RelPath {
         match self {
-            Self::Write { path, .. } | Self::Trash { path, .. } => path,
+            Self::Write { path, .. } | Self::Trash { path, .. } | Self::Expect { path, .. } => path,
+            Self::Move { from, .. } => from,
         }
     }
 
@@ -71,7 +90,12 @@ impl FileChange {
             })),
             Self::Trash { path, files } => Ok(PendingChange::Trash {
                 path,
-                expected: sole_file_hash(path, files)?,
+                expected: trash_condition(path, files)?,
+            }),
+            Self::Move { from, to } => Ok(PendingChange::Move { from, to }),
+            Self::Expect { path, base_hash } => Ok(PendingChange::Expect {
+                path,
+                expected: base_hash.clone(),
             }),
         }
     }
@@ -85,22 +109,42 @@ fn write_condition(base_hash: Option<&ContentHash>) -> WriteCondition {
     }
 }
 
-/// `path` のファイル 1 つをゴミ箱へ移す変更の、競合の確認に使うハッシュ。
-/// 形が違えば（ファイルが複数・別のパス・ハッシュが無い）変更案の誤りにする。
-fn sole_file_hash(path: &RelPath, files: &[TrashedFile]) -> Result<ContentHash> {
-    match files {
-        [
-            TrashedFile {
-                path: file_path,
-                base_hash: Some(hash),
-                ..
-            },
-        ] if file_path == path => Ok(hash.clone()),
-        _ => Err(ProjectError::InvalidChangeSet {
-            reason: format!("{path} をゴミ箱へ移す内容が、そのファイル 1 つの形になっていません。"),
-        }
-        .into()),
+/// ゴミ箱へ移す変更が、適用のときに確かめる今の状態。
+///
+/// `path` のファイル 1 つだけの一覧ならファイル、そうでなければフォルダ（中のファイル全部の一覧）。
+/// 形が違えば（一覧のファイルが `path` の中に無い・ハッシュが無い＝テキストとして読めない）変更案の誤りにする。
+fn trash_condition(path: &RelPath, files: &[TrashedFile]) -> Result<EntryCondition> {
+    if let [only] = files
+        && only.path == *path
+    {
+        let hash = readable_hash(path, only)?;
+        return Ok(EntryCondition::File(hash));
     }
+    let folder_prefix = format!("{path}/");
+    let mut listed = Vec::with_capacity(files.len());
+    for file in files {
+        if !file.path.as_str().starts_with(&folder_prefix) {
+            return Err(invalid_change_set(format!(
+                "{path} をゴミ箱へ移す内容に、{path} の中にないファイル（{}）が含まれています。",
+                file.path
+            )));
+        }
+        listed.push((file.path.clone(), readable_hash(path, file)?));
+    }
+    Ok(EntryCondition::Folder(listed))
+}
+
+fn readable_hash(trashed: &RelPath, file: &TrashedFile) -> Result<ContentHash> {
+    file.base_hash.clone().ok_or_else(|| {
+        invalid_change_set(format!(
+            "{trashed} をゴミ箱へ移す内容に、テキストとして読めないファイル（{}）があるため、適用できません。",
+            file.path
+        ))
+    })
+}
+
+fn invalid_change_set(reason: String) -> EngineError {
+    ProjectError::InvalidChangeSet { reason }.into()
 }
 
 /// 作品フォルダへの変更案。
@@ -108,7 +152,7 @@ fn sole_file_hash(path: &RelPath, files: &[TrashedFile]) -> Result<ContentHash> 
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct ChangeSet {
     pub summary: String,
-    /// ファイルへの変更。適用の順は並び順に頼らず、ゴミ箱へ移す → 書く。
+    /// ファイルへの変更。適用の順は並び順に頼らず、状態の確認（Expect）→ ゴミ箱へ移す → 改名 → 書く。
     pub files: Vec<FileChange>,
     /// この変更案を作った作品フォルダ（正規化した絶対パス）。生成中に別の作品へ開き直したとき、
     /// 前の作品の変更案を書き込まないよう、適用時に照合する。
@@ -163,14 +207,40 @@ impl ChangeSet {
     ///
     /// 適用時には、そのあと利用者が同じファイルを編集していないかを `file` のハッシュで確かめる。
     pub fn trash_file(&mut self, path: RelPath, file: &TextFile) {
-        let trashed = TrashedFile {
-            path: path.clone(),
-            base_hash: Some(file.hash.clone()),
-            chars: count_chars(&file.content),
-        };
+        let trashed = trashed_file(path.clone(), Some(file));
         self.files.push(FileChange::Trash {
             path,
             files: vec![trashed],
+        });
+    }
+
+    /// フォルダ `path` を、中のファイル全部ごとゴミ箱へ移す変更を加える。
+    ///
+    /// `files` は、移す前に読んだ中身（[`kataribe_project::ProjectStore::read_folder`]）。適用時には、
+    /// そのあとにファイルが増えたり変わったりしていないかを、一覧のハッシュで確かめる。
+    pub fn trash_folder(&mut self, path: RelPath, files: &[FolderFile]) {
+        let trashed = files
+            .iter()
+            .map(|file| trashed_file(file.path.clone(), file.text.as_ref()))
+            .collect();
+        self.files.push(FileChange::Trash {
+            path,
+            files: trashed,
+        });
+    }
+
+    /// ファイルまたはフォルダ `from` を `to` へ改名する変更を加える。
+    pub fn move_entry(&mut self, from: RelPath, to: RelPath) {
+        self.files.push(FileChange::Move { from, to });
+    }
+
+    /// 適用するときに、`path` が今この状態であることを確かめる変更を加える。何も書かない。
+    ///
+    /// `file` は読んだときのファイル（`None` なら「無いこと」。フォルダが無いことの確認にも使える）。
+    pub fn expect(&mut self, path: RelPath, file: Option<&TextFile>) {
+        self.files.push(FileChange::Expect {
+            path,
+            base_hash: file.map(|file| file.hash.clone()),
         });
     }
 
@@ -194,8 +264,18 @@ impl ChangeSet {
     /// 変更案を作品フォルダに適用する。
     ///
     /// 別の作品の変更案なら何も適用しない。すべての変更を反映するか、何も反映しないかのどちらかで、
-    /// 一つでも競合していれば何も変えない。反映の順は、並び順ではなく「ゴミ箱へ移す → 書く」。
-    /// 同じパスへの変更が重なっている・ゴミ箱へ移せないパスを含む変更案は、画面から戻ってくる値なので
+    /// 一つでも競合していれば何も変えない。反映の順は、並び順ではなく
+    /// 「状態の確認（Expect）→ ゴミ箱へ移す → 改名（Move）→ 書く」。それぞれ次の条件を確かめる。
+    ///
+    /// - Expect: 今の状態が `base_hash` と一致する（`None` なら無い）。
+    /// - Trash（ファイル）: 今のハッシュが `base_hash` と一致する。
+    /// - Trash（フォルダ）: 中のファイルの一覧（パスとハッシュ）が計画のときと完全に一致する。増えても変わっても競合。
+    /// - Move: 移動元があり、移動先が（同じ変更案のゴミ箱や改名で空く場所を除いて）空いている。中身は見ない。
+    /// - Write: 条件は改名した後の状態に対して確かめる。書き先が改名の行き先なら移動元の今の中身の `base_hash`、
+    ///   改名で空く場所なら「無いこと」として扱う（「03 を 04 へ移し、空いた 03 に新しい章を書く」を表すため）。
+    ///
+    /// 同じパスへの変更が重なっている・ゴミ箱へ移したり改名したりできないパス（`.kataribe/` と `kataribe.yaml`）
+    /// を含む・フォルダを自分の中へ移す・ゴミ箱へ移すフォルダの下へ書く変更案は、画面から戻ってくる値なので
     /// 作品フォルダ側で検証して断る（[`ProjectError::InvalidChangeSet`]）。
     /// LLM による置き換えなので、上書きするファイルは必ずバックアップする。
     pub fn apply(&self, project: &Project) -> Result<()> {
@@ -219,4 +299,13 @@ impl ChangeSet {
 
 fn project_identity(project: &Project) -> String {
     project.store().canonical_root().display().to_string()
+}
+
+/// ゴミ箱へ移すファイル 1 つの記録。`file` が `None`（テキストとして読めない）ならハッシュは無い。
+fn trashed_file(path: RelPath, file: Option<&TextFile>) -> TrashedFile {
+    TrashedFile {
+        path,
+        base_hash: file.map(|file| file.hash.clone()),
+        chars: file.map_or(0, |file| count_chars(&file.content)),
+    }
 }

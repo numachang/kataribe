@@ -123,7 +123,7 @@ pub enum ProjectError {
         supported: u32,
     },
 
-    /// まとめて反映する変更の形が正しくなかった（ゴミ箱へ移せないパス、同じパスへの変更の重なりなど）。
+    /// まとめて反映する変更の形が正しくなかった（ゴミ箱へ移せない・動かせないパス、同じパスへの変更の重なりなど）。
     ///
     /// 画面から戻ってくる値なので、反映の前に必ず検証する。何も変えていない。
     #[error("変更案が正しくありません: {reason}")]
@@ -135,7 +135,7 @@ pub enum ProjectError {
     /// 複数のファイルをまとめて反映する途中で失敗し、反映済みの変更の一部を元に戻せなかった。
     #[error(
         "反映の途中で失敗し、元に戻せなかったファイルがあります。{} 原因: {source}",
-        describe_unrestored(not_restored, still_trashed)
+        describe_unrestored(not_restored, still_trashed, still_moved, journal.as_ref())
     )]
     PartialWrite {
         /// 書き込み前の内容に戻せず、新しい内容のまま残ったファイル。
@@ -143,9 +143,28 @@ pub enum ProjectError {
         /// ゴミ箱から元の場所へ戻せなかったファイル。実物はゴミ箱の中にしかない
         /// （ゴミ箱へ移すファイルはバックアップを取らない）。
         still_trashed: Vec<StillTrashed>,
+        /// 改名（移動）の途中で止まり、元の場所へ戻せなかったもの。実物は `current` にある。
+        still_moved: Vec<StillMoved>,
+        /// 反映の前に書いた操作の記録（`.kataribe/staging/<日時>/journal.json`）。
+        /// 移動やゴミ箱を伴う反映にだけあり、戻せなかったものを人が見て戻すときの手がかりになる。
+        journal: Option<RelPath>,
         /// 途中で起きた失敗。
         #[source]
         source: Box<ProjectError>,
+    },
+
+    /// 改名（移動）で、ほかのアプリがファイルを開いているために移せなかった。
+    ///
+    /// Windows では、中のファイルを開かれたフォルダは改名できない。閉じてもらえば再試行できる。
+    #[error(
+        "{path} を移せませんでした。ほかのアプリが {path} かその中のファイルを開いている可能性があります。{}閉じてからもう一度試してください。",
+        if *restored { "ここまでの変更はすべて元に戻しました。" } else { "" }
+    )]
+    FilesInUse {
+        /// 移せなかったファイルまたはフォルダ。
+        path: RelPath,
+        /// 反映済みだった変更をすべて元に戻せたか。
+        restored: bool,
     },
 
     /// 作品を新規作成しようとしたフォルダが空ではなかった。
@@ -165,9 +184,23 @@ pub struct StillTrashed {
     pub trashed: RelPath,
 }
 
+/// 改名（移動）の途中で止まり、元の場所へ戻せなかったもの。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StillMoved {
+    /// 元の場所。
+    pub original: RelPath,
+    /// 今ある場所。移動の途中の置き場（`.kataribe/staging/<日時>/…`）か、移し先。
+    pub current: RelPath,
+}
+
 /// [`ProjectError::PartialWrite`] のメッセージの、戻せなかったものの案内。
-/// 書き込みとゴミ箱とでは実物のある場所も戻し方も違うので、分けて書く。
-fn describe_unrestored(not_restored: &[RelPath], still_trashed: &[StillTrashed]) -> String {
+/// 書き込み・ゴミ箱・改名とでは実物のある場所も戻し方も違うので、分けて書く。
+fn describe_unrestored(
+    not_restored: &[RelPath],
+    still_trashed: &[StillTrashed],
+    still_moved: &[StillMoved],
+    journal: Option<&RelPath>,
+) -> String {
     let mut sentences = Vec::new();
     if !not_restored.is_empty() {
         let paths: Vec<&str> = not_restored.iter().map(RelPath::as_str).collect();
@@ -182,6 +215,17 @@ fn describe_unrestored(not_restored: &[RelPath], still_trashed: &[StillTrashed])
             stranded.original, stranded.trashed
         ));
     }
+    for stranded in still_moved {
+        sentences.push(format!(
+            "{} は改名（移動）の途中のまま戻せませんでした。実物は {} にあります。",
+            stranded.original, stranded.current
+        ));
+    }
+    if let Some(journal) = journal
+        && !(still_trashed.is_empty() && still_moved.is_empty())
+    {
+        sentences.push(format!("操作の記録は {journal} にあります。"));
+    }
     sentences.join("")
 }
 
@@ -194,6 +238,14 @@ mod tests {
     }
 
     fn partial_write(not_restored: &[&str], still_trashed: &[(&str, &str)]) -> String {
+        partial_write_with_moves(not_restored, still_trashed, &[])
+    }
+
+    fn partial_write_with_moves(
+        not_restored: &[&str],
+        still_trashed: &[(&str, &str)],
+        still_moved: &[(&str, &str)],
+    ) -> String {
         ProjectError::PartialWrite {
             not_restored: not_restored.iter().map(|path| rel(path)).collect(),
             still_trashed: still_trashed
@@ -203,6 +255,14 @@ mod tests {
                     trashed: rel(trashed),
                 })
                 .collect(),
+            still_moved: still_moved
+                .iter()
+                .map(|(original, current)| StillMoved {
+                    original: rel(original),
+                    current: rel(current),
+                })
+                .collect(),
+            journal: Some(rel(".kataribe/staging/20231114-221320-000/journal.json")),
             source: Box::new(ProjectError::NotFound {
                 path: rel("concept.md"),
             }),
@@ -255,5 +315,32 @@ mod tests {
             message.ends_with("原因: concept.md が見つかりません"),
             "{message}"
         );
+    }
+
+    #[test]
+    fn partial_write_tells_where_the_moved_files_are_and_where_the_journal_is() {
+        let message = partial_write_with_moves(
+            &[],
+            &[],
+            &[("manuscript/03", ".kataribe/staging/20231114-221320-000/m1")],
+        );
+
+        assert!(message.contains(
+            "manuscript/03 は改名（移動）の途中のまま戻せませんでした。\
+             実物は .kataribe/staging/20231114-221320-000/m1 にあります。"
+        ));
+        assert!(
+            message.contains(
+                "操作の記録は .kataribe/staging/20231114-221320-000/journal.json にあります。"
+            ),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn partial_write_does_not_mention_the_journal_when_only_written_files_are_left() {
+        let message = partial_write(&["plot/chapters/01.md"], &[]);
+
+        assert!(!message.contains("journal"), "{message}");
     }
 }

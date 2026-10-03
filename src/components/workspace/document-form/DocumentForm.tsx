@@ -2,6 +2,7 @@ import "./DocumentForm.css";
 import type { EditableDocument } from "../../../api/types";
 import { ChapterForm } from "./ChapterForm";
 import { CharacterForm } from "./CharacterForm";
+import { STORYLINE_LABEL } from "./fieldLabels";
 
 interface DocumentFormProps {
   document: EditableDocument;
@@ -30,7 +31,7 @@ export function bodyHeading(document: EditableDocument): string | null {
     case "character":
       return "詳細";
     case "chapter":
-      return "ストーリーライン";
+      return STORYLINE_LABEL;
     case "text":
       return null;
   }

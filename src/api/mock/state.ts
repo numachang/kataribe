@@ -74,6 +74,13 @@ export function findChapter(state: ProjectState, chapterId: string): MockChapter
   return state.chapters?.find((chapter) => chapter.id === chapterId) ?? null;
 }
 
+/** 章を番号の小さい順に並べる（章の順序は番号で決まるので、足したり改名したりしたあとも保つ）。 */
+export function sortedByNumber(chapters: MockChapter[]): MockChapter[] {
+  return [...chapters].sort(
+    (left, right) => Number.parseInt(left.id, 10) - Number.parseInt(right.id, 10),
+  );
+}
+
 export function findScene(
   state: ProjectState,
   chapterId: string,

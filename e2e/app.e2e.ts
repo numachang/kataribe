@@ -17,6 +17,10 @@ import {
   PROJECT_FOLDER_NAME,
   SCENE_PATH,
   SCENE_TITLE,
+  SECOND_CHAPTER_SCENE_PATH,
+  SECOND_CHAPTER_SCENE_TEXT,
+  SECOND_CHAPTER_SCENE_TITLE,
+  SECOND_CHAPTER_TITLE,
   SECOND_SCENE_PATH,
   SECOND_SCENE_TEXT,
   SECOND_SCENE_TITLE,
@@ -296,13 +300,21 @@ test("目次の「人物を追加」で、かなの読みからローマ字の I
   await saveScreenshot("character-added.png");
 });
 
+/** 目次の行の操作メニューを開いて、項目を選ぶ。 */
+async function chooseRowMenuItem(menuLabel: string, item: string): Promise<void> {
+  await (await waitForElement(By.css(`button[aria-label="${menuLabel}"]`))).click();
+  await (
+    await waitForElement(By.xpath(`//*[@role='menuitem' and normalize-space(.)='${item}']`))
+  ).click();
+}
+
+/** 目次の章の呼び方（本文の章見出しと章立ての行に出る）。 */
+function chapterLabel(number: number, title: string): string {
+  return `第${number}章「${title}」`;
+}
+
 test("本文のあるシーンを削除すると、確認で本文も移ることを見せ、本文は .kataribe/trash/ に移り、章立てからも外れる", async () => {
-  await (
-    await waitForElement(By.css(`button[aria-label="「2. ${SECOND_SCENE_TITLE}」の操作"]`))
-  ).click();
-  await (
-    await waitForElement(By.xpath("//*[@role='menuitem' and normalize-space(.)='削除']"))
-  ).click();
+  await chooseRowMenuItem(`「2. ${SECOND_SCENE_TITLE}」の操作`, "削除");
 
   const dialog = await dialogNamed("削除の確認");
   const emphasis = await waitForElement(By.css(".structure-dialog__emphasis"));
@@ -339,4 +351,102 @@ test("本文のあるシーンを削除すると、確認で本文も移るこ�
     "目次からシーンが消えませんでした。",
   );
   await saveScreenshot("scene-removed.png");
+});
+
+const FIRST_SCENE_TEXT_AFTER_EDITS = `${INITIAL_SCENE_TEXT}　風が吹いた。`;
+
+test("2 章目のシーンを開いたまま第 1 章の前に章を追加すると、章立てと本文が振り直され、開いていた本文に続けて入力した分が新しいパスに保存される", async () => {
+  await (await waitForElement(buttonWithText(SECOND_CHAPTER_SCENE_TITLE))).click();
+  const before = await documentEditor(SECOND_CHAPTER_SCENE_PATH);
+  expect(await before.getAttribute("value")).toBe(SECOND_CHAPTER_SCENE_TEXT);
+
+  await chooseRowMenuItem(
+    `「${chapterLabel(1, CHAPTER_TITLE)}」の章立ての操作`,
+    "この前に章を追加",
+  );
+  const dialog = await dialogNamed("章を追加");
+  await (await dialogField(dialog, "章題")).sendKeys("序章");
+  await (await dialogField(dialog, "ストーリーライン", "textarea")).sendKeys("物語の始まり。");
+  await saveScreenshot("add-chapter-dialog.png");
+  await (await dialog.findElement(By.xpath(".//button[normalize-space(.)='追加']"))).click();
+
+  // 章立ては、新しい章が 01、元の章が 02・03 に振り直される
+  const prologue = await waitForFile(
+    "plot/chapters/01.md",
+    (content) => content.includes("title: 序章"),
+    "追加した章の章立てが作られませんでした。",
+  );
+  expect(prologue).toContain("物語の始まり。");
+  expect(await readProjectFile("plot/chapters/02.md")).toContain(`title: ${CHAPTER_TITLE}`);
+  expect(await readProjectFile("plot/chapters/03.md")).toContain(`title: ${SECOND_CHAPTER_TITLE}`);
+  // 本文のフォルダも、章立てと一緒にフォルダごと移る
+  expect(await readProjectFile("manuscript/02/s01.txt")).toBe(FIRST_SCENE_TEXT_AFTER_EDITS);
+  expect(await readProjectFile("manuscript/03/s01.txt")).toBe(SECOND_CHAPTER_SCENE_TEXT);
+  expect(await projectFileExists("manuscript/01/s01.txt")).toBe(false);
+
+  // 開いていた本文は、読み直されずに新しいパスで開いたまま。続けて入力して保存すると新しいパスへ書かれ、
+  // 古いパス（今は第 2 章の本文）は壊れない
+  const moved = await documentEditor("manuscript/03/s01.txt");
+  expect(await moved.getAttribute("value")).toBe(SECOND_CHAPTER_SCENE_TEXT);
+  await typeAtEnd(moved, "　続きを書いた。");
+  await saveWithShortcut(moved);
+  const saved = await waitForFile(
+    "manuscript/03/s01.txt",
+    (content) => content.includes("続きを書いた。"),
+    "改名のあとに入力した文章が、新しいパスに保存されませんでした。",
+  );
+  expect(saved).toBe(`${SECOND_CHAPTER_SCENE_TEXT}　続きを書いた。`);
+  expect(await readProjectFile("manuscript/02/s01.txt")).toBe(FIRST_SCENE_TEXT_AFTER_EDITS);
+  await waitForElement(buttonWithText(chapterLabel(1, "序章")));
+  await saveScreenshot("chapter-added.png");
+});
+
+test("章を削除すると、確認で番号が変わる章と本文も移ることを見せ、章立てと本文のフォルダが .kataribe/trash/ に移り、後ろの章の番号が詰まる", async () => {
+  await chooseRowMenuItem(`「${chapterLabel(2, CHAPTER_TITLE)}」の操作`, "章を削除");
+
+  const dialog = await dialogNamed("削除の確認");
+  const emphasis = await waitForElement(By.css(".structure-dialog__emphasis"));
+  expect(await emphasis.getText()).toContain("本文 1 ファイル（計 14 字）もゴミ箱へ移ります。");
+  const renumbered = await dialog.getText();
+  expect(renumbered).toContain("番号が変わる章");
+  expect(renumbered).toContain(`${chapterLabel(3, SECOND_CHAPTER_TITLE)} → 第2章`);
+  await saveScreenshot("remove-chapter-confirm.png");
+  await (
+    await dialog.findElement(By.xpath(".//button[normalize-space(.)='ゴミ箱へ移す']"))
+  ).click();
+
+  await app.wait(
+    async () => !(await projectFileExists("plot/chapters/03.md")),
+    SAVE_TIMEOUT_MS,
+    "後ろの章の番号が詰まりませんでした。",
+  );
+  // 章立てと本文のフォルダは、日時のフォルダの下に元のパスのまま移る
+  const trashRoot = path.join(fixture.projectFolder, ".kataribe", "trash");
+  const trashedStamps = await readdir(trashRoot);
+  const trashedChapterFolders = await Promise.all(
+    trashedStamps.map((stamp) =>
+      readFile(path.join(trashRoot, stamp, "plot/chapters/02.md"), "utf8").then(
+        () => path.join(trashRoot, stamp),
+        () => null,
+      ),
+    ),
+  );
+  const chapterTrash = trashedChapterFolders.find((folder) => folder !== null);
+  expect(chapterTrash).toBeDefined();
+  expect(await readFile(path.join(chapterTrash ?? "", "plot/chapters/02.md"), "utf8")).toContain(
+    `title: ${CHAPTER_TITLE}`,
+  );
+  expect(await readFile(path.join(chapterTrash ?? "", "manuscript/02/s01.txt"), "utf8")).toBe(
+    FIRST_SCENE_TEXT_AFTER_EDITS,
+  );
+  // 後ろの章（元の第 3 章）が、第 2 章になる
+  expect(await readProjectFile("plot/chapters/02.md")).toContain(`title: ${SECOND_CHAPTER_TITLE}`);
+  expect(await readProjectFile("manuscript/02/s01.txt")).toBe(
+    `${SECOND_CHAPTER_SCENE_TEXT}　続きを書いた。`,
+  );
+  expect(await projectFileExists("manuscript/03")).toBe(false);
+  // 開いていた本文は、番号が詰まった新しいパスで開いたまま
+  await documentEditor("manuscript/02/s01.txt");
+  await waitForElement(buttonWithText(chapterLabel(2, SECOND_CHAPTER_TITLE)));
+  await saveScreenshot("chapter-removed.png");
 });

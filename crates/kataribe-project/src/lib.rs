@@ -16,7 +16,7 @@ mod slug;
 pub mod store;
 
 pub use document::{EditableDocument, LoadedDocument, ParsedDocument, parse_document};
-pub use error::{ProjectError, StillTrashed};
+pub use error::{ProjectError, StillMoved, StillTrashed};
 pub use frontmatter::YamlError;
 pub use model::{
     Chapter, ChapterId, ChapterMeta, Character, CharacterId, CharacterMeta, DocMeta,
@@ -26,6 +26,6 @@ pub use model::{
 pub use path::{PathError, RelPath};
 pub use project::Project;
 pub use store::{
-    BackupMode, ContentHash, PendingChange, PendingWrite, ProjectStore, TextFile, WriteCondition,
-    WriteOptions, normalize_text,
+    BackupMode, ContentHash, EntryCondition, FolderFile, PendingChange, PendingWrite, ProjectStore,
+    TextFile, WriteCondition, WriteOptions, normalize_text,
 };

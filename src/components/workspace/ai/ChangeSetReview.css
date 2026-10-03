@@ -91,3 +91,10 @@
   font-size: 12px;
   color: var(--color-ink-soft);
 }
+
+.changeset-review__move-note {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--color-ink-soft);
+}

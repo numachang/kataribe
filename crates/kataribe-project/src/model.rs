@@ -269,6 +269,9 @@ impl fmt::Display for WorldDocumentName {
     }
 }
 
+/// 章の id の番号の上限（桁数が 3 桁までのため）。
+const MAX_ID_NUMBER: u32 = 999;
+
 /// 章の id（`01`, `02`, … `999` まで）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -300,6 +303,18 @@ impl ChapterId {
     #[must_use]
     pub fn number(&self) -> u32 {
         u32::from(self.number)
+    }
+
+    /// 番号を `delta` だけずらした id。章を途中に足す・消すときの、番号の振り直しに使う。
+    ///
+    /// 桁数は [`ChapterId::from_number`] の規則で付け直す（`001` のように手で付けた 3 桁も、
+    /// ずらした章だけが 2 桁になる。並び順は番号で決まるので崩れない）。
+    /// 0 未満、または 999 を超えるときは `None`。
+    #[must_use]
+    pub fn shifted(&self, delta: i32) -> Option<Self> {
+        let shifted = i32::from(self.number).checked_add(delta)?;
+        let number = u32::try_from(shifted).ok()?;
+        (number <= MAX_ID_NUMBER).then(|| Self::from_number(number))
     }
 }
 
@@ -724,6 +739,39 @@ mod tests {
         assert!(ChapterId::new("1").is_err());
         assert!(ChapterId::new("1000").is_err());
         assert!(ChapterId::new("ab").is_err());
+    }
+
+    #[test]
+    fn chapter_id_shifted_renumbers_with_the_width_rule_of_from_number() {
+        let shift = |id: &str, delta: i32| {
+            ChapterId::new(id)
+                .unwrap()
+                .shifted(delta)
+                .map(|shifted| shifted.to_string())
+        };
+        assert_eq!(shift("01", 1), Some("02".to_owned()));
+        assert_eq!(shift("09", 1), Some("10".to_owned()));
+        assert_eq!(shift("99", 1), Some("100".to_owned()));
+        assert_eq!(shift("100", -1), Some("99".to_owned()));
+        assert_eq!(shift("02", -1), Some("01".to_owned()));
+        assert_eq!(shift("998", 1), Some("999".to_owned()));
+        assert_eq!(shift("05", 0), Some("05".to_owned()));
+    }
+
+    #[test]
+    fn chapter_id_shifted_is_none_outside_zero_to_999() {
+        let shift = |id: &str, delta: i32| ChapterId::new(id).unwrap().shifted(delta);
+        assert_eq!(shift("999", 1), None);
+        assert_eq!(shift("00", -1), None);
+        assert_eq!(shift("01", -2), None);
+        assert_eq!(shift("500", i32::MAX), None);
+        assert_eq!(shift("500", i32::MIN), None);
+    }
+
+    #[test]
+    fn chapter_id_shifted_renumbers_a_hand_made_three_digit_id_with_two_digits() {
+        let shifted = ChapterId::new("001").unwrap().shifted(1).unwrap();
+        assert_eq!(shifted.to_string(), "02");
     }
 
     #[test]

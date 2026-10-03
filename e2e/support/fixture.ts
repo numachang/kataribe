@@ -13,6 +13,11 @@ export const SECOND_SCENE_TITLE = "雨上がり";
 export const SECOND_SCENE_PATH = "manuscript/01/s02.txt";
 export const SECOND_SCENE_TEXT = "　雨が上がった。\n";
 export const CHAPTER_TITLE = "第一章";
+/** 2 つ目の章と、その本文のあるシーン。章の追加・削除で番号が振り直されるとき、本文のフォルダごと動くことを確かめるのに使う。 */
+export const SECOND_CHAPTER_TITLE = "第二章";
+export const SECOND_CHAPTER_SCENE_TITLE = "灯台";
+export const SECOND_CHAPTER_SCENE_PATH = "manuscript/02/s01.txt";
+export const SECOND_CHAPTER_SCENE_TEXT = "　灯台の灯りが見えた。\n";
 export const CHARACTER_NAME = "霧島 凛";
 export const CHARACTER_PATH = "characters/kirishima-rin.md";
 /** 人物資料の本文（front matter より後ろ）。 */
@@ -56,7 +61,21 @@ const PROJECT_FILES: Record<string, string> = {
     "雨の夜の章。",
     "",
   ].join("\n"),
+  "plot/chapters/02.md": [
+    "---",
+    `title: ${SECOND_CHAPTER_TITLE}`,
+    "scenes:",
+    "  - id: s01",
+    `    title: ${SECOND_CHAPTER_SCENE_TITLE}`,
+    "    summary: 灯台の場面。",
+    "    pov: 霧島 凛",
+    "    characters: [霧島 凛]",
+    "---",
+    "灯台の章。",
+    "",
+  ].join("\n"),
   [SCENE_PATH]: INITIAL_SCENE_TEXT,
+  [SECOND_CHAPTER_SCENE_PATH]: SECOND_CHAPTER_SCENE_TEXT,
   [SECOND_SCENE_PATH]: SECOND_SCENE_TEXT,
   [CHARACTER_PATH]: [
     "---",

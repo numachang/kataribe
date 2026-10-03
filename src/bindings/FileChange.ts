@@ -28,6 +28,24 @@ base_hash: ContentHash | null, } | { "kind": "trash",
  */
 path: RelPath, 
 /**
- * 移すファイルの一覧。今は `path` のファイル 1 つだけ。
+ * 移すファイルの一覧。ファイルを移すときは `path` のファイル 1 つだけ。フォルダを移すときは、
+ * フォルダの中のファイル全部（サブフォルダの下も含む。空のフォルダなら空）。適用するときは、
+ * 今の中身がこの一覧と完全に一致しなければ競合にする（利用者が確かめた中身だけを移すため）。
  */
-files: Array<TrashedFile>, };
+files: Array<TrashedFile>, } | { "kind": "move", 
+/**
+ * 移動元。
+ */
+from: RelPath, 
+/**
+ * 移動先。同じ変更案のゴミ箱や移動で空く場所を除いて、空いていなければならない。
+ */
+to: RelPath, } | { "kind": "expect", 
+/**
+ * 確かめるパス。
+ */
+path: RelPath, 
+/**
+ * そのファイルの今のハッシュ。`None` なら「何も無いこと」。
+ */
+base_hash: ContentHash | null, };
