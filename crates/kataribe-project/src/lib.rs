@@ -12,6 +12,7 @@ pub mod layout;
 pub mod model;
 pub mod path;
 pub mod project;
+mod slug;
 pub mod store;
 
 pub use document::{EditableDocument, LoadedDocument, ParsedDocument, parse_document};
@@ -20,10 +21,11 @@ pub use frontmatter::YamlError;
 pub use model::{
     Chapter, ChapterId, ChapterMeta, Character, CharacterId, CharacterMeta, DocMeta,
     FORMAT_VERSION, Manifest, MarkdownDoc, ModelError, Rating, SceneId, ScenePlan,
+    WorldDocumentName,
 };
 pub use path::{PathError, RelPath};
 pub use project::Project;
 pub use store::{
-    BackupMode, ContentHash, PendingWrite, ProjectStore, TextFile, WriteCondition, WriteOptions,
-    normalize_text,
+    BackupMode, ContentHash, PendingChange, PendingWrite, ProjectStore, TextFile, WriteCondition,
+    WriteOptions, normalize_text,
 };

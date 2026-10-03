@@ -786,3 +786,421 @@ async fn the_project_settings_choose_the_model_unless_the_command_line_overrides
         .collect();
     assert_eq!(models, vec!["project-model", "cli-model"]);
 }
+
+// ---- add / remove（人物・世界観の資料・シーンを自分で足したり消したりする） ----
+
+/// `kataribe-cli <引数>` を実行する。LLM も設定ファイルも使わないコマンド用。
+async fn run_plain(args: &[&str], console: &BufferConsole) -> std::process::ExitCode {
+    let args = std::iter::once("kataribe-cli").chain(args.iter().copied());
+    run(args, console).await
+}
+
+fn path_arg(path: &std::path::Path) -> String {
+    path.display().to_string()
+}
+
+const CHAPTER_WITH_TWO_SCENES: &str = "---\ntitle: 雨の匂い\nscenes:\n  - id: s01\n    title: 洋館への道\n    summary: 二人が洋館に着く。\n    pov: 霧島 凛\n    characters:\n      - 霧島 凛\n  - id: s02\n    title: 閉ざされた書斎\n    summary: 書斎で死体が見つかる。\n    characters:\n      - 凛\n---\nストーリーライン\n";
+
+/// 作品を作り、章立てを 1 つ置く。
+async fn project_with_a_chapter(project_dir: &std::path::Path) {
+    create_test_project(project_dir).await;
+    std::fs::write(
+        project_dir.join("plot/chapters/01.md"),
+        CHAPTER_WITH_TWO_SCENES,
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn add_character_makes_a_romaji_id_from_the_reading_and_reports_the_file() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    create_test_project(&project_dir).await;
+    let console = BufferConsole::new();
+
+    let code = run_plain(
+        &[
+            "add",
+            "character",
+            &path_arg(&project_dir),
+            "--name",
+            "霧島 凛",
+            "--reading",
+            "きりしま りん",
+            "--role",
+            "主人公",
+            "--body",
+            "## 口調\n静かに話す。\n",
+        ],
+        &console,
+    )
+    .await;
+
+    assert_eq!(
+        code,
+        std::process::ExitCode::from(0),
+        "{}",
+        console.stderr()
+    );
+    assert!(
+        console
+            .stderr()
+            .contains("書き込み: characters/kirishima-rin.md")
+    );
+    let text = std::fs::read_to_string(project_dir.join("characters/kirishima-rin.md")).unwrap();
+    assert!(text.contains("name: 霧島 凛"), "{text}");
+    assert!(text.contains("role: 主人公"), "{text}");
+    assert!(text.contains("order: 1"), "{text}");
+    assert!(text.ends_with("## 口調\n静かに話す。\n"), "{text}");
+}
+
+#[tokio::test]
+async fn add_with_dry_run_prints_the_change_and_writes_nothing() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    create_test_project(&project_dir).await;
+    let console = BufferConsole::new();
+
+    let code = run_plain(
+        &[
+            "add",
+            "world",
+            &path_arg(&project_dir),
+            "--title",
+            "用語集",
+            "--body",
+            "霧：朝に出る。",
+            "--dry-run",
+        ],
+        &console,
+    )
+    .await;
+
+    assert_eq!(
+        code,
+        std::process::ExitCode::from(0),
+        "{}",
+        console.stderr()
+    );
+    assert!(
+        console.stdout().contains("=== world/doc.md ==="),
+        "{}",
+        console.stdout()
+    );
+    assert!(
+        console.stdout().contains("# 用語集"),
+        "{}",
+        console.stdout()
+    );
+    assert!(!project_dir.join("world/doc.md").exists());
+    assert!(!console.stderr().contains("書き込み:"));
+}
+
+#[tokio::test]
+async fn add_world_reads_the_body_from_a_file() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    create_test_project(&project_dir).await;
+    let body_file = temp_dir.path().join("body.txt");
+    std::fs::write(&body_file, "霧：朝に出る。\r\n").unwrap();
+    let console = BufferConsole::new();
+
+    let code = run_plain(
+        &[
+            "add",
+            "world",
+            &path_arg(&project_dir),
+            "--title",
+            "用語集",
+            "--name",
+            "glossary",
+            "--body-file",
+            &path_arg(&body_file),
+        ],
+        &console,
+    )
+    .await;
+
+    assert_eq!(
+        code,
+        std::process::ExitCode::from(0),
+        "{}",
+        console.stderr()
+    );
+    assert_eq!(
+        std::fs::read_to_string(project_dir.join("world/glossary.md")).unwrap(),
+        "# 用語集\n\n霧：朝に出る。\n"
+    );
+}
+
+#[tokio::test]
+async fn add_scene_inserts_before_the_given_scene_with_a_new_id() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    project_with_a_chapter(&project_dir).await;
+    let console = BufferConsole::new();
+
+    let code = run_plain(
+        &[
+            "add",
+            "scene",
+            &path_arg(&project_dir),
+            "01",
+            "--title",
+            "屋根裏の足音",
+            "--pov",
+            "霧島 凛",
+            "--characters",
+            "霧島 凛,佐藤 健二",
+            "--target-chars",
+            "1500",
+            "--before",
+            "s02",
+        ],
+        &console,
+    )
+    .await;
+
+    assert_eq!(
+        code,
+        std::process::ExitCode::from(0),
+        "{}",
+        console.stderr()
+    );
+    assert!(console.stderr().contains("書き込み: plot/chapters/01.md"));
+    let text = std::fs::read_to_string(project_dir.join("plot/chapters/01.md")).unwrap();
+    let positions: Vec<usize> = ["id: s01", "id: s03", "id: s02"]
+        .iter()
+        .map(|id| {
+            text.find(id)
+                .unwrap_or_else(|| panic!("{id} が無い: {text}"))
+        })
+        .collect();
+    assert!(positions.is_sorted(), "{text}");
+    assert!(text.contains("佐藤 健二"), "{text}");
+    assert!(text.contains("target_chars: 1500"), "{text}");
+}
+
+#[tokio::test]
+async fn remove_character_moves_the_file_to_the_trash_and_names_the_scenes_that_mention_them() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    project_with_a_chapter(&project_dir).await;
+    std::fs::write(
+        project_dir.join("characters/rin.md"),
+        "---\nname: 霧島 凛\n---\n本文\n",
+    )
+    .unwrap();
+    let console = BufferConsole::new();
+
+    let code = run_plain(
+        &["remove", &path_arg(&project_dir), "character:rin"],
+        &console,
+    )
+    .await;
+
+    assert_eq!(
+        code,
+        std::process::ExitCode::from(0),
+        "{}",
+        console.stderr()
+    );
+    let stderr = console.stderr();
+    assert!(stderr.contains("characters/rin.md"), "{stderr}");
+    assert!(stderr.contains(".kataribe/trash/"), "{stderr}");
+    assert!(
+        stderr.contains("s01「洋館への道」（視点・登場人物）"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("s02「閉ざされた書斎」（登場人物）"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("ゴミ箱へ: characters/rin.md"), "{stderr}");
+    assert!(!project_dir.join("characters/rin.md").exists());
+    let trashed = std::fs::read_dir(project_dir.join(".kataribe/trash"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    assert!(trashed.join("characters/rin.md").is_file());
+}
+
+#[tokio::test]
+async fn remove_scene_says_how_much_text_goes_to_the_trash() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    project_with_a_chapter(&project_dir).await;
+    std::fs::create_dir_all(project_dir.join("manuscript/01")).unwrap();
+    std::fs::write(
+        project_dir.join("manuscript/01/s02.txt"),
+        "書斎の扉は閉じていた。\n",
+    )
+    .unwrap();
+    let console = BufferConsole::new();
+
+    let code = run_plain(
+        &["remove", &path_arg(&project_dir), "scene:01/s02"],
+        &console,
+    )
+    .await;
+
+    assert_eq!(
+        code,
+        std::process::ExitCode::from(0),
+        "{}",
+        console.stderr()
+    );
+    let stderr = console.stderr();
+    assert!(
+        stderr.contains("manuscript/01/s02.txt（11 字）"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("ゴミ箱へ: manuscript/01/s02.txt"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("書き込み: plot/chapters/01.md"), "{stderr}");
+    assert!(!project_dir.join("manuscript/01/s02.txt").exists());
+    let chapter = std::fs::read_to_string(project_dir.join("plot/chapters/01.md")).unwrap();
+    assert!(!chapter.contains("id: s02"), "{chapter}");
+}
+
+#[tokio::test]
+async fn remove_with_dry_run_prints_the_plan_and_moves_nothing() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    create_test_project(&project_dir).await;
+    std::fs::write(project_dir.join("world/glossary.md"), "# 用語集\n").unwrap();
+    let console = BufferConsole::new();
+
+    let code = run_plain(
+        &[
+            "remove",
+            &path_arg(&project_dir),
+            "world:glossary",
+            "--dry-run",
+        ],
+        &console,
+    )
+    .await;
+
+    assert_eq!(
+        code,
+        std::process::ExitCode::from(0),
+        "{}",
+        console.stderr()
+    );
+    assert!(
+        console
+            .stdout()
+            .contains("=== ゴミ箱へ移す: world/glossary.md ==="),
+        "{}",
+        console.stdout()
+    );
+    assert!(console.stderr().contains(".kataribe/trash/"));
+    assert!(project_dir.join("world/glossary.md").is_file());
+    assert!(!project_dir.join(".kataribe/trash").exists());
+}
+
+#[tokio::test]
+async fn add_character_with_a_used_id_fails_and_leaves_the_file_alone() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    create_test_project(&project_dir).await;
+    std::fs::write(
+        project_dir.join("characters/rin.md"),
+        "---\nname: 先にいた凛\n---\n",
+    )
+    .unwrap();
+    let console = BufferConsole::new();
+
+    let code = run_plain(
+        &[
+            "add",
+            "character",
+            &path_arg(&project_dir),
+            "--name",
+            "別の凛",
+            "--id",
+            "rin",
+        ],
+        &console,
+    )
+    .await;
+
+    assert_eq!(code, std::process::ExitCode::from(1));
+    assert!(
+        console.stderr().contains("ID「rin」はもう使われています"),
+        "{}",
+        console.stderr()
+    );
+    let text = std::fs::read_to_string(project_dir.join("characters/rin.md")).unwrap();
+    assert_eq!(text, "---\nname: 先にいた凛\n---\n");
+}
+
+#[tokio::test]
+async fn remove_refuses_the_world_overview_and_a_missing_target() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    create_test_project(&project_dir).await;
+    std::fs::write(project_dir.join("world/overview.md"), "# 世界観\n").unwrap();
+
+    let overview = BufferConsole::new();
+    let overview_code = run_plain(
+        &["remove", &path_arg(&project_dir), "world:overview"],
+        &overview,
+    )
+    .await;
+    let missing = BufferConsole::new();
+    let missing_code = run_plain(
+        &["remove", &path_arg(&project_dir), "character:nobody"],
+        &missing,
+    )
+    .await;
+
+    assert_eq!(overview_code, std::process::ExitCode::from(1));
+    assert_eq!(missing_code, std::process::ExitCode::from(1));
+    assert!(
+        missing.stderr().contains("characters/nobody.md"),
+        "{}",
+        missing.stderr()
+    );
+    assert!(project_dir.join("world/overview.md").is_file());
+}
+
+#[tokio::test]
+async fn bad_arguments_for_add_and_remove_are_usage_errors() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let folder = path_arg(temp_dir.path());
+    for args in [
+        vec!["remove", &folder, "chapter:01"],
+        vec!["remove", &folder, "scene:01"],
+        vec!["add", "character", &folder],
+        vec!["add", "scene", &folder, "1", "--title", "題"],
+        vec![
+            "add",
+            "world",
+            &folder,
+            "--title",
+            "題",
+            "--body",
+            "a",
+            "--body-file",
+            "b",
+        ],
+        vec!["add", "nothing", &folder],
+    ] {
+        let console = BufferConsole::new();
+
+        let code = run_plain(&args, &console).await;
+
+        assert_eq!(
+            code,
+            std::process::ExitCode::from(2),
+            "{args:?}: {}",
+            console.stderr()
+        );
+    }
+}

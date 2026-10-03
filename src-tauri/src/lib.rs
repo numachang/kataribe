@@ -19,6 +19,7 @@ mod logging;
 mod projects;
 mod settings;
 mod state;
+mod structure;
 
 use tauri::Manager;
 
@@ -57,6 +58,8 @@ pub fn run() {
             commands::generate,
             commands::cancel_generation,
             commands::apply_change_set,
+            commands::plan_structure_edit,
+            commands::suggest_character_id,
         ])
         .run(tauri::generate_context!())
     {

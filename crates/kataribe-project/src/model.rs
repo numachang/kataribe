@@ -8,7 +8,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::frontmatter::{self, Document, YamlError};
-use crate::path::is_windows_reserved_name;
+use crate::slug;
 
 /// 現在サポートしている作品フォルダの形式バージョン。
 pub const FORMAT_VERSION: u32 = 1;
@@ -152,6 +152,11 @@ pub enum ModelError {
     /// 登場人物 id が規則（小文字英数字とハイフン、48 文字以内）に合わない。
     #[error("登場人物 ID は英小文字・数字・ハイフンのみ、48 文字以内にしてください: {0}")]
     InvalidCharacterId(String),
+    /// 世界観の資料の名前が規則（小文字英数字とハイフン、48 文字以内。`overview` は不可）に合わない。
+    #[error(
+        "世界観の資料のファイル名は英小文字・数字・ハイフンのみ、48 文字以内にしてください（overview は使えません）: {0}"
+    )]
+    InvalidWorldDocumentName(String),
     /// 章番号が 2〜3 桁の数字になっていない。
     #[error("章番号は 2〜3 桁の数字にしてください: {0}")]
     InvalidChapterId(String),
@@ -167,11 +172,9 @@ pub enum ModelError {
 pub struct CharacterId(String);
 
 impl CharacterId {
-    const MAX_LEN: usize = 48;
-
     /// 文字列を検証して `CharacterId` を作る。
     pub fn new(input: &str) -> Result<Self, ModelError> {
-        if is_valid_character_slug(input) {
+        if slug::is_valid(input) {
             Ok(Self(input.to_string()))
         } else {
             Err(ModelError::InvalidCharacterId(input.to_string()))
@@ -184,24 +187,9 @@ impl CharacterId {
     /// 結果が空になる場合は `"character"`、`taken` に既に含まれる場合は `-2`, `-3`, … を付ける。
     #[must_use]
     pub fn from_hint(hint: &str, taken: &[CharacterId]) -> Self {
-        let mut slug = slugify(hint);
-        if slug.is_empty() {
-            slug = "character".to_string();
-        }
-        if is_windows_reserved_name(&slug) {
-            slug = truncate_slug(&format!("{slug}-id"), Self::MAX_LEN);
-        }
-        if !taken.iter().any(|id| id.0 == slug) {
-            return Self(slug);
-        }
-        let mut suffix_number = 2u32;
-        loop {
-            let candidate = with_suffix(&slug, suffix_number, Self::MAX_LEN);
-            if !taken.iter().any(|id| id.0 == candidate) {
-                return Self(candidate);
-            }
-            suffix_number += 1;
-        }
+        Self(slug::from_hint(hint, "character", |candidate| {
+            taken.iter().any(|id| id.0 == candidate)
+        }))
     }
 
     /// `/` 区切りパスの一要素として使える文字列表現。
@@ -238,62 +226,47 @@ impl<'de> Deserialize<'de> for CharacterId {
     }
 }
 
-fn is_valid_character_slug(input: &str) -> bool {
-    if input.is_empty() || input.len() > CharacterId::MAX_LEN || !input.is_ascii() {
-        return false;
-    }
-    if is_windows_reserved_name(input) {
-        return false;
-    }
-    let bytes = input.as_bytes();
-    if bytes[0] == b'-' || bytes[bytes.len() - 1] == b'-' {
-        return false;
-    }
-    let mut previous_was_hyphen = false;
-    for &byte in bytes {
-        let is_alnum = byte.is_ascii_lowercase() || byte.is_ascii_digit();
-        if is_alnum {
-            previous_was_hyphen = false;
-        } else if byte == b'-' && !previous_was_hyphen {
-            previous_was_hyphen = true;
+/// 世界観の資料（`world/<name>.md`）のファイル名。`overview` は世界観の概要（`world/overview.md`）の
+/// ものなので使えない。
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct WorldDocumentName(String);
+
+impl WorldDocumentName {
+    /// `world/overview.md`（世界観の概要）の名前。[`crate::layout::WORLD_OVERVIEW`] と一致させること。
+    const RESERVED: &'static str = "overview";
+
+    /// 文字列を検証して `WorldDocumentName` を作る。規則は人物の id と同じ（小文字英数字とハイフン、
+    /// 48 文字以内）で、さらに概要の名前は使えない。
+    pub fn new(input: &str) -> Result<Self, ModelError> {
+        if slug::is_valid(input) && input != Self::RESERVED {
+            Ok(Self(input.to_string()))
         } else {
-            return false;
+            Err(ModelError::InvalidWorldDocumentName(input.to_string()))
         }
     }
-    true
+
+    /// 任意の文字列（題をローマ字にしたものなど）から名前を作る。
+    ///
+    /// 人物の id と同じ規則で整える。結果が空になる場合は `"doc"`、概要の名前や `taken` に既に含まれる場合は
+    /// `-2`, `-3`, … を付ける。
+    #[must_use]
+    pub fn from_hint(hint: &str, taken: &[WorldDocumentName]) -> Self {
+        Self(slug::from_hint(hint, "doc", |candidate| {
+            candidate == Self::RESERVED || taken.iter().any(|name| name.0 == candidate)
+        }))
+    }
+
+    /// `/` 区切りパスの一要素として使える文字列表現。
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
-fn slugify(hint: &str) -> String {
-    let mut slug = String::with_capacity(hint.len());
-    for ch in hint.to_lowercase().chars() {
-        if matches!(ch, 'a'..='z' | '0'..='9') {
-            slug.push(ch);
-        } else if !slug.is_empty() && !slug.ends_with('-') {
-            slug.push('-');
-        }
+impl fmt::Display for WorldDocumentName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
     }
-    while slug.ends_with('-') {
-        slug.pop();
-    }
-    truncate_slug(&slug, CharacterId::MAX_LEN)
-}
-
-fn truncate_slug(slug: &str, max_len: usize) -> String {
-    if slug.len() <= max_len {
-        return slug.to_string();
-    }
-    let mut truncated = slug.chars().take(max_len).collect::<String>();
-    while truncated.ends_with('-') {
-        truncated.pop();
-    }
-    truncated
-}
-
-fn with_suffix(base: &str, number: u32, max_len: usize) -> String {
-    let suffix = format!("-{number}");
-    let max_base_len = max_len.saturating_sub(suffix.len());
-    let base = truncate_slug(base, max_base_len);
-    format!("{base}{suffix}")
 }
 
 /// 章の id（`01`, `02`, … `999` まで）。
@@ -687,6 +660,53 @@ mod tests {
 
         let third = CharacterId::from_hint("Rin", &[first, second]);
         assert_eq!(third.as_str(), "rin-3");
+    }
+
+    #[test]
+    fn world_document_name_accepts_slugs_and_rejects_the_overview_and_invalid_names() {
+        assert!(WorldDocumentName::new("glossary").is_ok());
+        assert!(WorldDocumentName::new("city-map-2").is_ok());
+        assert!(WorldDocumentName::new("overview").is_err());
+        assert!(WorldDocumentName::new("").is_err());
+        assert!(WorldDocumentName::new("Glossary").is_err());
+        assert!(WorldDocumentName::new("用語集").is_err());
+        assert!(WorldDocumentName::new("con").is_err());
+        assert!(WorldDocumentName::new(&"a".repeat(49)).is_err());
+    }
+
+    #[test]
+    fn world_document_name_from_hint_falls_back_to_doc_and_numbers_duplicates() {
+        assert_eq!(
+            WorldDocumentName::from_hint("City Map", &[]).as_str(),
+            "city-map"
+        );
+        assert_eq!(WorldDocumentName::from_hint("", &[]).as_str(), "doc");
+        assert_eq!(WorldDocumentName::from_hint("漢字", &[]).as_str(), "doc");
+
+        let first = WorldDocumentName::from_hint("", &[]);
+        let second = WorldDocumentName::from_hint("", std::slice::from_ref(&first));
+        let third = WorldDocumentName::from_hint("", &[first, second.clone()]);
+        assert_eq!(second.as_str(), "doc-2");
+        assert_eq!(third.as_str(), "doc-3");
+    }
+
+    #[test]
+    fn world_document_name_from_hint_never_returns_the_overview() {
+        assert_eq!(
+            WorldDocumentName::from_hint("Overview", &[]).as_str(),
+            "overview-2"
+        );
+    }
+
+    #[test]
+    fn world_document_name_from_hint_keeps_the_numbered_name_within_the_length_limit() {
+        let long = "a".repeat(60);
+        let first = WorldDocumentName::from_hint(&long, &[]);
+        let second = WorldDocumentName::from_hint(&long, std::slice::from_ref(&first));
+        assert_eq!(first.as_str().len(), 48);
+        assert!(second.as_str().len() <= 48);
+        assert!(second.as_str().ends_with("-2"));
+        assert!(WorldDocumentName::new(second.as_str()).is_ok());
     }
 
     #[test]

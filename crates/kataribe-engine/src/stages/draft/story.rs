@@ -7,7 +7,7 @@ use kataribe_project::{
 };
 
 use crate::error::{EngineError, Result};
-use crate::stages::cast::same_person;
+use crate::names;
 use crate::stages::materials::{document_body, find_chapter, round_to_hundreds, world_text};
 
 /// 一度に登場人物の資料を入れる上限（場面に名前の無いときに主要人物から選ぶ人数）。
@@ -164,7 +164,7 @@ impl Story {
         }
         let mut cast: Vec<&Character> = Vec::new();
         for name in names {
-            if let Some(character) = self.find_character(name)
+            if let Some(character) = names::find_character(&self.characters, name)
                 && !cast.iter().any(|member| member.id == character.id)
             {
                 cast.push(character);
@@ -174,27 +174,6 @@ impl Story {
             cast = self.characters.iter().take(DEFAULT_CAST_SIZE).collect();
         }
         cast
-    }
-
-    /// 名前から人物を探す。「凛」のように名だけで書かれていても見つける。
-    fn find_character(&self, name: &str) -> Option<&Character> {
-        self.characters
-            .iter()
-            .find(|character| same_person(&character.meta.name, name))
-            .or_else(|| {
-                let name = name.trim();
-                (!name.is_empty())
-                    .then(|| {
-                        self.characters.iter().find(|character| {
-                            character
-                                .meta
-                                .name
-                                .split_whitespace()
-                                .any(|part| part == name)
-                        })
-                    })
-                    .flatten()
-            })
     }
 
     /// このシーンの目標文字数。シーン構成に無ければ、作品の目標をシーンの数で割って決める。

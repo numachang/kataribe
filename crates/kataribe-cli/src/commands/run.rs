@@ -110,9 +110,7 @@ async fn apply(
     console: &dyn Console,
 ) -> anyhow::Result<()> {
     super::apply_change_set(changes, project, apply_guard, console).await?;
-    for file in &changes.files {
-        console.eprint(&format!("  書き込み: {}\n", file.path))?;
-    }
+    super::report_applied_changes(console, changes, "  ")?;
     Ok(())
 }
 

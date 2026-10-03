@@ -30,6 +30,8 @@ pub const COMMAND_NAMES: &[&str] = &[
     "generate",
     "cancel_generation",
     "apply_change_set",
+    "plan_structure_edit",
+    "suggest_character_id",
 ];
 
 #[cfg(test)]

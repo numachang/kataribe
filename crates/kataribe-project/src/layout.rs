@@ -2,7 +2,7 @@
 //!
 //! パスの文字列はここにしか書かない。他のモジュールはこの定数・関数を通して参照する。
 
-use crate::model::{ChapterId, CharacterId, SceneId};
+use crate::model::{ChapterId, CharacterId, SceneId, WorldDocumentName};
 use crate::path::RelPath;
 
 /// 作品情報。
@@ -47,6 +47,20 @@ pub fn character_path(id: &CharacterId) -> RelPath {
     RelPath::trusted(format!("{CHARACTERS_DIR}/{}.md", id.as_str()))
 }
 
+/// `world/<name>.md`（世界観の資料）のパス。
+#[must_use]
+pub fn world_document_path(name: &WorldDocumentName) -> RelPath {
+    RelPath::trusted(format!("{WORLD_DIR}/{}.md", name.as_str()))
+}
+
+/// `world/` 直下の、世界観の概要（`overview.md`）以外の Markdown か。利用者が足した世界観の資料の判定。
+///
+/// 手で足したファイルも対象にするので、ファイル名は [`WorldDocumentName`] の規則に合っていなくてよい。
+#[must_use]
+pub fn is_additional_world_document(path: &RelPath) -> bool {
+    markdown_stem_in(path, WORLD_DIR).is_some() && path.as_str() != WORLD_OVERVIEW
+}
+
 /// `plot/chapters/<NN>.md` のパス。
 #[must_use]
 pub fn chapter_path(id: &ChapterId) -> RelPath {
@@ -89,6 +103,12 @@ fn markdown_stem_in<'a>(path: &'a RelPath, dir: &str) -> Option<&'a str> {
     (is_directly_in_dir && path.extension() == Some("md")).then(|| path.file_stem())
 }
 
+/// `manuscript/<NN>` のパス（章の本文を入れるフォルダ）。
+#[must_use]
+pub fn manuscript_chapter_dir(chapter: &ChapterId) -> RelPath {
+    RelPath::trusted(format!("{MANUSCRIPT_DIR}/{chapter}"))
+}
+
 /// `manuscript/<NN>/<scene-id>.txt` のパス。
 #[must_use]
 pub fn scene_text_path(chapter: &ChapterId, scene: &SceneId) -> RelPath {
@@ -121,6 +141,32 @@ mod tests {
     fn character_path_builds_expected_location() {
         let id = CharacterId::new("kirishima-rin").unwrap();
         assert_eq!(character_path(&id).as_str(), "characters/kirishima-rin.md");
+    }
+
+    #[test]
+    fn world_document_path_builds_expected_location() {
+        let name = WorldDocumentName::new("glossary").unwrap();
+        assert_eq!(world_document_path(&name).as_str(), "world/glossary.md");
+    }
+
+    #[test]
+    fn world_document_names_never_point_at_the_overview() {
+        let overview_stem = RelPath::new(WORLD_OVERVIEW).unwrap();
+        assert!(WorldDocumentName::new(overview_stem.file_stem()).is_err());
+        let generated = WorldDocumentName::from_hint(overview_stem.file_stem(), &[]);
+        assert_ne!(world_document_path(&generated).as_str(), WORLD_OVERVIEW);
+    }
+
+    #[test]
+    fn additional_world_documents_are_markdown_files_directly_under_world_except_the_overview() {
+        let is_additional = |path: &str| is_additional_world_document(&RelPath::new(path).unwrap());
+        assert!(is_additional("world/glossary.md"));
+        assert!(is_additional("world/用語集.md"));
+        assert!(!is_additional("world/overview.md"));
+        assert!(!is_additional("world/notes.txt"));
+        assert!(!is_additional("world/maps/town.md"));
+        assert!(!is_additional("characters/rin.md"));
+        assert!(!is_additional("world"));
     }
 
     #[test]
@@ -203,6 +249,12 @@ mod tests {
         ] {
             assert_eq!(kind_of(path), DocumentKind::Other, "path: {path}");
         }
+    }
+
+    #[test]
+    fn manuscript_chapter_dir_builds_expected_location() {
+        let chapter = ChapterId::from_number(2);
+        assert_eq!(manuscript_chapter_dir(&chapter).as_str(), "manuscript/02");
     }
 
     #[test]

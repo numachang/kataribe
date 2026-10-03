@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-plan-structure-edit"
+description = "Enables the plan_structure_edit command without any pre-configured scope."
+commands.allow = ["plan_structure_edit"]
+
+[[permission]]
+identifier = "deny-plan-structure-edit"
+description = "Denies the plan_structure_edit command without any pre-configured scope."
+commands.deny = ["plan_structure_edit"]

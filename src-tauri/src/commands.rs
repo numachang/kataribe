@@ -9,7 +9,7 @@ use tauri::ipc::Channel;
 
 use kataribe_engine::{
     ChangeSet, GenerationEvent, GenrePreset, LlmSettings, NewProject, PipelineStep,
-    ProjectOverview, ProjectSettings, Task,
+    ProjectOverview, ProjectSettings, StructureEdit, StructurePlan, Task,
 };
 use kataribe_llm::ModelInfo;
 use kataribe_project::{EditableDocument, ParsedDocument};
@@ -21,7 +21,7 @@ use crate::error::CommandError;
 use crate::hashed_file::{DocumentFile, ProjectSettingsFile};
 use crate::settings::AppSettings;
 use crate::state::AppState;
-use crate::{engine_client, files, generation, projects};
+use crate::{engine_client, files, generation, projects, structure};
 
 // ---- 設定 ----
 
@@ -257,4 +257,27 @@ pub async fn apply_change_set(
     let project = state.require_project()?;
     change_set.apply(&project).map_err(CommandError::from)?;
     kataribe_engine::overview(&project).map_err(CommandError::from)
+}
+
+// ---- 構成（人物・世界観の資料・シーンの追加と削除） ----
+
+/// 構成の操作の変更案と、確認の材料を作る。作品フォルダは書き換えない。適用は `apply_change_set`。
+#[tauri::command]
+pub async fn plan_structure_edit(
+    state: State<'_, AppState>,
+    edit: StructureEdit,
+) -> Result<StructurePlan, CommandError> {
+    let project = state.require_project()?;
+    structure::plan_structure_edit(&project, &edit)
+}
+
+/// 人物の ID の案を、読み（かな）からローマ字で作る。
+#[tauri::command]
+pub async fn suggest_character_id(
+    state: State<'_, AppState>,
+    reading: String,
+    name: String,
+) -> Result<String, CommandError> {
+    let project = state.require_project()?;
+    structure::suggest_character_id(&project, &reading, &name)
 }

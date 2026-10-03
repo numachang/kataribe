@@ -49,6 +49,19 @@
   （未知の項目は残るが、コメントと順番は残らない）。
 - 章立ての `scenes` で `id` は一意でなければならない。重複した章立て（手で複製して直し忘れたなど）は、
   画面では項目に分けず文字列のまま開き（理由を添える）、項目に分けた保存は受け付けない（§3.3）。
+- 人物・世界観の資料・シーンは、利用者が自分で書いて追加・削除できる（§4.8）。追加するときの名前は次のように決める。
+  - 人物の `id`（`characters/<id>.md` の名前）は、読み（かな）をローマ字にして作る
+    （`きりしま りん` → `kirishima-rin`。変換の規則は §3.1）。読みが無ければ名前から、それでも作れなければ `character`。
+    使用済みなら `-2`, `-3`, … を付ける。利用者が自分で決めてもよい。
+  - 世界観の資料のファイル名（`world/<name>.md` の `name`）は、人物の `id` と同じ規則（小文字の英数字とハイフン、48 文字以内）。
+    `overview` は世界観の概要（`world/overview.md`）の名前なので使えない。自動で決めるときは、題が全部かな・英数字・区切りで
+    書けているときだけローマ字にし、それ以外（漢字を含む題）は `doc`、重なれば `doc-2`, `doc-3`, …にする。
+    手で足したファイルは、この規則に合わない名前（日本語など）でもよい。
+  - 世界観の資料は front matter を持たず文字列のまま開く文書なので、題は本文の先頭の見出し（`# 題`）にする
+    （生成した資料と同じ形で、目次の表示名は見出しから拾われる）。
+- 削除は完全には消さず、ゴミ箱 `.kataribe/trash/<日時>/<元の相対パス>` へ移す。1 回の適用につき `<日時>` のフォルダは 1 つで
+  （同じ日時があれば `-1`, `-2`, … を付ける）、同時に消した本文なども同じフォルダに入る。
+  ゴミ箱から戻す操作はまだ無い（手で戻せる）。
 
 ### kataribe.yaml
 
@@ -127,6 +140,21 @@ kataribe-project ─┘          │
 | `normalize` | `normalize(&str, &NormalizeOptions) -> String` | 段落頭の全角字下げ、`…`/`...`→`……`、`--`→`――`、`!?`→`！？` と後続の全角空白、空行の整理、行末空白の除去 |
 | `quality` | `analyze(&str, &QualityOptions) -> QualityReport` | 品質指標と問題点の検出（§7） |
 | `repetition` | `overused_phrases(&str, &OverusedOptions) -> Vec<RepeatedPhrase>` | 繰り返し使っている表現の検出（漢字かカタカナを含む 3〜10 字。人物名は除く） |
+| `romaji` | `to_romaji(&str) -> String`、`is_romanizable(&str) -> bool` | かな → ローマ字（ヘボン式の簡略形。LLM が作る id の `sato-kenji` と書き方をそろえる）。人物の id や世界観の資料のファイル名を、読みから自動で作るために使う（§2）。規則は下の箇条書き |
+
+`romaji` の規則:
+
+- カタカナはひらがなに直してから変換する（ヴは `vu`）。し `shi`・ち `chi`・つ `tsu`・ふ `fu`・じぢ `ji`・づ `zu`・を `o`。
+- 拗音は `kya`・`sha`・`cha`・`ja`、外来音は `fa`・`ti`・`di`・`tu`・`wi`・`we`・`va`・`she`・`je`・`che`。
+  単独の小さい母音はその母音。
+- 促音は次の子音を重ねる（`っか` → `kka`、`っち` → `tchi`）。語の末尾や、母音・ん・区切りの前では落とす。
+- ん は常に `n`（`b`・`m`・`p` の前でも `m` にしない。アポストロフィも付けない）。`しんいち` → `shinichi`。
+- 長音の「ー」「〜」は落とす。同じ語の中の `ou`・`oo` は `o`、`uu` は `u` にまとめる
+  （`さとう` → `sato`、`おおの` → `ono`、`ゆうこ` → `yuko`）。`ei`・`ii`・`aa` はそのまま。
+- 英数字はそのまま使い、全角は半角にする。空白（半角・全角）・「・」「＝」「=」「‐」は語の区切り（半角の空白 1 つ）にする。
+  漢字・記号・絵文字は区切りとして落とす。
+- `is_romanizable` は、全体がかな・英数字・区切りだけで書かれているか。漢字を含む題をローマ字にすると漢字が落ちて別の語に
+  なるので、ローマ字を名前に使ってよいかの判断に使う。
 
 `TextStats`・`Segment`・`QualityReport` などは `serde::Serialize` と（`ts` feature で）`ts_rs::TS` を実装する。
 
@@ -201,24 +229,34 @@ pub async fn collect(stream, on_event) -> Result<Completion, LlmError>;   // 全
 | モジュール | 公開 API | 内容 |
 |---|---|---|
 | `path` | `RelPath` | 作品フォルダ内の相対パス。`..`・絶対パス・ドライブ指定・`\`・Windows 予約名・末尾のドット／空白・制御文字を拒否する |
-| `store` | `ProjectStore`、`TextFile { content, hash }`、`ContentHash`、`WriteCondition`、`BackupMode`、`normalize_text(&str) -> String` | フォルダ外に出られないファイル操作。アトミック書き込み、競合検出、バックアップ、ゴミ箱 |
+| `store` | `ProjectStore`、`TextFile { content, hash }`、`ContentHash`、`WriteCondition`、`BackupMode`、`PendingChange`、`PendingWrite`、`normalize_text(&str) -> String` | フォルダ外に出られないファイル操作。アトミック書き込み、競合検出、バックアップ、ゴミ箱。基本の読み書きは `store/mod.rs`、複数の変更を「全部か無しか」で反映する処理は `store/batch.rs` |
 | `frontmatter` | `Document<M> { meta, body }`、`parse`、`render`、`replace_body(text, body)` | YAML front matter の分解・合成（未知の項目を保持）。`replace_body` は front matter を書かれたまま残して本文だけを差し替える |
-| `layout` | パス定数と `character_path(id)` などの関数、`document_kind(&RelPath) -> DocumentKind` | §2 のフォルダ構成の唯一の定義。`document_kind` は `characters/<有効な id>.md` を人物資料、`plot/chapters/<有効な NN>.md` を章立て、それ以外（サブフォルダの下・id として無効な名前・ほかのファイル）を「その他」と判定する。`Project::characters` / `chapters` が拾うファイルと同じ条件 |
-| `model` | `Manifest`・`Rating`・`MarkdownDoc`・`Character`/`CharacterMeta`・`Chapter`/`ChapterMeta`・`ScenePlan`・`ChapterId`・`SceneId`・`CharacterId` | 各ファイルの型。`render()` でファイル内容を生成 |
+| `layout` | パス定数と `character_path(id)`・`world_document_path(name)`・`manuscript_chapter_dir(chapter)`・`is_additional_world_document(path)` などの関数、`document_kind(&RelPath) -> DocumentKind` | §2 のフォルダ構成の唯一の定義。`document_kind` は `characters/<有効な id>.md` を人物資料、`plot/chapters/<有効な NN>.md` を章立て、それ以外（サブフォルダの下・id として無効な名前・ほかのファイル）を「その他」と判定する。`Project::characters` / `chapters` が拾うファイルと同じ条件 |
+| `model` | `Manifest`・`Rating`・`MarkdownDoc`・`Character`/`CharacterMeta`・`Chapter`/`ChapterMeta`・`ScenePlan`・`ChapterId`・`SceneId`・`CharacterId`・`WorldDocumentName` | 各ファイルの型。`render()` でファイル内容を生成。`CharacterId` と `WorldDocumentName`（世界観の資料のファイル名。`overview` は不可）は slug の検証と、重なったときに番号を付ける処理を共有する |
 | （crate 直下） | `EditableDocument`、`LoadedDocument { document, hash, parse_error }`、`ParsedDocument { document, parse_error }`、`parse_document(&RelPath, &str) -> ParsedDocument` | 画面で編集する文書と、読み込んだ結果。人物資料と章立ては front matter を項目に分け、それ以外は文字列のまま扱う。実装は非公開の `document` モジュールにあり、型と関数を `lib.rs` から公開している（`Project::read_document` / `write_document` から使う） |
-| `project` | `Project` | 作品の作成・読み込み・型付きの取得。`update_manifest` で作品情報（`kataribe.yaml`）を書き換える。`read_document` / `write_document` で画面で編集する文書を読み書きする |
+| `project` | `Project` | 作品の作成・読み込み・型付きの取得。`update_manifest` で作品情報（`kataribe.yaml`）を書き換える。`read_document` / `write_document` で画面で編集する文書を読み書きする。`character_ids()`・`chapter_ids()`・`scene_text_ids(chapter)`・`world_document_names()` は、ファイル名だけから id の一覧を返す（中身は読まないので、YAML が壊れたファイルがあっても失敗しない。`characters()` / `chapters()` は 1 つでも壊れていると全体が失敗するので、追加の前に使用済みの id を知るのには使えない） |
 
 - `ProjectStore::write_text(path, content, WriteOptions { condition, backup })`
   - `WriteCondition::{Any, Absent, Matches(ContentHash)}`。条件に合わなければ `Conflict` エラー（外部で変更された可能性）。
   - 同じフォルダの一時ファイルに書いて fsync してから置き換える。Windows で一時的にロックされていたら短く再試行する。
   - `BackupMode::Throttled`（同じファイルは 10 分に 1 回まで）/ `Always`（LLM による置き換え時）/ `Never`。
     バックアップは `.kataribe/backups/<相対パス>/<日時>.<拡張子>`、1 ファイルあたり最新 20 件を残す。
-- `ProjectStore::write_all(&[PendingWrite { path, content, condition }], backup)` は複数のファイルを
-  **すべて書くか、何も書かないか** のどちらかで書く。先にすべての条件を確かめ、全ファイルを一時ファイルに書いてから
-  順に置き換える。置き換えの途中で失敗したら書き終えたファイルを元に戻し、戻せなければ `PartialWrite` を返す。
-- 「条件の確認から置き換えまで」は同じプロセスの中で排他する（自動保存と変更案の適用が重なっても、
-  両方が同じ内容を前提に通って片方の変更が消えることがないように）。
-- `remove` は削除せず `.kataribe/trash/<日時>/<相対パス>` へ移す。
+- `ProjectStore::apply_changes(&[PendingChange], backup)` は複数の変更を **すべて反映するか、何も反映しないか** のどちらかで行う。
+  `PendingChange` は `Write(PendingWrite { path, content, condition })`（新規作成・上書き）と
+  `Trash { path, expected }`（ゴミ箱へ移す。`expected` は今のファイルのハッシュ）。
+  反映の順は並び順に頼らず「ゴミ箱へ移す → 書く」。
+  - 先に形を検証する（`InvalidChangeSet`）。ゴミ箱へ移せるのは `.kataribe/` の外のファイルで、`kataribe.yaml` も不可。
+    同じパスへの変更は重ねられない（大文字小文字の違いは同じとみなす）。画面から戻ってくる値なので、ここで必ず検証する。
+  - 次に条件を確かめる（`Conflict`）。書き込みは `condition`、ゴミ箱へ移すのは今のハッシュが `expected` と一致すること。
+  - 全ファイルの新しい内容を一時ファイルに書き、バックアップを取り、ゴミ箱へ移し、一時ファイルで置き換える。
+    ここまでに失敗したら、反映済みの変更（置き換え・ゴミ箱への移動）を逆順に元へ戻し、戻せなければ `PartialWrite` を返す。
+    Windows でほかのアプリがファイルを開いていて移せないときも同じ（短く再試行してから、全部戻して失敗にする）。
+  - 戻り値は、書き込みごとの、書き込み後のハッシュ。
+- 「条件の確認から反映まで」は同じプロセスの中で排他する（自動保存と変更案の適用が重なっても、
+  両方が同じ内容を前提に通って片方の変更が消えることがないように）。`write_text`・`apply_changes`・`rename`・`remove` がすべて同じ排他を取る。
+  GUI と CLI を同時に使ったときは、プロセスをまたぐので守れない。
+- ゴミ箱: `remove` と `apply_changes` は、削除せず `.kataribe/trash/<日時>/<元の相対パス>` へ移す
+  （1 回の呼び出しにつき `<日時>` のフォルダは 1 つ。同じ日時があれば `-1`, `-2`, … を付ける。§2）。
 - `Project::read_document(path) -> LoadedDocument` は、人物資料・章立てのパスなら `EditableDocument::Character { meta, body }` /
   `Chapter { meta, body }`（章の `body` はストーリーライン）を返す。front matter を解釈できなければ、直して保存できるよう
   `Text { content }` のまま返し、理由（パスと行番号を含む）を `parse_error` に入れる。章立てのシーンの `id` が重複しているときも
@@ -265,8 +303,18 @@ pub async fn collect(stream, on_event) -> Result<Completion, LlmError>;   // 全
 どのタスクも **ファイルを直接書き換えず**、変更案 `ChangeSet { summary, files: Vec<FileChange>, project_root }` を返す。
 GUI は変更案を見せてから適用し、CLI は自動で適用する。
 
-- 適用（`ChangeSet::apply`）は `write_all` を使い、すべてのファイルを書くか、何も書かないかのどちらかにする。
-  各ファイルは生成を始めたときの内容のハッシュを条件にするので、その後に利用者が編集していれば `Conflict` になる。
+- `FileChange` は `kind` を持つ enum（JSON では `{ "kind": "write" | "trash", … }`）。
+  - `Write { path, content, previous, base_hash }`: ファイルの新規作成・上書き。`previous` は変更前の内容（新規なら `null`）。
+  - `Trash { path, files: [TrashedFile { path, base_hash, chars }] }`: ファイルをゴミ箱へ移す（§2）。`chars` は失われる内容の文字数
+    （利用者に見せるため）。今は `path` のファイル 1 つだけを移せる（フォルダは扱わない）。テキストとして読めず `base_hash` が
+    無いものは適用できない。
+  - 項目を別に足すのではなく enum にしているのは、`files` しか見ない表示や判定が削除を黙って見せないままにするのを、
+    型の絞り込み（漏れのない `match`）で防ぐため。生成のタスクが作るのは `Write` だけで、`Trash` は構成の操作（§4.8）が作る。
+- 適用（`ChangeSet::apply`）は `apply_changes`（§3.3）を使い、すべての変更を反映するか、何も反映しないかのどちらかにする。
+  反映の順は並び順に頼らず「ゴミ箱へ移す → 書く」。書き込みは生成を始めたときの内容のハッシュ（`base_hash`、新規なら
+  存在しないこと）を、ゴミ箱へ移すのは移す前に読んだ内容のハッシュを条件にするので、その後に利用者が編集していれば `Conflict` になる。
+  同じパスへの変更が重なる・`.kataribe/` や `kataribe.yaml` をゴミ箱へ移す・`Trash` の形が合わない変更案は `InvalidChangeSet`
+  （画面から戻ってくる値なので、Rust で必ず検証する）。
 - `project_root` は生成元の作品フォルダ（正規化した絶対パス）。生成中に別の作品を開き直しても、
   前の作品の変更案を今の作品に書き込まないよう、適用時に照合する。
 
@@ -378,6 +426,41 @@ Gemma には前者だけ、Qwen には後者だけが効き、両方を指定す
   （JSON Schema の指定を断られて、指示文で JSON を求め直した回）は「やり直しました」と出す。
 - 見出しには、工程全体のうち済んだ数（例 工程 13/15 済み）も出す。
 
+### 4.8 構成の操作（structure）
+
+人物・世界観の資料・シーンを、利用者が自分で書いて足したり消したりする操作。LLM も設定も要らないので、`Engine` の外の関数
+（`plan_structure_edit` / `suggest_character_id`）にしてあり、GUI と CLI が同じ関数を使う。作品フォルダは直接書き換えず、
+変更案を `StructurePlan` に入れて返す。適用は `ChangeSet::apply`（§4.1）。
+
+```rust
+pub fn plan_structure_edit(project: &Project, edit: &StructureEdit) -> Result<StructurePlan>;
+pub fn suggest_character_id(project: &Project, reading: &str, name: &str) -> Result<CharacterId>;
+
+pub struct StructurePlan {
+    pub change_set: ChangeSet,           // made_for(project) 済み
+    pub created: Option<RelPath>,        // 適用したあとに開く文書
+    pub references: Vec<SceneReference>, // 人物を削除するときだけ。その人物の名前を挙げているシーン
+    pub notices: Vec<String>,            // 「第 3 章は読めないため参照を確かめられませんでした」など
+}
+```
+
+| 操作（`StructureEdit`） | 変更案 | 備考 |
+|---|---|---|
+| `AddCharacter { id, meta, body }` | `characters/<id>.md` を `Write`（新規） | 名前が空なら `InvalidInput`。`id` が `None` なら読み（無ければ名前）からローマ字で決める（§2）。使用済みなら「ID「x」はもう使われています。」。`meta.order` が `None` なら今の最大の次（末尾）。本文が空でもよく、その人物は生成の工程に「人物資料: X」が取りかかれる工程として出る |
+| `RemoveCharacter { id }` | `Trash` | YAML が壊れていても消せる（名前を読めないので、参照は調べられず `notices` に出す） |
+| `AddWorldDocument { name, title, body }` | `world/<name>.md` を `Write`（新規）。中身は `# 題` と本文 | `name` が `None`（空欄）なら題から決める（§2）。題が空・複数行なら `InvalidInput` |
+| `RemoveWorldDocument { path }` | `Trash` | `world/` 直下の `.md` だけ。`world/overview.md` は `InvalidInput` |
+| `AddScene { chapter, before, scene }` | 章立てを `Write`（今の内容を条件にする） | `scene` は `ScenePlan` から id とビートを除いたもの（`NewScenePlan`）。`before` が `None` なら章の末尾。新しい id は、章立てにある id と、本文のフォルダに残っている本文（章立てから消えたシーンのもの）の id を避けて決める（消したシーンの本文を引き継がないため）。章立てが壊れている・シーンの id が重複しているときは `InvalidInput`（直してから操作する） |
+| `RemoveScene { chapter, scene }` | 章立てを `Write`、本文があれば本文を `Trash` | |
+
+- 章立ての YAML は書き直すので、利用者が手で書いたコメントや項目の順番は残らない（アプリが知らない項目は残る。画面から項目を
+  変えて保存したときと同じ）。
+- 参照の確認（人物を消すとき）: 全部の章を 1 つずつ解釈し、各シーンの `pov` と `characters` を、名前の一致（空白の違いと、
+  「凛」のような姓や名だけの書き方を同一人物とみなす。`names.rs`。本文の生成が名前から人物を探す規則と同じ）で調べる。
+  読めない章は `notices` に入れて続ける。シーンの名前は自動では書き換えず、知らせるだけにする。
+- 目次の項目 `OverviewEntry` は、章立て・本文の章見出し・シーンの本文の項目に `chapter`、シーンの本文の項目に `scene` を持つ
+  （本文の章見出しにはパスが無いので、画面が章番号を知るため）。
+
 ## 5. アプリ（src-tauri）と画面（src）
 
 - Rust 側は engine を Tauri コマンドとして公開するだけの薄い層にする。
@@ -451,10 +534,13 @@ Tauri コマンド名と引数（JS 側の名前。Rust 側は snake_case で受
 | parseDocument | `parse_document` | `path, content`（作品を開いていなくてもよい。ファイルは読み書きしない。`{ document, parse_error }` を返す。分け方は `read_document` と同じ。`path` が作品内の相対パスとして不正なら `invalid_input`） |
 | textStats / parseRuby / analyzeQuality | `text_stats` / `parse_ruby` / `analyze_quality` | `text` / `text` / `text, targetChars` |
 | generate / cancelGeneration | `generate` / `cancel_generation` | `jobId, task, onEvent`（`Channel<GenerationEvent>`）/ `jobId` |
-| applyChangeSet | `apply_change_set` | `changeSet` |
+| applyChangeSet | `apply_change_set` | `changeSet`（`files` の各要素は `kind` が `write` か `trash`。構成の変更もこれで適用する） |
+| planStructureEdit | `plan_structure_edit` | `edit`（`StructureEdit`。`kind` が `add_character`・`remove_character`・`add_world_document`・`remove_world_document`・`add_scene`・`remove_scene` のどれか）。`StructurePlan` を返す。作品フォルダは書き換えない（§4.8）。入力の誤り・消せない資料は `invalid_input`、対象が無ければ `not_found` |
+| suggestCharacterId | `suggest_character_id` | `reading, name`。人物の ID の案（文字列）を返す。使用済みの ID は避ける |
 
 コマンドの失敗は `{ kind: BackendErrorKind, message: string }` で返り、画面側で `BackendError` に変換する。
 作品を開いていない状態で作品の操作を呼んだときは `not_found`。
+`apply_change_set` に渡した変更案の形が正しくない（同じパスへの変更の重なり・ゴミ箱へ移せないパス・`Trash` の形の誤り）ときは `invalid_input`。
 フォルダ選択は `@tauri-apps/plugin-dialog` の `open({ directory: true })` を画面側から直接呼ぶ。
 
 ### 5.2 E2E テスト
@@ -501,6 +587,16 @@ kataribe-cli [グローバルオプション] <サブコマンド>
       --until があるときは、それより後ろの段階の工程を候補にしない
       （候補が無くなり、かつ完了していない工程が残っていれば行き詰まりとして失敗にする）。
       STAGE = concept | style | world | cast | characters | synopsis | outline | scenes | draft
+  add character <FOLDER> --name <T> [--reading <かな>] [--role <T>] [--summary <T>] [--order <N>] [--id <ID>]
+                         [--body <T> | --body-file <PATH>] [--dry-run]
+  add world     <FOLDER> --title <T> [--name <SLUG>] [--body <T> | --body-file <PATH>] [--dry-run]
+  add scene     <FOLDER> <NN> --title <T> [--summary <T>] [--pov <名前>] [--characters <A,B>] [--place <T>]
+                         [--time <T>] [--target-chars <N>] [--before <sNN>] [--dry-run]
+      人物・世界観の資料・シーンを、自分で書いて足す（LLM は使わない。§4.8）。
+      人物の --id を省くと、読み（無ければ名前）からローマ字で決める。世界観の --name を省くと題から決める（§2）
+  remove <FOLDER> <TARGET> [--dry-run]
+      TARGET = character:<id> | world:<name または path> | scene:<NN>/<sNN>
+      ゴミ箱（.kataribe/trash/）へ移して消す。書式は generate の TASK と同じ
   quality <FOLDER> [--json]           シーンごとの品質レポート
   export <FOLDER> [--output <FILE>] [--force]
       本文を章題付きの一つのテキストにまとめる。--output は作品フォルダの外を指定すること
@@ -518,6 +614,11 @@ kataribe-cli [グローバルオプション] <サブコマンド>
                                        パイプで渡す）
 ```
 
+- `add` / `remove` は `Project::open` だけで動き（LLM も設定ファイルも使わない）、GUI のような確認の手順は挟まない。
+  代わりに、適用の前に必ず標準エラー出力へ、ゴミ箱へ移るもの（文字数つき）・その人物の名前を挙げているシーン・注意書きを出す。
+  `--dry-run` なら、変更案（書き込む内容と、ゴミ箱へ移すものの一覧）を標準出力に出して、何も書かない。
+  適用したあとは、書き込んだファイルを「書き込み: <パス>」、ゴミ箱へ移したものを「ゴミ箱へ: <パス>」と標準エラー出力に出す
+  （`generate` / `run` も同じ出し分け）。
 - API キーは `--api-key-env` の環境変数 → 資格情報マネージャー（GUI と共有、`kataribe_engine::ApiKeyStore`）の順に探す。
   Claude Code のときは API キーを使わないので探さない。
 

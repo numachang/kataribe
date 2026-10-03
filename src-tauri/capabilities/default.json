@@ -28,6 +28,8 @@
     "allow-analyze-quality",
     "allow-generate",
     "allow-cancel-generation",
-    "allow-apply-change-set"
+    "allow-apply-change-set",
+    "allow-plan-structure-edit",
+    "allow-suggest-character-id"
   ]
 }
