@@ -13,12 +13,14 @@ pub enum LlmError {
 
     /// サーバーに接続できない（未起動・アドレス間違い・ネットワーク断など）。
     #[error(
-        "LLM サーバー（{base_url}）に接続できません。LM Studio などのサーバーが起動しているか確認してください。"
+        "LLM サーバー（{server}）に接続できません。LM Studio などのサーバーが起動しているか確認してください。"
     )]
     Connection {
-        /// 接続しようとした `base_url`。
-        base_url: String,
+        /// 接続しようとしたサーバーのホスト名とポート。画面やログに出るので、
+        /// `base_url` に書かれた認証情報やクエリは含めない。
+        server: String,
         /// 元になったエラー（reqwest の内部事情を公開 API に漏らさないよう型消去してある）。
+        /// これも CLI では表示されるので、URL を含めない。
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
@@ -53,11 +55,11 @@ impl LlmError {
     /// 実際の通信では [`reqwest::Error`] が理由になるが、公開 API はそれに依存しない
     /// ようにしているので、ここでは任意の [`std::error::Error`] を受け取れる。
     pub(crate) fn connection(
-        base_url: impl Into<String>,
+        server: impl Into<String>,
         source: impl std::error::Error + Send + Sync + 'static,
     ) -> Self {
         Self::Connection {
-            base_url: base_url.into(),
+            server: server.into(),
             source: Box::new(source),
         }
     }
