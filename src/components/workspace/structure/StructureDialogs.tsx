@@ -1,4 +1,5 @@
 import type { StructureRequest } from "../../../features/structure/structureRequest";
+import { AddChapterDialog } from "./AddChapterDialog";
 import { AddCharacterDialog } from "./AddCharacterDialog";
 import { AddSceneDialog } from "./AddSceneDialog";
 import { AddWorldDocumentDialog } from "./AddWorldDocumentDialog";
@@ -20,6 +21,8 @@ export function StructureDialogs({ request, onClose }: StructureDialogsProps) {
       return <AddCharacterDialog onClose={onClose} />;
     case "add_world_document":
       return <AddWorldDocumentDialog onClose={onClose} />;
+    case "add_chapter":
+      return <AddChapterDialog before={request.before} onClose={onClose} />;
     case "add_scene":
       return <AddSceneDialog chapter={request.chapter} before={request.before} onClose={onClose} />;
     case "remove":

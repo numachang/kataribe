@@ -90,9 +90,10 @@ async function openSampleProject(backend: Backend): Promise<void> {
   useWorkspaceStore.getState().openWorkspace(await backend.openProject(SAMPLE_PROJECT_FOLDER));
 }
 
-async function openMenuOf(label: string): Promise<string[]> {
+/** 行の操作メニューを開き、項目の名前を返す。章立ての行は `kind` に「章立ての」を渡す。 */
+async function openMenuOf(label: string, kind = ""): Promise<string[]> {
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: `「${label}」の操作` }));
+  await user.click(screen.getByRole("button", { name: `「${label}」の${kind}操作` }));
   return within(screen.getByRole("menu"))
     .getAllByRole("menuitem")
     .map((item) => item.textContent ?? "");
@@ -107,14 +108,26 @@ describe("目次の行のメニュー", () => {
     expect(await openMenuOf("霧島 凛")).toEqual(["削除"]);
   });
 
-  it("本文の章見出しには、シーンの追加が出る（章立てのファイルの行には出ない）", async () => {
+  it("本文の章見出しには、シーンの追加と章の削除が出る", async () => {
     const backend = createMockBackend({ delayMs: 0 });
     await openSampleProject(backend);
     renderTree(backend);
 
-    expect(await openMenuOf("雨の匂い")).toEqual(["シーンを追加"]);
-    // 同じ「雨の匂い」でも、章立てのファイルの行（プロットの節）には操作が無いので、メニューは 1 つだけ
+    expect(await openMenuOf("雨の匂い")).toEqual(["シーンを追加", "章を削除"]);
+    // 同じ「雨の匂い」でも、章立てのファイルの行（プロットの節）は別のメニュー（「章立て」の操作）
     expect(screen.getAllByRole("button", { name: "「雨の匂い」の操作" })).toHaveLength(1);
+  });
+
+  it("章立てのファイルの行には、この前・この後に章を追加と、削除が出る", async () => {
+    const backend = createMockBackend({ delayMs: 0 });
+    await openSampleProject(backend);
+    renderTree(backend);
+
+    expect(await openMenuOf("雨の匂い", "章立ての")).toEqual([
+      "この前に章を追加",
+      "この後に章を追加",
+      "削除",
+    ]);
   });
 
   it("シーンの行には、前に追加・後に追加・削除が出る", async () => {
@@ -155,13 +168,14 @@ describe("目次の行のメニュー", () => {
     }
   });
 
-  it("世界観と登場人物の節の見出しに、追加の「＋」が付く", async () => {
+  it("世界観・登場人物・あらすじと章立ての節の見出しに、追加の「＋」が付く", async () => {
     const backend = createMockBackend({ delayMs: 0 });
     await openSampleProject(backend);
     renderTree(backend);
 
     expect(screen.getByRole("button", { name: "資料を追加" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "人物を追加" })).toBeEnabled();
-    expect(screen.getAllByRole("button", { name: /を追加$/ })).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "章を追加" })).toBeEnabled();
+    expect(screen.getAllByRole("button", { name: /を追加$/ })).toHaveLength(3);
   });
 });

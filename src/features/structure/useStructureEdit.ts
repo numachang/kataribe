@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import type { Backend } from "../../api/backend";
 import { useBackend } from "../../api/context";
 import type { StructureEdit, StructurePlan } from "../../api/types";
-import { relocatedPath, touchesPath } from "../../lib/changeSetPaths";
+import { relocatedPath, rewritesPath, touchesPath } from "../../lib/changeSetPaths";
 import { toErrorMessage } from "../../lib/errorMessage";
 import { useUiStore } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
@@ -15,16 +15,16 @@ const UNSAVED_WORK_BLOCKS_EDIT =
 export interface StructureEditApi {
   /** 開いている文書の保存を済ませてから、操作の変更案を作る（作品は書き換えない）。 */
   prepare: (edit: StructureEdit) => Promise<StructurePlan>;
-  /** 変更案を作品に適用し、目次と工程を直して、作った文書を開く。 */
+  /** 変更案を作品に適用し、目次と工程を直して、作った文書を開く（改名された文書を開いていたときは、そのまま続ける）。 */
   commit: (plan: StructurePlan) => Promise<void>;
   /** 確認を挟まない操作（追加）。変更案を作って、そのまま適用する。 */
   apply: (edit: StructureEdit) => Promise<void>;
 }
 
 /**
- * 構成の操作（人物・世界観の資料・シーンの追加と削除）の流れ。
+ * 構成の操作（人物・世界観の資料・章・シーンの追加と削除）の流れ。
  * 変更案の組み立ては Rust（`planStructureEdit`）に任せ、画面は適用と、そのあとの画面の整え直しを受け持つ。
- * 開いている文書との食い違いを防ぐ手順（先に保存し、適用後に読み直すか閉じる）は `writeBesideEditor` に任せる。
+ * 開いている文書との食い違いを防ぐ手順（先に保存し、適用後に読み直すか閉じるか、改名されたパスへ付け替える）は `writeBesideEditor` に任せる。
  */
 export function useStructureEdit(): StructureEditApi {
   const backend = useBackend();
@@ -40,15 +40,21 @@ export function useStructureEdit(): StructureEditApi {
   const commit = useCallback(
     async (plan: StructurePlan): Promise<void> => {
       const changeSet = plan.change_set;
+      const openPath = useWorkspaceStore.getState().currentPath;
+      // 番号の振り直しで改名される文書を開いていたら、その文書のまま続けられるようにする
+      // （作った文書を開くと、利用者が編集していた文書から切り替わってしまう）
+      const keepsRenamedDocument =
+        openPath !== null && typeof relocatedPath(changeSet, openPath) === "string";
       const overview = await writeBesideEditor(backend, {
         touches: (path) => touchesPath(changeSet, path),
-        movesToTrash: (path) => relocatedPath(changeSet, path) === null,
+        relocatedPath: (path) => relocatedPath(changeSet, path),
+        rewrites: (path) => rewritesPath(changeSet, path),
         unsavedWorkMessage: UNSAVED_WORK_BLOCKS_EDIT,
         write: () => backend.applyChangeSet(changeSet),
       });
       useWorkspaceStore.getState().setOverview(overview);
       await refreshPipelineAfterApply(backend);
-      if (plan.created !== null) {
+      if (plan.created !== null && !keepsRenamedDocument) {
         useWorkspaceStore.getState().openDocument(plan.created);
       }
       useUiStore.getState().showToast(plan.completed_summary);

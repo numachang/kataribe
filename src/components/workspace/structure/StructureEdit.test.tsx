@@ -6,21 +6,14 @@ import { BackendError } from "../../../api/backend";
 import { createMockBackend } from "../../../api/mock";
 import { SAMPLE_PROJECT_FOLDER } from "../../../api/mock/sampleProject";
 import type { StructureEdit } from "../../../api/types";
-import { useUiStore } from "../../../store/uiStore";
 import { useWorkspaceStore } from "../../../store/workspaceStore";
 import { readText } from "../../../test/documents";
-import { renderWithBackend } from "../../../test/renderWithBackend";
 import { resetAllStores } from "../../../test/resetStores";
+import { hasToast, openRowMenu, renderWorkspace } from "../../../test/structureUi";
 import { wrapBackend } from "../../../test/wrapBackend";
-import { WorkspaceScreen } from "../WorkspaceScreen";
 
 beforeEach(resetAllStores);
 afterEach(resetAllStores);
-
-async function renderWorkspace(backend: Backend): Promise<void> {
-  useWorkspaceStore.getState().openWorkspace(await backend.openProject(SAMPLE_PROJECT_FOLDER));
-  renderWithBackend(<WorkspaceScreen />, backend);
-}
 
 /**
  * かなをローマ字にする本物（Rust）の提案の代わり。偽バックエンドは英数字しか変換しないので、
@@ -66,19 +59,6 @@ const openAddCharacterDialog = (user: ReturnType<typeof userEvent.setup>) =>
   openAddDialog(user, "人物を追加", "人物を追加");
 const openAddWorldDocumentDialog = (user: ReturnType<typeof userEvent.setup>) =>
   openAddDialog(user, "資料を追加", "世界観の資料を追加");
-
-async function openRowMenu(
-  user: ReturnType<typeof userEvent.setup>,
-  label: string,
-  item: string,
-): Promise<void> {
-  await user.click(screen.getByRole("button", { name: `「${label}」の操作` }));
-  await user.click(screen.getByRole("menuitem", { name: item }));
-}
-
-function hasToast(text: string): boolean {
-  return useUiStore.getState().toasts.some((toast) => toast.message.includes(text));
-}
 
 describe("人物を追加する", () => {
   it("読みから提案された ID で、人物資料を作り、目次に出して開く", async () => {

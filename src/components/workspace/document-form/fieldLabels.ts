@@ -15,6 +15,9 @@ export const CHAPTER_FIELD_LABELS: Record<Exclude<keyof ChapterMeta, "scenes">, 
   title: "章題",
 };
 
+/** 章立ての本文（その章のストーリーライン）の見出し。 */
+export const STORYLINE_LABEL = "ストーリーライン";
+
 export const SCENE_FIELD_LABELS: Record<Exclude<keyof ScenePlan, "id">, string> = {
   title: "タイトル",
   summary: "概要",

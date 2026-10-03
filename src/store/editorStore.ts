@@ -23,6 +23,11 @@ interface EditorState {
   rubyPreview: boolean;
   vertical: boolean;
   loadDocument: (path: string, file: DocumentFile) => void;
+  /**
+   * 開いている文書のパスだけを付け替える（ファイルが改名されたとき）。中身・版番号・保存の基準（ハッシュ）・
+   * 保存状態はそのままで、次の保存は新しいパスへ書く。
+   */
+  relocate: (path: string) => void;
   updateDocument: (document: EditableDocument) => void;
   markSaving: () => void;
   markSaved: (hash: string, document: EditableDocument) => void;
@@ -62,6 +67,9 @@ export const useEditorStore = create<EditorState>((set) => ({
       errorMessage: null,
       rubyPreview: false,
     }));
+  },
+  relocate(path) {
+    set({ path });
   },
   updateDocument(document) {
     set((state) => ({ document, revision: state.revision + 1, status: "dirty" }));

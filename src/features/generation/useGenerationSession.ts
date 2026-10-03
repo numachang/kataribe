@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { BackendError } from "../../api/backend";
 import { useBackend } from "../../api/context";
 import type { ChangeSet, Task } from "../../api/types";
-import { relocatedPath, touchesPath } from "../../lib/changeSetPaths";
+import { relocatedPath, rewritesPath, touchesPath } from "../../lib/changeSetPaths";
 import { toErrorMessage } from "../../lib/errorMessage";
 import { useUiStore } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
@@ -148,7 +148,8 @@ export function useGenerationSession(): GenerationSessionApi {
       try {
         const applied = await writeBesideEditor(backend, {
           touches: (path) => touchesPath(result, path),
-          movesToTrash: (path) => relocatedPath(result, path) === null,
+          relocatedPath: (path) => relocatedPath(result, path),
+          rewrites: (path) => rewritesPath(result, path),
           unsavedWorkMessage: UNSAVED_WORK_BLOCKS_APPLY,
           write: async () => {
             // 保存を待つ間に画面が閉じられた（作品を閉じたなど）なら、適用しない

@@ -32,17 +32,26 @@ const SECTION_ADDITIONS: Partial<
 > = {
   world: { label: "資料を追加", request: { kind: "add_world_document" } },
   characters: { label: "人物を追加", request: { kind: "add_character" } },
+  plot: { label: "章を追加", request: { kind: "add_chapter", before: null } },
 };
+
+/**
+ * 行の操作メニューの名前。章は、章立ての行と本文の章見出しが同じ題で並ぶので、章立ての行だけ「章立て」を添えて見分ける。
+ */
+function menuLabelFor(entry: OverviewEntry): string {
+  const isPlanChapter = entry.kind === "chapter" && entry.path !== null;
+  return isPlanChapter ? `「${entry.label}」の章立ての操作` : `「${entry.label}」の操作`;
+}
 
 interface EntryNodeProps {
   entry: OverviewEntry;
   depth: number;
-  /** 同じ章で、このシーンの次のシーン（最後や、シーンでない項目は null）。 */
-  nextSceneId: string | null;
+  /** 同じ階層で、この項目の次の項目（最後なら null）。「この後に追加」の位置に使う。 */
+  nextSibling: OverviewEntry | null;
   controls: StructureControls;
 }
 
-function EntryNode({ entry, depth, nextSceneId, controls }: EntryNodeProps) {
+function EntryNode({ entry, depth, nextSibling, controls }: EntryNodeProps) {
   const currentPath = useWorkspaceStore((state) => state.currentPath);
   const isSelected = entry.path !== null && entry.path === currentPath;
   const charsLabel = formatChars(entry);
@@ -68,7 +77,7 @@ function EntryNode({ entry, depth, nextSceneId, controls }: EntryNodeProps) {
     .join(" ");
 
   const path = entry.path;
-  const menuItems = entryActionsFor(entry, nextSceneId).map((action) => ({
+  const menuItems = entryActionsFor(entry, nextSibling).map((action) => ({
     label: action.label,
     onSelect: () => controls.request(action.request),
     disabledReason: controls.blockedReason ?? undefined,
@@ -91,9 +100,7 @@ function EntryNode({ entry, depth, nextSceneId, controls }: EntryNodeProps) {
             {label}
           </div>
         )}
-        {menuItems.length > 0 && (
-          <ActionMenu label={`「${entry.label}」の操作`} items={menuItems} />
-        )}
+        {menuItems.length > 0 && <ActionMenu label={menuLabelFor(entry)} items={menuItems} />}
       </div>
       {entry.children.length > 0 && (
         <ul className="project-tree__children">
@@ -102,7 +109,7 @@ function EntryNode({ entry, depth, nextSceneId, controls }: EntryNodeProps) {
               key={child.path ?? `${entry.label}-${index}`}
               entry={child}
               depth={depth + 1}
-              nextSceneId={entry.children[index + 1]?.scene ?? null}
+              nextSibling={entry.children[index + 1] ?? null}
               controls={controls}
             />
           ))}
@@ -112,7 +119,7 @@ function EntryNode({ entry, depth, nextSceneId, controls }: EntryNodeProps) {
   );
 }
 
-/** 左ペイン。作品の目次をツリーで表示し、文字数の進み具合とあわせて見せる。人物・資料・シーンの追加と削除もここから行う。 */
+/** 左ペイン。作品の目次をツリーで表示し、文字数の進み具合とあわせて見せる。人物・資料・章・シーンの追加と削除もここから行う。 */
 export function ProjectTree() {
   const overview = useWorkspaceStore((state) => state.overview);
   const blockedReason = useStructureEditBlockedReason();
@@ -165,7 +172,7 @@ export function ProjectTree() {
                     key={entry.path ?? `${section.kind}-${index}`}
                     entry={entry}
                     depth={0}
-                    nextSceneId={null}
+                    nextSibling={section.entries[index + 1] ?? null}
                     controls={controls}
                   />
                 ))}
