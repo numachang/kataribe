@@ -358,6 +358,16 @@ function describeLlm(llm: LlmSettings): string {
   if (llm.provider === "claude_code") {
     return `Claude Code（${llm.claude_model}）`;
   }
-  const host = llm.base_url.replace(/^[a-z]+:\/\//, "").split("/")[0];
-  return `OpenAI 互換 API（${host}）・${llm.model.trim() || "サーバーの既定のモデル"}`;
+  return `OpenAI 互換 API（${serverName(llm.base_url)}）・${llm.model.trim() || "サーバーの既定のモデル"}`;
+}
+
+/** 接続先の URL のうちホスト名とポートだけを返す。認証情報やクエリは秘密を含みうるので出さない（本物と同じ）。 */
+function serverName(baseUrl: string): string {
+  const unreadable = "接続先の URL を解釈できません";
+  try {
+    // "localhost:1234/v1" のようにスキームが無いと、例外にならずホスト名が空になる
+    return new URL(baseUrl).host || unreadable;
+  } catch {
+    return unreadable;
+  }
 }

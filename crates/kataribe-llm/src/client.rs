@@ -145,21 +145,14 @@ impl ChatModel for OpenAiCompatClient {
     /// 例: `OpenAI 互換 API（localhost:1234）・gemma`。同じ API 形式のサーバーは見分けられないので、
     /// どこにつないでいるかをホスト名で見せる。
     fn describe(&self) -> String {
-        let host = self
-            .config
-            .base_url
-            .split_once("://")
-            .map_or(self.config.base_url.as_str(), |(_, rest)| rest)
-            .split('/')
-            .next()
-            .unwrap_or_default();
+        let server = server_name(&self.config.base_url);
         let model = self.config.model.trim();
         let model = if model.is_empty() {
             "サーバーの既定のモデル"
         } else {
             model
         };
-        format!("OpenAI 互換 API（{host}）・{model}")
+        format!("OpenAI 互換 API（{server}）・{model}")
     }
 
     fn stream_chat(&self, request: ChatRequest) -> ChatStream {
@@ -398,6 +391,22 @@ async fn send_within_idle_timeout(
         .map_err(|error| LlmError::connection(base_url.to_string(), error))
 }
 
+/// 接続先の URL のうち、利用者に見せるホスト名とポートだけを返す。
+/// URL に書かれた認証情報やクエリには秘密が入りうるので、画面やログに出さない。
+fn server_name(base_url: &str) -> String {
+    const UNREADABLE: &str = "接続先の URL を解釈できません";
+    let Ok(url) = reqwest::Url::parse(base_url) else {
+        return UNREADABLE.to_owned();
+    };
+    let Some(host) = url.host_str() else {
+        return UNREADABLE.to_owned();
+    };
+    match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_owned(),
+    }
+}
+
 fn is_retryable(error: &LlmError) -> bool {
     match error {
         LlmError::Connection { .. } => true,
@@ -433,6 +442,27 @@ mod tests {
         assert_eq!(
             client("https://openrouter.ai/api/v1/", "anthropic/claude").describe(),
             "OpenAI 互換 API（openrouter.ai）・anthropic/claude"
+        );
+    }
+
+    #[test]
+    fn the_description_hides_credentials_and_query_in_the_url() {
+        let description = client(
+            "https://user:secret@example.com:8443/v1?api_key=abc#part",
+            "gemma",
+        )
+        .describe();
+
+        assert_eq!(description, "OpenAI 互換 API（example.com:8443）・gemma");
+    }
+
+    #[test]
+    fn an_unreadable_url_is_described_without_echoing_it() {
+        let description = client("http://exa mple.com/v1?api_key=abc", "gemma").describe();
+
+        assert_eq!(
+            description,
+            "OpenAI 互換 API（接続先の URL を解釈できません）・gemma"
         );
     }
 
