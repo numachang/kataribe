@@ -629,3 +629,93 @@ async fn 本文の途中で接続が切れるとエラーになる() {
     }
     assert!(stream.next().await.is_none());
 }
+
+/// 秘密に見立てた認証情報とクエリを、テスト用サーバーの URL に書き足す。
+fn with_secrets(base_url: &str) -> String {
+    format!(
+        "{}?api_key=query-secret",
+        base_url.replacen("http://", "http://user:password-secret@", 1)
+    )
+}
+
+/// エラーの文言を、元になったエラーの文言までつなげて返す（CLI は `{error:#}` でここまで出す）。
+fn error_text_with_sources(error: &LlmError) -> String {
+    let mut text = error.to_string();
+    let mut source = std::error::Error::source(error);
+    while let Some(cause) = source {
+        text.push_str(" / ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
+}
+
+fn assert_no_secrets(error: &LlmError, server: &str) {
+    let text = error_text_with_sources(error);
+    assert!(text.contains(server), "接続先のホスト名が無い: {text}");
+    assert!(
+        !text.contains("password-secret"),
+        "認証情報が出ている: {text}"
+    );
+    assert!(!text.contains("query-secret"), "クエリが出ている: {text}");
+}
+
+#[tokio::test]
+async fn 接続できないときのエラーに_url_の認証情報やクエリを出さない() {
+    // 何も応答せずに切断し続けるサーバー
+    let base_url = spawn_raw_http_server(vec![None]);
+    let server = base_url
+        .trim_start_matches("http://")
+        .trim_end_matches("/v1")
+        .to_owned();
+    let client = OpenAiCompatClient::new(ClientConfig {
+        base_url: with_secrets(&base_url),
+        model: "test-model".to_string(),
+        max_retries: 0,
+        ..ClientConfig::default()
+    })
+    .unwrap();
+
+    let error = collect(
+        client.stream_chat(request_with(vec![Message::user("hi")])),
+        |_| {},
+    )
+    .await
+    .unwrap_err();
+
+    assert!(matches!(error, LlmError::Connection { .. }), "{error:?}");
+    assert_no_secrets(&error, &server);
+}
+
+#[tokio::test]
+async fn 本文の途中で切れたときのエラーに_url_の認証情報やクエリを出さない() {
+    let partial = format!(
+        "data: {}\n\n",
+        json!({"choices": [{"delta": {"content": "途中まで"}}]})
+    );
+    let declared_length = partial.len() + 200;
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {declared_length}\r\n\r\n{partial}"
+    );
+    let base_url = spawn_raw_http_server(vec![Some(response.into_bytes())]);
+    let server = base_url
+        .trim_start_matches("http://")
+        .trim_end_matches("/v1")
+        .to_owned();
+    let client = OpenAiCompatClient::new(ClientConfig {
+        base_url: with_secrets(&base_url),
+        model: "test-model".to_string(),
+        ..ClientConfig::default()
+    })
+    .unwrap();
+
+    let error = collect(
+        client.stream_chat(request_with(vec![Message::user("hi")])),
+        |_| {},
+    )
+    .await
+    .unwrap_err();
+
+    assert!(matches!(error, LlmError::Connection { .. }), "{error:?}");
+    assert_no_secrets(&error, &server);
+}

@@ -262,10 +262,9 @@ async fn advance(mut state: StreamState) -> Option<(Result<ChatEvent, LlmError>,
                         }
                     }
                     Ok(Some(Err(source))) => {
-                        streaming.pending.push_back(Err(LlmError::connection(
-                            state.config.base_url.clone(),
-                            source,
-                        )));
+                        streaming
+                            .pending
+                            .push_back(Err(connection_error(&state.config.base_url, source)));
                     }
                     Ok(Some(Ok(chunk))) => {
                         let raw_events = streaming.sse.push(&chunk);
@@ -388,7 +387,13 @@ async fn send_within_idle_timeout(
     tokio::time::timeout(idle_timeout, builder.send())
         .await
         .map_err(|_elapsed| LlmError::Timeout)?
-        .map_err(|error| LlmError::connection(base_url.to_string(), error))
+        .map_err(|error| connection_error(base_url, error))
+}
+
+/// 接続エラーを作る。文言は画面や CLI に出るので、`base_url` に書かれた認証情報やクエリを含めない。
+/// reqwest のエラーは要求先の URL（クエリ付き）を文言に含むため、外してから持たせる。
+fn connection_error(base_url: &str, error: reqwest::Error) -> LlmError {
+    LlmError::connection(server_name(base_url), error.without_url())
 }
 
 /// 接続先の URL のうち、利用者に見せるホスト名とポートだけを返す。
