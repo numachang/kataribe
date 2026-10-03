@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { GenerationStepDisplay } from "../../../features/generation/eventAccumulator";
 import { useGenerationSessionContext } from "../../../features/generation/GenerationSessionProvider";
+import { describeTask } from "../../../lib/describeTask";
 import { useWorkspaceStore } from "../../../store/workspaceStore";
 import "./GenerationProgress.css";
 
@@ -89,6 +90,7 @@ export function GenerationProgress() {
   const session = useGenerationSessionContext();
   const pipeline = useWorkspaceStore((state) => state.pipeline);
   const doneCount = pipeline.filter((step) => step.state === "done").length;
+  const taskDescription = session.currentTask ? describeTask(session.currentTask) : null;
 
   return (
     <div className="generation-progress">
@@ -113,6 +115,8 @@ export function GenerationProgress() {
             </button>
           ))}
       </div>
+
+      {taskDescription !== null && <p className="generation-progress__task">{taskDescription}</p>}
 
       <div className="generation-progress__summary">
         {session.display.model && <span>使う LLM: {session.display.model}</span>}

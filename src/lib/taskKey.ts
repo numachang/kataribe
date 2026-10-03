@@ -11,6 +11,11 @@ export function taskKey(task: Task): string {
       return `draft:${task.chapter}:${task.scene}`;
     case "revise":
       return `revise:${task.path}`;
+    // 指示が違えば別の仕事。種類だけで区別すると、指示の違う追加が同じキーになる
+    case "add_character":
+      return `add_character:${task.instruction}`;
+    case "add_world_document":
+      return `add_world_document:${task.name ?? ""}:${task.instruction}`;
     default:
       return task.kind;
   }

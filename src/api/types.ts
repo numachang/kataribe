@@ -279,7 +279,11 @@ export type Task =
   | { kind: "outline" }
   | { kind: "scene_plan"; chapter: string }
   | { kind: "draft"; chapter: string; scene: string }
-  | { kind: "revise"; path: string; instruction: string };
+  | { kind: "revise"; path: string; instruction: string }
+  /** 指示から人物を 1 人作って足す。工程の一覧には出ない。 */
+  | { kind: "add_character"; instruction: string }
+  /** 指示から世界観の資料を 1 つ作って足す。`name` は `world/<name>.md` のファイル名（null なら題から決める）。工程の一覧には出ない。 */
+  | { kind: "add_world_document"; name: string | null; instruction: string };
 
 export type StepState = "done" | "ready" | "blocked";
 

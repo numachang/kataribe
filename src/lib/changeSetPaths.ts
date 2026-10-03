@@ -63,6 +63,14 @@ export function relocatedPath(changeSet: ChangeSet, path: string): string | null
   return undefined;
 }
 
+/**
+ * 変更案を適用すると、`openPath`（今エディタで開いている文書。無ければ null）が改名されるか。
+ * 改名される文書は、パスを付け替えて開いたまま続けるので、適用で作った文書を開いてその編集を中断させてはならない。
+ */
+export function renamesOpenDocument(changeSet: ChangeSet, openPath: string | null): boolean {
+  return openPath !== null && typeof relocatedPath(changeSet, openPath) === "string";
+}
+
 /** 変更案の一覧で、1 つの変更を見分けるための key。 */
 export function changeKey(file: FileChange): string {
   switch (file.kind) {

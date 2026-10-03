@@ -1,3 +1,4 @@
+import { toGraphemes } from "../../lib/graphemes";
 import type { Manifest } from "../types";
 import type { MockChapter, MockCharacter, MockScene } from "./state";
 
@@ -193,4 +194,68 @@ function pickRevisionAddition(instruction: string): string {
     return "息をつく間もなく、次の出来事が動き出した。";
   }
   return "その一言が、後になって大きな意味を持つことになるとは、まだ誰も知らなかった。";
+}
+
+// ---- 指示から作って足す人物・世界観の資料 ----
+
+interface AddedCharacter {
+  name: string;
+  reading: string;
+  role: string;
+  summary: string;
+  /** 人物資料の本文（2 回目の生成）。 */
+  detail: string;
+}
+
+const FIRST_ADDED_CHARACTER = { name: "佐藤 健二", reading: "さとう けんじ" };
+
+const ADDED_CHARACTER_CANDIDATES = [
+  FIRST_ADDED_CHARACTER,
+  { name: "高橋 美咲", reading: "たかはし みさき" },
+  { name: "中村 遼", reading: "なかむら りょう" },
+  { name: "小林 沙織", reading: "こばやし さおり" },
+];
+
+const SUMMARY_MAX_CHARS = 40;
+const TITLE_MAX_CHARS = 16;
+
+/** 指示の 1 行目を、`maxChars` 字までに切り詰める。 */
+function abbreviatedInstruction(instruction: string, maxChars: number): string {
+  const graphemes = toGraphemes(firstLine(instruction));
+  return graphemes.length <= maxChars
+    ? graphemes.join("")
+    : `${graphemes.slice(0, maxChars).join("")}…`;
+}
+
+/** 指示から作った人物。名前は、すでにいる人物と重ならない候補から選ぶ。 */
+export function generateAddedCharacter(
+  instruction: string,
+  existing: Array<Pick<MockCharacter, "name">>,
+): AddedCharacter {
+  const taken = new Set(existing.map((character) => character.name));
+  const candidate =
+    ADDED_CHARACTER_CANDIDATES.find(({ name }) => !taken.has(name)) ?? FIRST_ADDED_CHARACTER;
+  const role = "登場人物";
+  const summary = `指示「${abbreviatedInstruction(instruction, SUMMARY_MAX_CHARS)}」から作った人物。`;
+  return {
+    ...candidate,
+    role,
+    summary,
+    detail: generateCharacterDetail({ name: candidate.name, role, summary }),
+  };
+}
+
+/** 指示から作った世界観の資料の題と本文。 */
+export function generateAddedWorldDocument(instruction: string): { title: string; body: string } {
+  const title = abbreviatedInstruction(instruction, TITLE_MAX_CHARS);
+  return {
+    title,
+    body: [
+      "## 概要",
+      `指示「${firstLine(instruction)}」にもとづく設定の覚え書き。物語の中で何度も触れられる決まりごとを、ここにまとめる。`,
+      "",
+      "## 使いどころ",
+      "場面の背景として自然に織り込み、説明が長くならないようにする。",
+    ].join("\n"),
+  };
 }

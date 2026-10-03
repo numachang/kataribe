@@ -2,7 +2,12 @@ import { useCallback } from "react";
 import type { Backend } from "../../api/backend";
 import { useBackend } from "../../api/context";
 import type { StructureEdit, StructurePlan } from "../../api/types";
-import { relocatedPath, rewritesPath, touchesPath } from "../../lib/changeSetPaths";
+import {
+  relocatedPath,
+  renamesOpenDocument,
+  rewritesPath,
+  touchesPath,
+} from "../../lib/changeSetPaths";
 import { toErrorMessage } from "../../lib/errorMessage";
 import { useUiStore } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
@@ -72,11 +77,12 @@ async function whileStructureEditing<Result>(work: () => Promise<Result>): Promi
 
 async function commitPlan(backend: Backend, plan: StructurePlan): Promise<void> {
   const changeSet = plan.change_set;
-  const openPath = useWorkspaceStore.getState().currentPath;
   // 番号の振り直しで改名される文書を開いていたら、その文書のまま続けられるようにする
-  // （作った文書を開くと、利用者が編集していた文書から切り替わってしまう）
-  const keepsRenamedDocument =
-    openPath !== null && typeof relocatedPath(changeSet, openPath) === "string";
+  // （作った文書を開くと、利用者が編集していた文書から切り替わってしまう）。適用の前に決める。
+  const keepsRenamedDocument = renamesOpenDocument(
+    changeSet,
+    useWorkspaceStore.getState().currentPath,
+  );
   const overview = await writeBesideEditor(backend, {
     touches: (path) => touchesPath(changeSet, path),
     relocatedPath: (path) => relocatedPath(changeSet, path),
