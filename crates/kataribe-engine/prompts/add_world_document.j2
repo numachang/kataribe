@@ -1,0 +1,40 @@
+{% import "_macros.j2" as m %}
+{% block system %}
+あなたは経験豊富な小説の編集者であり、作家でもあります。作家の指示に沿って、すでにある世界観の資料を補う資料を 1 つ書きます。
+
+{{ m.genre_and_rating(project) }}
+
+{{ m.output_rules() }}
+{% endblock %}
+
+{% block user %}
+{{ m.project_info(project) }}
+
+{{ m.document("企画", concept) }}
+
+{{ m.document("すでにある世界観の資料", world) }}
+
+【すでにある世界観の資料の題】
+{% for title in titles %}
+・{{ title }}
+{% else %}
+（まだありません）
+{% endfor %}
+
+{% if cast %}
+【登場人物】
+{% for person in cast %}
+・{{ person.name }}（{{ person.role }}）: {{ person.summary }}
+{% endfor %}
+{% endif %}
+
+【作家の指示】
+{{ instruction }}
+
+【指示】
+作家の指示に従って、世界観の資料を 1 つ書いてください。
+- 1 行目は「# 題」の形で、この資料の題を書くこと。続けて本文を書き、内容のまとまりごとに「## 見出し」で分けること。
+- 題は、すでにある資料の題と重ならないものにすること。
+- すでにある資料と内容を重ねたり、矛盾させたりしないこと。企画とも矛盾させないこと。
+- 物語に関係する要素に絞り、書き手が場面を描くときに参照できるよう具体的に書くこと。
+{% endblock %}

@@ -22,10 +22,12 @@ pub(crate) enum PromptTemplate {
     Digest,
     Revise,
     Polish,
+    AddCharacter,
+    AddWorldDocument,
 }
 
 impl PromptTemplate {
-    const ALL: [PromptTemplate; 13] = [
+    const ALL: [PromptTemplate; 15] = [
         Self::Concept,
         Self::Style,
         Self::World,
@@ -39,6 +41,8 @@ impl PromptTemplate {
         Self::Digest,
         Self::Revise,
         Self::Polish,
+        Self::AddCharacter,
+        Self::AddWorldDocument,
     ];
 
     fn name(self) -> &'static str {
@@ -56,6 +60,8 @@ impl PromptTemplate {
             Self::Digest => "digest.j2",
             Self::Revise => "revise.j2",
             Self::Polish => "polish.j2",
+            Self::AddCharacter => "add_character.j2",
+            Self::AddWorldDocument => "add_world_document.j2",
         }
     }
 
@@ -74,6 +80,8 @@ impl PromptTemplate {
             Self::Digest => include_str!("../prompts/digest.j2"),
             Self::Revise => include_str!("../prompts/revise.j2"),
             Self::Polish => include_str!("../prompts/polish.j2"),
+            Self::AddCharacter => include_str!("../prompts/add_character.j2"),
+            Self::AddWorldDocument => include_str!("../prompts/add_world_document.j2"),
         }
     }
 }

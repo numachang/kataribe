@@ -16,6 +16,8 @@ mod world;
 
 use kataribe_project::{CharacterId, Project};
 
+pub(crate) use world::check_name as check_world_document_name;
+
 pub use edit::{NewScenePlan, StructureEdit};
 pub use plan::{RenumberedChapter, SceneReference, StructurePlan};
 

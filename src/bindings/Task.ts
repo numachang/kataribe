@@ -7,4 +7,8 @@ import type { SceneId } from "./SceneId";
 /**
  * 1 回の「生成」で行う仕事。どのタスクも変更案（`ChangeSet`）を返し、ファイルは直接書き換えない。
  */
-export type Task = { "kind": "concept" } | { "kind": "style" } | { "kind": "world" } | { "kind": "cast" } | { "kind": "character", id: CharacterId, } | { "kind": "synopsis" } | { "kind": "outline" } | { "kind": "scene_plan", chapter: ChapterId, } | { "kind": "draft", chapter: ChapterId, scene: SceneId, } | { "kind": "revise", path: RelPath, instruction: string, };
+export type Task = { "kind": "concept" } | { "kind": "style" } | { "kind": "world" } | { "kind": "cast" } | { "kind": "character", id: CharacterId, } | { "kind": "synopsis" } | { "kind": "outline" } | { "kind": "scene_plan", chapter: ChapterId, } | { "kind": "draft", chapter: ChapterId, scene: SceneId, } | { "kind": "revise", path: RelPath, instruction: string, } | { "kind": "add_character", instruction: string, } | { "kind": "add_world_document", 
+/**
+ * ファイル名（`world/<name>.md`）。`None` なら、題から決める（`StructureEdit::AddWorldDocument` と同じ）。
+ */
+name: string | null, instruction: string, };

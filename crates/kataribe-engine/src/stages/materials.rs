@@ -1,8 +1,8 @@
 //! プロンプトに入れる材料を作品フォルダから集める。
 
 use kataribe_project::{
-    Chapter, ChapterId, Character, CharacterId, Manifest, Project, ProjectError, RelPath, TextFile,
-    layout,
+    Chapter, ChapterId, Character, CharacterId, CharacterMeta, Manifest, Project, ProjectError,
+    RelPath, TextFile, layout,
 };
 use serde::Serialize;
 
@@ -61,12 +61,17 @@ pub(crate) struct CharacterBrief {
 
 impl CharacterBrief {
     pub fn new(character: &Character, profile_chars: usize) -> Self {
+        Self::from_meta(&character.meta, &character.body, profile_chars)
+    }
+
+    /// まだファイルになっていない人物（ID が決まる前）からも作れるよう、項目と本文から作る。
+    pub fn from_meta(meta: &CharacterMeta, body: &str, profile_chars: usize) -> Self {
         Self {
-            name: character.meta.name.clone(),
-            reading: character.meta.reading.clone(),
-            role: character.meta.role.clone(),
-            summary: character.meta.summary.clone(),
-            profile: excerpt::head(&character.body, profile_chars),
+            name: meta.name.clone(),
+            reading: meta.reading.clone(),
+            role: meta.role.clone(),
+            summary: meta.summary.clone(),
+            profile: excerpt::head(body, profile_chars),
         }
     }
 }

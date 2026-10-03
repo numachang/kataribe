@@ -1,5 +1,6 @@
 //! 生成タスクごとの処理。
 
+mod addition;
 mod cast;
 mod documents;
 mod draft;
@@ -108,5 +109,9 @@ pub(crate) async fn run(stage: &Stage<'_>, task: &Task) -> Result<ChangeSet> {
         Task::ScenePlan { chapter } => scene_plan::scenes(stage, *chapter).await,
         Task::Draft { chapter, scene } => draft::write(stage, *chapter, *scene).await,
         Task::Revise { path, instruction } => revise::document(stage, path, instruction).await,
+        Task::AddCharacter { instruction } => addition::add_character(stage, instruction).await,
+        Task::AddWorldDocument { name, instruction } => {
+            addition::add_world_document(stage, name.as_deref(), instruction).await
+        }
     }
 }

@@ -1819,3 +1819,210 @@ async fn bad_arguments_for_move_are_usage_errors() {
         );
     }
 }
+
+// ---- generate add-character / add-world（指示から人物・世界観の資料を作って足す） ----
+
+const SATO_ENTRY: &str = r#"{"name": "佐藤 健二", "reading": "さとう けんじ", "role": "相棒", "summary": "凛の助手を務める青年。"}"#;
+const SATO_PROFILE: &str = "## 口調\n一人称は「僕」。丁寧に話す。\n";
+const PORT_TOWN: &str = "# 港町の歴史\n\n## 成り立ち\n江戸の頃に開かれた漁港。\n";
+
+/// 作品を作り、`generate <FOLDER> <引数…>` を、偽サーバーを使って実行する。
+async fn run_generate(
+    server: &MockServer,
+    temp_dir: &std::path::Path,
+    project_dir: &std::path::Path,
+    args: &[&str],
+    console: &BufferConsole,
+) -> std::process::ExitCode {
+    let mut full_args = common_args(&server.uri(), temp_dir);
+    full_args.extend(["generate".to_owned(), path_arg(project_dir)]);
+    full_args.extend(args.iter().map(|arg| (*arg).to_owned()));
+    run(full_args, console).await
+}
+
+#[tokio::test]
+async fn generate_add_character_writes_the_character_the_llm_made() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    create_test_project(&project_dir).await;
+    let server = MockServer::start().await;
+    respond_with_sequence(&server, &[SATO_ENTRY, SATO_PROFILE]).await;
+    let console = BufferConsole::new();
+
+    let code = run_generate(
+        &server,
+        temp_dir.path(),
+        &project_dir,
+        &["add-character", "--instruction", "凛の助手の青年を足す"],
+        &console,
+    )
+    .await;
+
+    assert_eq!(
+        code,
+        std::process::ExitCode::from(0),
+        "{}",
+        console.stderr()
+    );
+    assert!(
+        console
+            .stderr()
+            .contains("書き込み: characters/sato-kenji.md"),
+        "{}",
+        console.stderr()
+    );
+    let text = std::fs::read_to_string(project_dir.join("characters/sato-kenji.md")).unwrap();
+    assert!(text.contains("name: 佐藤 健二"), "{text}");
+    assert!(text.contains("reading: さとう けんじ"), "{text}");
+    assert!(text.ends_with(SATO_PROFILE), "{text}");
+}
+
+#[tokio::test]
+async fn generate_add_character_with_dry_run_prints_the_file_and_writes_nothing() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    create_test_project(&project_dir).await;
+    let server = MockServer::start().await;
+    respond_with_sequence(&server, &[SATO_ENTRY, SATO_PROFILE]).await;
+    let console = BufferConsole::new();
+
+    let code = run_generate(
+        &server,
+        temp_dir.path(),
+        &project_dir,
+        &[
+            "add-character",
+            "--instruction",
+            "凛の助手の青年を足す",
+            "--dry-run",
+        ],
+        &console,
+    )
+    .await;
+
+    assert_eq!(
+        code,
+        std::process::ExitCode::from(0),
+        "{}",
+        console.stderr()
+    );
+    assert!(
+        console.stdout().contains("name: 佐藤 健二"),
+        "{}",
+        console.stdout()
+    );
+    assert!(!project_dir.join("characters/sato-kenji.md").exists());
+}
+
+#[tokio::test]
+async fn generate_add_world_uses_the_given_name_and_tells_how_the_document_is_used() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    create_test_project(&project_dir).await;
+    let server = MockServer::start().await;
+    respond_with_sequence(&server, &[PORT_TOWN]).await;
+    let console = BufferConsole::new();
+
+    let code = run_generate(
+        &server,
+        temp_dir.path(),
+        &project_dir,
+        &[
+            "add-world",
+            "--instruction",
+            "港町の歴史を足す",
+            "--name",
+            "port-town",
+        ],
+        &console,
+    )
+    .await;
+
+    assert_eq!(
+        code,
+        std::process::ExitCode::from(0),
+        "{}",
+        console.stderr()
+    );
+    let text = std::fs::read_to_string(project_dir.join("world/port-town.md")).unwrap();
+    assert_eq!(text, PORT_TOWN);
+    assert!(
+        console.stderr().contains("これからの生成"),
+        "注意書きが標準エラー出力に出るはず: {}",
+        console.stderr()
+    );
+}
+
+#[tokio::test]
+async fn generate_add_world_with_a_used_name_fails_before_calling_the_llm() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    create_test_project(&project_dir).await;
+    std::fs::write(project_dir.join("world/port-town.md"), "# 港町\n").unwrap();
+    // 何も登録していないサーバー。LLM を呼べば 404 になり、別のエラーになる
+    let server = MockServer::start().await;
+    let console = BufferConsole::new();
+
+    let code = run_generate(
+        &server,
+        temp_dir.path(),
+        &project_dir,
+        &[
+            "add-world",
+            "--instruction",
+            "港町の歴史を足す",
+            "--name",
+            "port-town",
+        ],
+        &console,
+    )
+    .await;
+
+    assert_eq!(code, std::process::ExitCode::from(1));
+    assert!(
+        console.stderr().contains("もう使われています"),
+        "{}",
+        console.stderr()
+    );
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn bad_arguments_for_the_generated_additions_are_usage_errors() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let folder = path_arg(temp_dir.path());
+    for args in [
+        vec!["generate", &folder, "add-character"],
+        vec!["generate", &folder, "add-world"],
+        vec![
+            "generate",
+            &folder,
+            "add-character",
+            "--instruction",
+            "指示",
+            "--name",
+            "port-town",
+        ],
+        vec![
+            "generate",
+            &folder,
+            "concept",
+            "--instruction",
+            "指示",
+            "--name",
+            "port-town",
+        ],
+        vec!["generate", &folder, "concept", "--name", "port-town"],
+    ] {
+        let console = BufferConsole::new();
+
+        let code = run_plain(&args, &console).await;
+
+        assert_eq!(
+            code,
+            std::process::ExitCode::from(2),
+            "{args:?}: {}",
+            console.stderr()
+        );
+    }
+}

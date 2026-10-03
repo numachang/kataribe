@@ -109,6 +109,7 @@ pub(super) async fn profile(stage: &Stage<'_>, id: &CharacterId) -> Result<Chang
             world => excerpt::head(&world_text(stage.project)?, WORLD_CHARS),
             cast => briefs(&cast, 0),
             character => CharacterBrief::new(&character, 0),
+            instruction => "",
         },
     )?;
     let output_tokens = stage.output_tokens(&prompt, PROFILE_OUTPUT_TOKENS)?;
