@@ -479,6 +479,6 @@ mod tests {
         // 段落の間の空行は Keep なので残る。
         let lines: Vec<&str> = result.lines().collect();
         assert_eq!(lines.len(), 3);
-        assert!(lines[1].is_empty());
+        assert_eq!(lines[1], "");
     }
 }

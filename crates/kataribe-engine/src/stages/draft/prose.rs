@@ -199,8 +199,8 @@ mod tests {
     #[test]
     fn nearly_empty_output_counts_as_a_problem() {
         let attempt = Attempt::new("　雨。\n".to_owned(), 1000);
-        assert!(!attempt.problems(1000).is_empty());
+        assert_ne!(attempt.problems(1000), Vec::<String>::new());
         let attempt = Attempt::new("　雨が降っていた。".repeat(40), 1000);
-        assert!(attempt.problems(1000).is_empty());
+        assert_eq!(attempt.problems(1000), Vec::<String>::new());
     }
 }

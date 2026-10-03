@@ -413,10 +413,10 @@ mod tests {
         for segment in &segments {
             match segment {
                 Segment::Ruby { base, reading } => {
-                    assert!(!base.is_empty());
-                    assert!(!reading.is_empty());
+                    assert_ne!(base, "");
+                    assert_ne!(reading, "");
                 }
-                Segment::Text { text } | Segment::Emphasis { text } => assert!(!text.is_empty()),
+                Segment::Text { text } | Segment::Emphasis { text } => assert_ne!(text, ""),
             }
         }
     }

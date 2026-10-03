@@ -1522,7 +1522,7 @@ mod tests {
         assert!(matches!(result, Err(ProjectError::Conflict { path }) if path == style));
         assert_eq!(read(&store, "concept.md").unwrap(), "企画");
         assert_eq!(read(&store, "style.md").unwrap(), "文体");
-        assert!(store.backups(&concept).unwrap().is_empty());
+        assert_eq!(store.backups(&concept).unwrap(), Vec::<Backup>::new());
     }
 
     /// 置き換えの途中でロックに当たって失敗したら、置き換え済みのファイルを元に戻す。
@@ -1650,6 +1650,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(hashes, vec![hash]);
-        assert!(store.backups(&concept).unwrap().is_empty());
+        assert_eq!(store.backups(&concept).unwrap(), Vec::<Backup>::new());
     }
 }
