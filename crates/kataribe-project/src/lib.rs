@@ -14,7 +14,7 @@ pub mod path;
 pub mod project;
 pub mod store;
 
-pub use document::{DocumentFile, EditableDocument};
+pub use document::{EditableDocument, LoadedDocument};
 pub use error::ProjectError;
 pub use frontmatter::YamlError;
 pub use model::{

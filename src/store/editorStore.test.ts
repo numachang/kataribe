@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { DocumentFile } from "../api/types";
+import type { DocumentFile, EditableDocument } from "../api/types";
 import { useEditorStore } from "./editorStore";
 
 function reset(): void {
@@ -56,15 +56,29 @@ describe("useEditorStore", () => {
     expect(useEditorStore.getState().revision).toBeGreaterThan(revisionBeforeReload);
   });
 
-  it("markSaving → markSaved で clean に戻り、新しいハッシュを保持する", () => {
+  it("markSaving → markSaved で clean に戻り、新しいハッシュと保存した文書を保持する", () => {
     useEditorStore.getState().loadDocument("concept.md", textFile("本文", "hash-1"));
-    useEditorStore.getState().updateDocument({ kind: "text", content: "本文2" });
+    const edited: EditableDocument = { kind: "text", content: "本文2" };
+    useEditorStore.getState().updateDocument(edited);
     useEditorStore.getState().markSaving();
     expect(useEditorStore.getState().status).toBe("saving");
 
-    useEditorStore.getState().markSaved("hash-2");
+    useEditorStore.getState().markSaved("hash-2", edited);
     expect(useEditorStore.getState().status).toBe("clean");
     expect(useEditorStore.getState().savedHash).toBe("hash-2");
+    expect(useEditorStore.getState().savedDocument).toEqual(edited);
+  });
+
+  it("recordSaved は dirty のまま、保存した内容の基準だけ更新する", () => {
+    useEditorStore.getState().loadDocument("concept.md", textFile("本文", "hash-1"));
+    const saved: EditableDocument = { kind: "text", content: "本文2" };
+    useEditorStore.getState().updateDocument(saved);
+    useEditorStore.getState().updateDocument({ kind: "text", content: "本文3" });
+
+    useEditorStore.getState().recordSaved("hash-2", saved);
+    expect(useEditorStore.getState().status).toBe("dirty");
+    expect(useEditorStore.getState().savedHash).toBe("hash-2");
+    expect(useEditorStore.getState().savedDocument).toEqual(saved);
   });
 
   it("markError はエラーメッセージを保持する", () => {

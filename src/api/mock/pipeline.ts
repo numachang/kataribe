@@ -51,7 +51,7 @@ export function buildPipeline(state: ProjectState): PipelineStep[] {
       step(
         { kind: "character", id: character.id },
         `登場人物: ${character.name}`,
-        doneOrReady(character.detail !== null),
+        doneOrReady((character.detail ?? "").trim() !== ""),
         null,
       ),
     );

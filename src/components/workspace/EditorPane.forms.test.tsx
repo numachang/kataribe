@@ -170,6 +170,52 @@ describe("人物資料", () => {
     expect(order).toHaveValue("3");
   });
 
+  it("順番は、Rust の u32 の最大値まで入力できる", async () => {
+    const user = userEvent.setup();
+    const backend = createMockBackend({ delayMs: 0 });
+    await openDocument(backend, CHARACTER_PATH);
+
+    const order = screen.getByLabelText("順番");
+    await user.clear(order);
+    await user.type(order, "4294967295");
+    await saveWithShortcut(user);
+
+    await screen.findByText("保存済み");
+    expect((await readCharacter(backend)).document.meta.order).toBe(4294967295);
+  });
+
+  it("順番が最大値を超える入力は文書に反映せず、外すと最後の有効な値に戻る", async () => {
+    const user = userEvent.setup();
+    const backend = createMockBackend({ delayMs: 0 });
+    await openDocument(backend, CHARACTER_PATH);
+
+    const order = screen.getByLabelText("順番");
+    await user.clear(order);
+    await user.type(order, "4294967296");
+    expect(order).toHaveValue("4294967296");
+    await user.tab();
+    expect(order).toHaveValue("429496729");
+    await saveWithShortcut(user);
+
+    await screen.findByText("保存済み");
+    expect((await readCharacter(backend)).document.meta.order).toBe(429496729);
+  });
+
+  it("読みを空欄から全角スペースで打ち始めても、その文字が消えない", async () => {
+    const user = userEvent.setup();
+    const backend = createMockBackend({ delayMs: 0 });
+    await openDocument(backend, CHARACTER_PATH);
+
+    const reading = screen.getByLabelText("読み");
+    await user.clear(reading);
+    await user.type(reading, "　きりしま");
+    expect(reading).toHaveValue("　きりしま");
+    await saveWithShortcut(user);
+
+    await screen.findByText("保存済み");
+    expect((await readCharacter(backend)).document.meta.reading).toBe("　きりしま");
+  });
+
   it("読みを空にすると null で保存される", async () => {
     const user = userEvent.setup();
     const backend = createMockBackend({ delayMs: 0 });
@@ -278,6 +324,34 @@ describe("章立て", () => {
     expect(saved.document.meta.scenes?.[0]?.title).toBe("招かれた客");
     expect(saved.document.meta.scenes?.[1]?.title).toBe("遺言状の間");
     expect(await screen.findByText("招かれた客")).toBeInTheDocument();
+  });
+
+  it("同じ id のシーンが並んでいても、直したシーンだけが変わる", async () => {
+    const user = userEvent.setup();
+    const { backend, written } = backendWith(createMockBackend({ delayMs: 0 }), (path, file) => {
+      if (path !== CHAPTER_PATH || file.document.kind !== "chapter") {
+        return file;
+      }
+      const scenes = (file.document.meta.scenes ?? []).map((scene) => ({ ...scene, id: "s01" }));
+      return { ...file, document: { ...file.document, meta: { ...file.document.meta, scenes } } };
+    });
+    await openDocument(backend, CHAPTER_PATH);
+    const first = within(screen.getByText("s01 招かれざる客").closest("details") as HTMLElement);
+    const second = within(screen.getByText("s01 遺言状の間").closest("details") as HTMLElement);
+    await user.click(screen.getByText("s01 招かれざる客"));
+    await user.click(screen.getByText("s01 遺言状の間"));
+
+    const title = first.getByLabelText("タイトル");
+    await user.clear(title);
+    await user.type(title, "招かれた客");
+    await saveWithShortcut(user);
+
+    await screen.findByText("保存済み");
+    expect(second.getByLabelText("タイトル")).toHaveValue("遺言状の間");
+    const sent = written.at(-1);
+    const sentTitles =
+      sent?.kind === "chapter" ? sent.meta.scenes?.map((scene) => scene.title) : [];
+    expect(sentTitles?.slice(0, 2)).toEqual(["招かれた客", "遺言状の間"]);
   });
 
   it("シーンの項目が入り、ビートは番号付きで読むだけ", async () => {

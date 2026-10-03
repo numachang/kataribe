@@ -18,6 +18,8 @@ interface DraftInputOptions<Value> {
  * 入力中は、打った文字列をそのまま入力欄に出す。値への変換は入力のたびに行って文書へ反映するが、
  * 「霧島 凛、」の末尾の「、」のように、値にすると消える打ちかけの文字を、入力欄から消さないため。
  * 値からの整形（「、」でそろえる・数字を整える）は、フォーカスを外したときに初めて入力欄へ反映する。
+ * 値にできない文字列（`parse` が null）は文書へ反映しないので、フォーカスを外すと、
+ * 途中で確定した最後の有効な値に戻る。
  */
 export function useDraftInput<Value>({ value, format, parse, onCommit }: DraftInputOptions<Value>) {
   const [draft, setDraft] = useState<string | null>(null);

@@ -47,6 +47,14 @@ export function renderManifest(manifest: Manifest, settings: ProjectSettings = {
 /** 詳細をまだ生成していない人物の、本文の代わりに書く文。 */
 export const PLACEHOLDER_CHARACTER_BODY = "（この人物の詳しい設定はまだ生成していません）\n";
 
+/**
+ * 人物資料の本文から、状態の `detail` を決める。プレースホルダーのままの本文は「未生成」（null）に戻し、
+ * 保存で本文に化けないようにする。空の本文は未生成ではなく空のまま持つ（本物と同じく、保存した本文がそのまま読み直せる）。
+ */
+export function characterDetailFromBody(body: string): string | null {
+  return body === PLACEHOLDER_CHARACTER_BODY ? null : body;
+}
+
 export function renderCharacterFile(character: MockCharacter): string {
   const fields: Array<[string, string]> = [
     ["name", character.name],

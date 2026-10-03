@@ -1,17 +1,16 @@
 import { BackendError } from "../backend";
 import type { ChapterMeta, CharacterMeta, EditableDocument, ScenePlan } from "../types";
 import { mergeSceneDrafts } from "./parse";
-import { PLACEHOLDER_CHARACTER_BODY, readMockFile } from "./render";
+import { chapterIdFromPath, characterIdFromPath } from "./paths";
+import { characterDetailFromBody, PLACEHOLDER_CHARACTER_BODY, readMockFile } from "./render";
 import type { MockChapter, MockCharacter, MockScene, ProjectState } from "./state";
 import { findChapter, findCharacter } from "./state";
 import { writeMockFile } from "./write";
 
 // 偽バックエンドの文書の読み書き。人物資料・章立ては、状態（MockCharacter / MockChapter）から
 // 項目に分けて返し、保存も状態を直接更新する（Markdown の文字列を経由しない）。
-// 状態では空文字で持つ項目（読み・視点・場所・時間）は、本物の front matter に合わせて null で返す。
-
-const CHARACTER_PATH_PATTERN = /^characters\/([^/]+)\.md$/;
-const CHAPTER_PATH_PATTERN = /^plot\/chapters\/([^/]+)\.md$/;
+// 状態では空文字で持つ項目（読み・視点・場所・時間）は、「無い」と空文字を区別せず、空文字を null で返す。
+// 本物は front matter の `reading: ""` を空文字のまま返すが、偽の front matter の書式はそこまで再現しない。
 
 function emptyToNull(value: string): string | null {
   return value === "" ? null : value;
@@ -56,8 +55,8 @@ function toChapterMeta(chapter: MockChapter): ChapterMeta {
 
 /** パスに対応する文書を、画面で編集する形で読む。存在しなければ null。 */
 export function readMockDocument(state: ProjectState, path: string): EditableDocument | null {
-  const characterId = CHARACTER_PATH_PATTERN.exec(path)?.[1];
-  const character = characterId === undefined ? null : findCharacter(state, characterId);
+  const characterId = characterIdFromPath(path);
+  const character = characterId === null ? null : findCharacter(state, characterId);
   if (character) {
     return {
       kind: "character",
@@ -65,8 +64,8 @@ export function readMockDocument(state: ProjectState, path: string): EditableDoc
       body: character.detail ?? PLACEHOLDER_CHARACTER_BODY,
     };
   }
-  const chapterId = CHAPTER_PATH_PATTERN.exec(path)?.[1];
-  const chapter = chapterId === undefined ? null : findChapter(state, chapterId);
+  const chapterId = chapterIdFromPath(path);
+  const chapter = chapterId === null ? null : findChapter(state, chapterId);
   if (chapter) {
     return { kind: "chapter", meta: toChapterMeta(chapter), body: chapter.storyline };
   }
@@ -87,7 +86,7 @@ function writeCharacter(
     role: meta.role,
     summary: meta.summary,
     order: meta.order ?? null,
-    detail: body.length > 0 ? body : null,
+    detail: characterDetailFromBody(body),
   };
   const characters = state.characters ?? [];
   const exists = findCharacter(state, id) !== null;
@@ -154,14 +153,14 @@ export function writeMockDocument(
     return writeMockFile(state, path, document.content);
   }
   if (document.kind === "character") {
-    const id = CHARACTER_PATH_PATTERN.exec(path)?.[1];
-    if (id === undefined) {
+    const id = characterIdFromPath(path);
+    if (id === null) {
       throw kindMismatch(path, document);
     }
     return writeCharacter(state, id, document.meta, document.body);
   }
-  const id = CHAPTER_PATH_PATTERN.exec(path)?.[1];
-  if (id === undefined) {
+  const id = chapterIdFromPath(path);
+  if (id === null) {
     throw kindMismatch(path, document);
   }
   return writeChapter(state, id, document.meta, document.body);

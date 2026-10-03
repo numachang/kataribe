@@ -5,6 +5,8 @@ import { useDraftInput } from "./useDraftInput";
 
 const NAME_SEPARATOR = /[、,，]/;
 const NAME_SEPARATOR_FOR_DISPLAY = "、";
+/** Rust 側の型（u32）の最大値。超える値を送ると、保存の引数の読み込みで失敗する。 */
+const INTEGER_FIELD_MAX = 4_294_967_295;
 
 /** 全角の数字も受け付ける（日本語入力のまま打てるように）。 */
 function toHalfWidthDigits(text: string): string {
@@ -47,14 +49,17 @@ interface OptionalTextFieldProps {
   onChange: (value: string | null) => void;
 }
 
-/** 空欄にすると null になる、任意の 1 行の項目。 */
+/**
+ * 完全に空欄にしたときだけ null になる、任意の 1 行の項目。
+ * 空白だけの入力を null にすると、空欄で最初に打った全角スペースが入力欄から消えてしまう。
+ */
 export function OptionalTextField({ label, value, onChange }: OptionalTextFieldProps) {
   return (
     <label className="app-field">
       <span>{label}</span>
       <input
         value={value ?? ""}
-        onChange={(event) => onChange(event.target.value.trim() === "" ? null : event.target.value)}
+        onChange={(event) => onChange(event.target.value === "" ? null : event.target.value)}
       />
     </label>
   );
@@ -67,7 +72,11 @@ interface IntegerFieldProps {
   onChange: (value: number | null) => void;
 }
 
-/** 0 以上の整数の項目。空欄にすると null になる。数字でない入力は、フォーカスを外すと元の値に戻る。 */
+/**
+ * 0 以上の整数の項目。空欄にすると null になる。
+ * 数字でない入力と、上限（Rust の u32）を超える入力は文書に反映せず、フォーカスを外すと、
+ * 途中で確定した最後の有効な値に戻る（12 → 12a と打っても、外すと 12）。
+ */
 export function IntegerField({ label, value, onChange }: IntegerFieldProps) {
   const input = useDraftInput<number | null>({
     value: value ?? null,
@@ -77,7 +86,10 @@ export function IntegerField({ label, value, onChange }: IntegerFieldProps) {
       if (digits === "") {
         return { value: null };
       }
-      return /^\d+$/.test(digits) ? { value: Number(digits) } : null;
+      if (!/^\d+$/.test(digits) || Number(digits) > INTEGER_FIELD_MAX) {
+        return null;
+      }
+      return { value: Number(digits) };
     },
     onCommit: onChange,
   });

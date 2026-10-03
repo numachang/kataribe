@@ -5,8 +5,12 @@
 //!
 //! 保存するときは、画面が知らない項目（`extra`）を保存されている側の値で残し、本文だけが変わったときは
 //! YAML を書かれたまま（コメントや項目の順番も）残す。
+//!
+//! 章立てのシーンの `id` が重複していると、項目に分けて保存したときに別のシーンの本文ファイルや
+//! 未知の項目を取り違える。そのため、重複した章立ては項目に分けず文字列のまま開き、保存も受け付けない。
 
 use std::borrow::Cow;
+use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
@@ -47,37 +51,32 @@ pub enum EditableDocument {
 
 /// 読み込んだ文書。
 #[derive(Debug, Clone, PartialEq)]
-pub struct DocumentFile {
+pub struct LoadedDocument {
     /// 画面で編集する形にした文書。
     pub document: EditableDocument,
     /// 正規化したファイル全体のハッシュ（[`ProjectStore::read_text`] が返すものと同じ）。
     /// 保存するときの `expected` に渡して、読んだあとの外での変更を検出する。
     pub hash: ContentHash,
-    /// 人物資料・章立てなのに front matter を解釈できず、[`EditableDocument::Text`] として返したときの理由。
-    /// パスと行番号を含み、利用者にそのまま見せられる。
+    /// 人物資料・章立てなのに項目に分けられず、[`EditableDocument::Text`] として返したときの理由
+    /// （front matter を解釈できない、章立てのシーンの `id` が重複している）。
+    /// パスを含み、利用者にそのまま見せられる。
     pub parse_error: Option<String>,
 }
 
 /// ファイルを読み、画面で編集する形にする。
 ///
-/// front matter を解釈できない人物資料・章立ては、直して保存できるよう文字列のまま返す。
+/// 項目に分けられない人物資料・章立ては、直して保存できるよう文字列のまま返す。
 pub(crate) fn read_document(
     store: &ProjectStore,
     path: &RelPath,
-) -> Result<DocumentFile, ProjectError> {
+) -> Result<LoadedDocument, ProjectError> {
     let file = store.read_text(path)?;
     let (document, parse_error) = match parse_structured(path, &file.content) {
         Ok(Some(document)) => (document, None),
         Ok(None) => (text_document(file.content), None),
-        Err(source) => {
-            let reason = ProjectError::Frontmatter {
-                path: path.clone(),
-                source,
-            };
-            (text_document(file.content), Some(reason.to_string()))
-        }
+        Err(reason) => (text_document(file.content), Some(reason.to_string())),
     };
-    Ok(DocumentFile {
+    Ok(LoadedDocument {
         document,
         hash: file.hash,
         parse_error,
@@ -91,7 +90,8 @@ pub(crate) fn read_document(
 ///
 /// どちらも合わなければ [`ProjectError::Conflict`] になる。
 /// [`EditableDocument::Text`] はどのパスにも書ける（壊れた YAML を文字列のまま直せるように）。
-/// 人物資料・章立てはパスの種類が合っていなければ [`ProjectError::DocumentKindMismatch`] になる。
+/// 人物資料・章立てはパスの種類が合っていなければ [`ProjectError::DocumentKindMismatch`] に、
+/// 章立てのシーンの `id` が重複していれば [`ProjectError::DuplicateSceneId`] になる。
 pub(crate) fn write_document(
     store: &ProjectStore,
     path: &RelPath,
@@ -104,15 +104,13 @@ pub(crate) fn write_document(
             let DocumentKind::Character(id) = layout::document_kind(path) else {
                 return Err(kind_mismatch(path, "人物資料"));
             };
-            let stored = read_stored(store, path, expected)?;
-            Cow::Owned(character_text(path, id, meta, body, stored.as_ref())?)
+            Cow::Owned(structured_text(store, path, id, meta, body, expected)?)
         }
         EditableDocument::Chapter { meta, body } => {
             let DocumentKind::Chapter(id) = layout::document_kind(path) else {
                 return Err(kind_mismatch(path, "章立て"));
             };
-            let stored = read_stored(store, path, expected)?;
-            Cow::Owned(chapter_text(path, id, meta, body, stored.as_ref())?)
+            Cow::Owned(structured_text(store, path, id, meta, body, expected)?)
         }
     };
     // 条件の確認は write_text が書き込みの排他の中でやり直す。ここで読んだあとに
@@ -132,17 +130,23 @@ fn text_document(content: String) -> EditableDocument {
 }
 
 /// 人物資料・章立てのパスなら項目に分けた文書にする。それ以外のパスは `None`。
-fn parse_structured(path: &RelPath, content: &str) -> Result<Option<EditableDocument>, YamlError> {
+fn parse_structured(
+    path: &RelPath,
+    content: &str,
+) -> Result<Option<EditableDocument>, ProjectError> {
     match layout::document_kind(path) {
         DocumentKind::Character(id) => {
-            let character = Character::parse(id, content)?;
+            let character =
+                Character::parse(id, content).map_err(|source| frontmatter_error(path, source))?;
             Ok(Some(EditableDocument::Character {
                 meta: character.meta,
                 body: character.body,
             }))
         }
         DocumentKind::Chapter(id) => {
-            let chapter = Chapter::parse(id, content)?;
+            let chapter =
+                Chapter::parse(id, content).map_err(|source| frontmatter_error(path, source))?;
+            reject_duplicate_scene_ids(path, &chapter.meta.scenes)?;
             Ok(Some(EditableDocument::Chapter {
                 meta: chapter.meta,
                 body: chapter.storyline,
@@ -152,10 +156,32 @@ fn parse_structured(path: &RelPath, content: &str) -> Result<Option<EditableDocu
     }
 }
 
+fn frontmatter_error(path: &RelPath, source: YamlError) -> ProjectError {
+    ProjectError::Frontmatter {
+        path: path.clone(),
+        source,
+    }
+}
+
 fn kind_mismatch(path: &RelPath, expected: &'static str) -> ProjectError {
     ProjectError::DocumentKindMismatch {
         path: path.clone(),
         expected,
+    }
+}
+
+fn reject_duplicate_scene_ids(path: &RelPath, scenes: &[ScenePlan]) -> Result<(), ProjectError> {
+    let mut seen = HashSet::new();
+    match scenes
+        .iter()
+        .map(|scene| scene.id)
+        .find(|id| !seen.insert(*id))
+    {
+        Some(id) => Err(ProjectError::DuplicateSceneId {
+            path: path.clone(),
+            id,
+        }),
+        None => Ok(()),
     }
 }
 
@@ -188,83 +214,82 @@ fn read_stored(
     }
 }
 
-/// 人物資料として書き出す内容を決める。
-fn character_text(
-    path: &RelPath,
-    id: CharacterId,
-    screen_meta: &CharacterMeta,
-    body: &str,
-    stored: Option<&TextFile>,
-) -> Result<String, ProjectError> {
-    let to_project_error = |source| ProjectError::Frontmatter {
-        path: path.clone(),
-        source,
-    };
-    let stored_character = stored.and_then(|file| {
-        let character = Character::parse(id.clone(), &file.content).ok()?;
-        Some((file, character))
-    });
-    let Some((stored_file, stored_character)) = stored_character else {
-        return render_character(id, screen_meta.clone(), body).map_err(to_project_error);
-    };
+/// 人物資料・章立てのように、front matter の項目と本文でできた文書の項目。
+///
+/// 保存の流れ（[`structured_text`]）は共通で、項目の型ごとに違うところだけをここに持つ。
+trait StructuredMeta: Clone + PartialEq + Sized {
+    /// ファイル名から決まる id。
+    type Id: Clone;
 
-    let mut meta = screen_meta.clone();
-    meta.extra = stored_character.meta.extra.clone();
-    if meta == stored_character.meta {
-        return frontmatter::replace_body(&stored_file.content, body).map_err(to_project_error);
+    /// 保存されているファイルから項目を読む。解釈できなければ `None`。
+    fn parse_stored(id: Self::Id, content: &str) -> Option<Self>;
+
+    /// 画面から来た項目が保存できる状態か確かめる。
+    fn validate(&self, _path: &RelPath) -> Result<(), ProjectError> {
+        Ok(())
     }
-    render_character(id, meta, body).map_err(to_project_error)
+
+    /// 画面が知らない項目を、保存されている側の値に置き換える。
+    fn keep_unknown_fields(&mut self, stored: &Self);
+
+    /// 項目と本文からファイル全体を書き起こす。
+    fn render(self, id: Self::Id, body: &str) -> Result<String, YamlError>;
 }
 
-fn render_character(id: CharacterId, meta: CharacterMeta, body: &str) -> Result<String, YamlError> {
-    Character {
-        id,
-        meta,
-        body: body.to_owned(),
+impl StructuredMeta for CharacterMeta {
+    type Id = CharacterId;
+
+    fn parse_stored(id: CharacterId, content: &str) -> Option<Self> {
+        Character::parse(id, content)
+            .ok()
+            .map(|character| character.meta)
     }
-    .render()
+
+    fn keep_unknown_fields(&mut self, stored: &Self) {
+        self.extra = stored.extra.clone();
+    }
+
+    fn render(self, id: CharacterId, body: &str) -> Result<String, YamlError> {
+        Character {
+            id,
+            meta: self,
+            body: body.to_owned(),
+        }
+        .render()
+    }
 }
 
-/// 章立てとして書き出す内容を決める。
-fn chapter_text(
-    path: &RelPath,
-    id: ChapterId,
-    screen_meta: &ChapterMeta,
-    body: &str,
-    stored: Option<&TextFile>,
-) -> Result<String, ProjectError> {
-    let to_project_error = |source| ProjectError::Frontmatter {
-        path: path.clone(),
-        source,
-    };
-    let stored_chapter = stored.and_then(|file| {
-        let chapter = Chapter::parse(id, &file.content).ok()?;
-        Some((file, chapter))
-    });
-    let Some((stored_file, stored_chapter)) = stored_chapter else {
-        return render_chapter(id, screen_meta.clone(), body).map_err(to_project_error);
-    };
+impl StructuredMeta for ChapterMeta {
+    type Id = ChapterId;
 
-    let mut meta = screen_meta.clone();
-    meta.extra = stored_chapter.meta.extra.clone();
-    keep_scene_extras(&mut meta.scenes, &stored_chapter.meta.scenes);
-    if meta == stored_chapter.meta {
-        return frontmatter::replace_body(&stored_file.content, body).map_err(to_project_error);
+    fn parse_stored(id: ChapterId, content: &str) -> Option<Self> {
+        Chapter::parse(id, content).ok().map(|chapter| chapter.meta)
     }
-    render_chapter(id, meta, body).map_err(to_project_error)
-}
 
-fn render_chapter(id: ChapterId, meta: ChapterMeta, body: &str) -> Result<String, YamlError> {
-    Chapter {
-        id,
-        meta,
-        storyline: body.to_owned(),
+    fn validate(&self, path: &RelPath) -> Result<(), ProjectError> {
+        reject_duplicate_scene_ids(path, &self.scenes)
     }
-    .render()
+
+    fn keep_unknown_fields(&mut self, stored: &Self) {
+        self.extra = stored.extra.clone();
+        keep_scene_extras(&mut self.scenes, &stored.scenes);
+    }
+
+    fn render(self, id: ChapterId, body: &str) -> Result<String, YamlError> {
+        Chapter {
+            id,
+            meta: self,
+            storyline: body.to_owned(),
+        }
+        .render()
+    }
 }
 
 /// 画面から来たシーンの未知の項目を、保存されている同じ `id` のシーンの値に置き換える。
 /// 保存されていない `id` のシーンは、未知の項目なしになる。
+///
+/// 保存されている側に同じ `id` のシーンが複数あるとき（外で壊されたあとに画面が「上書き」したときだけ起こる）は、
+/// 最初のものを使う。
 fn keep_scene_extras(screen_scenes: &mut [ScenePlan], stored_scenes: &[ScenePlan]) {
     for scene in screen_scenes {
         scene.extra = stored_scenes
@@ -273,6 +298,41 @@ fn keep_scene_extras(screen_scenes: &mut [ScenePlan], stored_scenes: &[ScenePlan
             .map(|stored| stored.extra.clone())
             .unwrap_or_default();
     }
+}
+
+/// 人物資料・章立てとして書き出す内容を決める。
+///
+/// 保存されているファイルを解釈できれば、画面が知らない項目をそちらの値にしたうえで、項目が等しければ
+/// 本文だけを差し替え、違えば書き直す。保存されたファイルが無い・解釈できないときは、画面の項目をそのまま書き起こす。
+fn structured_text<M: StructuredMeta>(
+    store: &ProjectStore,
+    path: &RelPath,
+    id: M::Id,
+    screen_meta: &M,
+    body: &str,
+    expected: Option<&ContentHash>,
+) -> Result<String, ProjectError> {
+    screen_meta.validate(path)?;
+    let stored = read_stored(store, path, expected)?;
+    let to_project_error = |source| frontmatter_error(path, source);
+
+    let stored_parsed = stored.as_ref().and_then(|file| {
+        let meta = M::parse_stored(id.clone(), &file.content)?;
+        Some((file, meta))
+    });
+    let Some((stored_file, stored_meta)) = stored_parsed else {
+        return screen_meta
+            .clone()
+            .render(id, body)
+            .map_err(to_project_error);
+    };
+
+    let mut meta = screen_meta.clone();
+    meta.keep_unknown_fields(&stored_meta);
+    if meta == stored_meta {
+        return frontmatter::replace_body(&stored_file.content, body).map_err(to_project_error);
+    }
+    meta.render(id, body).map_err(to_project_error)
 }
 
 #[cfg(test)]
@@ -322,6 +382,20 @@ scenes:
     weather: 雨
 ---
 古いストーリーライン
+";
+
+    /// 手で複製して、`id` を直し忘れた章立て（`s01` が 2 つある）。
+    const DUPLICATE_SCENE_CHAPTER_TEXT: &str = "---
+title: 雨の匂い
+scenes:
+  - id: s01
+    title: 事務所に届いた依頼
+    summary: 雨の夜、依頼が届く
+  - id: s01
+    title: 現場へ
+    summary: 凛は現場へ向かう
+---
+ストーリーライン
 ";
 
     fn open_project(dir: &TempDir) -> Project {
@@ -493,6 +567,42 @@ scenes:
         assert_eq!(file.document, text_document("front matter の無い章\n"));
         let reason = file.parse_error.expect("解釈できなかった理由が付くはず");
         assert!(reason.contains(CHAPTER_PATH), "reason: {reason}");
+    }
+
+    #[test]
+    fn reads_a_chapter_with_duplicate_scene_ids_as_text_with_the_reason() {
+        let dir = TempDir::new().unwrap();
+        let project = open_project(&dir);
+        put_file(&dir, CHAPTER_PATH, DUPLICATE_SCENE_CHAPTER_TEXT);
+
+        let file = project.read_document(&rel(CHAPTER_PATH)).unwrap();
+
+        assert_eq!(file.document, text_document(DUPLICATE_SCENE_CHAPTER_TEXT));
+        let reason = file.parse_error.expect("開けなかった理由が付くはず");
+        assert!(reason.contains(CHAPTER_PATH), "reason: {reason}");
+        assert!(reason.contains("「s01」"), "reason: {reason}");
+        assert!(reason.contains("重複"), "reason: {reason}");
+        assert_eq!(file.hash, current_hash(&project, CHAPTER_PATH));
+    }
+
+    #[test]
+    fn a_chapter_whose_duplicate_scene_id_was_fixed_as_text_opens_as_a_form() {
+        let dir = TempDir::new().unwrap();
+        let project = open_project(&dir);
+        put_file(&dir, CHAPTER_PATH, DUPLICATE_SCENE_CHAPTER_TEXT);
+        let file = project.read_document(&rel(CHAPTER_PATH)).unwrap();
+        let fixed = DUPLICATE_SCENE_CHAPTER_TEXT.replacen("id: s01", "id: s02", 1);
+
+        project
+            .write_document(&rel(CHAPTER_PATH), &text_document(&fixed), Some(&file.hash))
+            .unwrap();
+
+        let reopened = project.read_document(&rel(CHAPTER_PATH)).unwrap();
+        assert!(matches!(
+            reopened.document,
+            EditableDocument::Chapter { .. }
+        ));
+        assert_eq!(reopened.parse_error, None);
     }
 
     #[test]
@@ -696,6 +806,103 @@ scenes:
         assert_eq!(saved.scenes[0].extra["weather"], text_value("雨"));
         assert_eq!(saved.scenes[1].extra["mood"], text_value("暗い"));
         assert!(saved.scenes[2].extra.is_empty());
+    }
+
+    // ---- write_document: シーンの id の重複 ----
+
+    fn chapter_meta_with_duplicate_scene_ids() -> ChapterMeta {
+        let mut meta = Chapter::parse(ChapterId::from_number(1), CHAPTER_TEXT)
+            .unwrap()
+            .meta;
+        meta.scenes[1].id = meta.scenes[0].id;
+        meta
+    }
+
+    #[test]
+    fn a_chapter_with_duplicate_scene_ids_is_rejected_and_the_file_stays_unchanged() {
+        let dir = TempDir::new().unwrap();
+        let project = open_project(&dir);
+        put_file(&dir, CHAPTER_PATH, CHAPTER_TEXT);
+        let hash = current_hash(&project, CHAPTER_PATH);
+
+        let result = project.write_document(
+            &rel(CHAPTER_PATH),
+            &EditableDocument::Chapter {
+                meta: chapter_meta_with_duplicate_scene_ids(),
+                body: "新しいストーリーライン\n".to_owned(),
+            },
+            Some(&hash),
+        );
+
+        let Err(ProjectError::DuplicateSceneId { path, id }) = result else {
+            panic!("シーンの id の重複で失敗するはず: {result:?}");
+        };
+        assert_eq!(path, rel(CHAPTER_PATH));
+        assert_eq!(id, SceneId::from_number(1));
+        assert_eq!(file_text(&dir, CHAPTER_PATH), CHAPTER_TEXT);
+    }
+
+    #[test]
+    fn a_new_chapter_with_duplicate_scene_ids_is_not_created() {
+        let dir = TempDir::new().unwrap();
+        let project = open_project(&dir);
+
+        let result = project.write_document(
+            &rel(CHAPTER_PATH),
+            &EditableDocument::Chapter {
+                meta: chapter_meta_with_duplicate_scene_ids(),
+                body: String::new(),
+            },
+            None,
+        );
+
+        assert!(matches!(result, Err(ProjectError::DuplicateSceneId { .. })));
+        assert!(!dir.path().join(CHAPTER_PATH).exists());
+    }
+
+    #[test]
+    fn a_chapter_file_with_duplicate_scene_ids_can_still_be_saved_as_text() {
+        let dir = TempDir::new().unwrap();
+        let project = open_project(&dir);
+        put_file(&dir, CHAPTER_PATH, DUPLICATE_SCENE_CHAPTER_TEXT);
+        let hash = current_hash(&project, CHAPTER_PATH);
+
+        let result = project.write_document(
+            &rel(CHAPTER_PATH),
+            &text_document("直している途中\n"),
+            Some(&hash),
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(file_text(&dir, CHAPTER_PATH), "直している途中\n");
+    }
+
+    #[test]
+    fn unknown_fields_of_a_stored_chapter_with_duplicate_scene_ids_come_from_the_first_scene() {
+        let dir = TempDir::new().unwrap();
+        let project = open_project(&dir);
+        put_file(&dir, CHAPTER_PATH, CHAPTER_TEXT);
+        let (mut meta, body) = read_chapter(&project);
+        // 画面で開いたあとに、外で id が複製された。利用者が競合を承知で「上書き」した
+        let duplicated = CHAPTER_TEXT
+            .replace("weather: 雨", "mood: 二つ目")
+            .replace("id: s02", "id: s01");
+        put_file(&dir, CHAPTER_PATH, &duplicated);
+        let hash = current_hash(&project, CHAPTER_PATH);
+        meta.scenes[0].title = "題を直した".to_owned();
+
+        project
+            .write_document(
+                &rel(CHAPTER_PATH),
+                &EditableDocument::Chapter { meta, body },
+                Some(&hash),
+            )
+            .unwrap();
+
+        let (saved, _) = read_chapter(&project);
+        assert_eq!(saved.scenes.len(), 2);
+        assert_eq!(saved.scenes[0].title, "題を直した");
+        assert_eq!(saved.scenes[0].extra["mood"], text_value("暗い"));
     }
 
     // ---- write_document: 競合・新規作成 ----
@@ -960,6 +1167,66 @@ scenes:
         let read = project.read_document(&rel("concept.md")).unwrap();
         assert_eq!(read.hash, returned);
         assert_eq!(file_text(&dir, "concept.md"), "一行目\n二行目\n");
+    }
+
+    /// BOM 付き・CRLF で、ディスクに直接書かれたファイルの内容にする。
+    fn with_bom_and_crlf(text: &str) -> String {
+        format!("\u{feff}{}", text.replace('\n', "\r\n"))
+    }
+
+    #[test]
+    fn a_body_only_change_to_a_bom_and_crlf_character_keeps_the_front_matter() {
+        let dir = TempDir::new().unwrap();
+        let project = open_project(&dir);
+        put_file(&dir, CHARACTER_PATH, &with_bom_and_crlf(CHARACTER_TEXT));
+        let file = project.read_document(&rel(CHARACTER_PATH)).unwrap();
+        let EditableDocument::Character { meta, .. } = file.document else {
+            panic!("人物資料として読めるはず");
+        };
+
+        let returned = project
+            .write_document(
+                &rel(CHARACTER_PATH),
+                &EditableDocument::Character {
+                    meta,
+                    body: "## 外見\n新しい本文\n".to_owned(),
+                },
+                Some(&file.hash),
+            )
+            .unwrap();
+
+        // BOM と CRLF が正規化される以外は、front matter が書かれたまま残る
+        let expected = CHARACTER_TEXT.replace("古い本文", "新しい本文");
+        assert_eq!(file_text(&dir, CHARACTER_PATH), expected);
+        let reread = project.read_document(&rel(CHARACTER_PATH)).unwrap();
+        assert_eq!(reread.hash, returned);
+    }
+
+    #[test]
+    fn a_body_only_change_to_a_bom_and_crlf_chapter_keeps_the_front_matter() {
+        let dir = TempDir::new().unwrap();
+        let project = open_project(&dir);
+        put_file(&dir, CHAPTER_PATH, &with_bom_and_crlf(CHAPTER_TEXT));
+        let file = project.read_document(&rel(CHAPTER_PATH)).unwrap();
+        let EditableDocument::Chapter { meta, .. } = file.document else {
+            panic!("章立てとして読めるはず");
+        };
+
+        let returned = project
+            .write_document(
+                &rel(CHAPTER_PATH),
+                &EditableDocument::Chapter {
+                    meta,
+                    body: "新しいストーリーライン\n".to_owned(),
+                },
+                Some(&file.hash),
+            )
+            .unwrap();
+
+        let expected = CHAPTER_TEXT.replace("古いストーリーライン", "新しいストーリーライン");
+        assert_eq!(file_text(&dir, CHAPTER_PATH), expected);
+        let reread = project.read_document(&rel(CHAPTER_PATH)).unwrap();
+        assert_eq!(reread.hash, returned);
     }
 
     #[test]

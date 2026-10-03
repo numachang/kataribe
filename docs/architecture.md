@@ -47,6 +47,8 @@
   項目（front matter）に変更がなく本文だけが変わったなら、YAML を解釈し直さず書かれたまま
   （コメント・項目の順番・引用符やブロック表記も）残して本文だけを差し替える。項目が変わったときは YAML を書き直す
   （未知の項目は残るが、コメントと順番は残らない）。
+- 章立ての `scenes` で `id` は一意でなければならない。重複した章立て（手で複製して直し忘れたなど）は、
+  画面では項目に分けず文字列のまま開き（理由を添える）、項目に分けた保存は受け付けない（§3.3）。
 
 ### kataribe.yaml
 
@@ -203,7 +205,7 @@ pub async fn collect(stream, on_event) -> Result<Completion, LlmError>;   // 全
 | `frontmatter` | `Document<M> { meta, body }`、`parse`、`render`、`replace_body(text, body)` | YAML front matter の分解・合成（未知の項目を保持）。`replace_body` は front matter を書かれたまま残して本文だけを差し替える |
 | `layout` | パス定数と `character_path(id)` などの関数、`document_kind(&RelPath) -> DocumentKind` | §2 のフォルダ構成の唯一の定義。`document_kind` は `characters/<有効な id>.md` を人物資料、`plot/chapters/<有効な NN>.md` を章立て、それ以外（サブフォルダの下・id として無効な名前・ほかのファイル）を「その他」と判定する。`Project::characters` / `chapters` が拾うファイルと同じ条件 |
 | `model` | `Manifest`・`Rating`・`MarkdownDoc`・`Character`/`CharacterMeta`・`Chapter`/`ChapterMeta`・`ScenePlan`・`ChapterId`・`SceneId`・`CharacterId` | 各ファイルの型。`render()` でファイル内容を生成 |
-| `document` | `EditableDocument`、`DocumentFile { document, hash, parse_error }` | 画面で編集する文書。人物資料と章立ては front matter を項目に分け、それ以外は文字列のまま扱う |
+| （crate 直下） | `EditableDocument`、`LoadedDocument { document, hash, parse_error }` | 画面で編集する文書と、読み込んだ結果。人物資料と章立ては front matter を項目に分け、それ以外は文字列のまま扱う。実装は非公開の `document` モジュールにあり、型を `lib.rs` から公開している（`Project::read_document` / `write_document` から使う） |
 | `project` | `Project` | 作品の作成・読み込み・型付きの取得。`update_manifest` で作品情報（`kataribe.yaml`）を書き換える。`read_document` / `write_document` で画面で編集する文書を読み書きする |
 
 - `ProjectStore::write_text(path, content, WriteOptions { condition, backup })`
@@ -217,16 +219,20 @@ pub async fn collect(stream, on_event) -> Result<Completion, LlmError>;   // 全
 - 「条件の確認から置き換えまで」は同じプロセスの中で排他する（自動保存と変更案の適用が重なっても、
   両方が同じ内容を前提に通って片方の変更が消えることがないように）。
 - `remove` は削除せず `.kataribe/trash/<日時>/<相対パス>` へ移す。
-- `Project::read_document(path) -> DocumentFile` は、人物資料・章立てのパスなら `EditableDocument::Character { meta, body }` /
+- `Project::read_document(path) -> LoadedDocument` は、人物資料・章立てのパスなら `EditableDocument::Character { meta, body }` /
   `Chapter { meta, body }`（章の `body` はストーリーライン）を返す。front matter を解釈できなければ、直して保存できるよう
-  `Text { content }` のまま返し、理由（パスと行番号を含む）を `parse_error` に入れる。それ以外のパスは `Text { content }`。
+  `Text { content }` のまま返し、理由（パスと行番号を含む）を `parse_error` に入れる。章立てのシーンの `id` が重複しているときも
+  同じで（本文ファイルの名前が `id` なので、重複したまま項目に分けて保存すると別のシーンを上書きする）、
+  「シーンの id「s01」が重複しているため…」という理由を `parse_error` に入れて `Text { content }` で返す。
+  利用者が `id` を直して文字列のまま保存し、開き直せばフォームで開ける。それ以外のパスは `Text { content }`。
   `hash` は正規化したファイル全体のハッシュで、`read_text` と同じもの。
 - `Project::write_document(path, &EditableDocument, expected) -> ContentHash` の `expected` は `write_text` の条件に対応する
   （`Some` なら今のハッシュと一致するときだけ、`None` なら新規作成だけ。違えば `Conflict`）。バックアップは `Throttled`。
   - `Text` はパスの種類を問わずそのまま書く（YAML が壊れた人物資料を文字列のまま直せるように）。
+  - `Chapter` の `scenes` に同じ `id` があれば `DuplicateSceneId`（何も書かない）。
   - `Character` / `Chapter` はパスの種類が合わなければ `DocumentKindMismatch`。保存されている今のファイルを読み、
     解釈できれば、画面が知らない項目（`extra`）は保存されている側の値を使う（章立てのシーンは `id` で突き合わせ、
-    保存側に無い `id` は未知の項目なし）。そのうえで項目が保存されているものと等しければ `replace_body` で本文だけを
+    保存側に無い `id` は未知の項目なし。保存側に同じ `id` のシーンが複数あるときは最初のものを使う）。そのうえで項目が保存されているものと等しければ `replace_body` で本文だけを
     差し替え、等しくなければ `render` で書き直す。保存されているファイルが無い（新規作成）か解釈できないときは、
     画面から来た文書をそのまま `render` する。
   - 保存されているファイルを読んだ時点で `expected` と食い違っていれば、項目を引き継がずに `Conflict` にする。
@@ -375,14 +381,27 @@ Gemma には前者だけ、Qwen には後者だけが効き、両方を指定す
 - 画面の型は ts-rs が Rust の型から生成する `src/bindings/` を使う。手書きの契約（`src/api/types.ts`・`backend.ts`）を
   残す場合は、`src/api/bindingsContract.ts` で生成物と完全に一致することを型検査で保証する。
   生成物が Rust の型と一致していることは、CI で `cargo test --all-features` の後に `src/bindings` に差分が無いことで確かめる。
-- ブラウザ単体（`pnpm dev`）では、メモリ上の偽バックエンドで動く（画面の開発とテスト用）。
+- ブラウザ単体（`pnpm dev`）では、メモリ上の偽バックエンドで動く（画面の開発とテスト用）。人物資料・章立てのパスの
+  id は本物と同じ規則で判定し（人物は小文字の英数字とハイフンの slug、章は 2〜3 桁の数字）、合わないパスに保存すると
+  `invalid_input` にする。人物の本文は保存したまま読み直せる（空にしても空のまま。生成していないときのプレースホルダー
+  の文は、本文として保存しない）。ただし項目の「無い」と空文字は区別せず、空文字は `null` で返す（本物の `reading: ""`
+  との違い）。
 - 中央のエディタは、文書の種類（`EditableDocument.kind`）で出し分ける。人物資料・章立ては、本文の上に front matter の
   項目のフォームを置き、本文（章はストーリーライン）の欄だけを縦書き・横書きの切り替えの対象にする。
   文字数・品質チェック・ルビのプレビューも本文だけを対象にする。項目に分けない文書（`text`）と、YAML を解釈できず
   文字列で開いた人物資料・章立てはファイル全体を 1 つの欄で編集し、後者には理由を添える。
 - フォームは、利用者が触っていない項目を読んだままの値で送り返す（Rust が項目の変更を見分けて YAML を書き直すかを決めるため）。
   編集中の文書には版番号（`revision`）を付け、保存中や、変更案の適用・設定の保存による書き換えの間に編集されたかを、
-  文書の中身の比較ではなく版番号で判定する。人物資料・章立てを保存したあとは、目次と工程を読み直す。
+  文書の中身の比較ではなく版番号で判定する。
+- 保存のたびに目次と工程を読み直すわけではない。読み直すのは、目次の見出しや工程の名前に出る項目が変わったときだけ
+  （人物資料・章立ての項目が、読み込み時または前回の保存時から変わった。または、人物資料・章立てのパスを文字列
+  `text` として保存した＝壊れた YAML を直した）。本文だけの変更は読み直さない。読み直しは保存の直列化の外で
+  1 つずつ行うので、遅くても失敗しても、文書の切り替えなどのための保存の完了待ち（`flush`）を待たせない。
+  失敗したときは知らせるだけで、保存は済んでいる。読み直している間に作品が閉じられたら、結果は捨てる。
+- シーンは `id` ではなく並びの位置で特定して更新する（`id` が重複した章立てでも、直したシーンだけが変わるように。
+  Rust は重複した `id` の章立てをフォームで開かせず、文字列で開く）。数値の項目は、Rust の型（`u32`）の範囲を超える入力を
+  数字でない入力と同じに扱い、文書に反映しない。任意の文字列の項目は、完全に空欄のときだけ `null` にする
+  （空白だけの入力は文字列のまま）。
 - 起動オプション `--settings=<PATH>`（`--settings <PATH>` も可）で、既定の場所の代わりに使う設定ファイルを指定できる
   （設定ファイルの場所を指定する点は CLI と同じ。ただし指定したファイルが無い場合、CLI はエラーにするのに対し、
   GUI は既定値から始める）。E2E テストが利用者の設定に触れずに動くためにも使う。
@@ -400,7 +419,7 @@ Tauri コマンド名と引数（JS 側の名前。Rust 側は snake_case で受
 | listModels / listGenres | `list_models` / `list_genres` | `llm`（省略可。保存前の接続先で試す）/ — |
 | createProject / openProject / closeProject | `create_project` / `open_project` / `close_project` | `folder, project` / `folder` / — |
 | overview / pipeline | `overview` / `pipeline` | — |
-| readDocument / writeDocument | `read_document` / `write_document` | `path` / `path, document, expectedHash`（`document` は `EditableDocument`。`kind` が `text`・`character`・`chapter` のどれか。`read_document` は `{ document, hash, parse_error }`、`write_document` は新しいハッシュを返す。パスの種類に合わない文書は `invalid_input`） |
+| readDocument / writeDocument | `read_document` / `write_document` | `path` / `path, document, expectedHash`（`document` は `EditableDocument`。`kind` が `text`・`character`・`chapter` のどれか。`read_document` は `{ document, hash, parse_error }`、`write_document` は新しいハッシュを返す。パスの種類に合わない文書と、シーンの `id` が重複した章立ては `invalid_input`） |
 | textStats / parseRuby / analyzeQuality | `text_stats` / `parse_ruby` / `analyze_quality` | `text` / `text` / `text, targetChars` |
 | generate / cancelGeneration | `generate` / `cancel_generation` | `jobId, task, onEvent`（`Channel<GenerationEvent>`）/ `jobId` |
 | applyChangeSet | `apply_change_set` | `changeSet` |

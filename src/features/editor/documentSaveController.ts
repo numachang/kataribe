@@ -2,6 +2,7 @@ import type { Backend } from "../../api/backend";
 import { BackendError } from "../../api/backend";
 import type { EditableDocument } from "../../api/types";
 import { createAutosaveScheduler } from "../../lib/autosave";
+import { hasChangedMeta } from "../../lib/editableDocument";
 import { toErrorMessage } from "../../lib/errorMessage";
 import { findOverviewEntry } from "../../lib/overviewTree";
 import { useEditorStore } from "../../store/editorStore";
@@ -25,31 +26,47 @@ interface SaveTarget {
   document: EditableDocument;
   revision: number;
   expectedHash: string | null;
+  /** 保存する前にファイルにあった文書。目次を読み直すかの判断に使う。分からなければ null。 */
+  previousDocument: EditableDocument | null;
 }
 
 type ConflictListener = (conflict: ConflictState | null) => void;
 
 /**
- * 人物資料・章立てを保存したあとは、目次と工程を読み直す。人物名・順番・章題・シーンは、
- * 目次の見出しや工程の名前に出るため。項目に分けて開けなかった（YAML が壊れていた）ものを
- * 直して保存した場合も同じなので、文書の形ではなく目次の種類でも判断する。
- * 読み直せなくても保存そのものは済んでいるので、失敗は知らせるだけにする。
+ * 保存した文書が、目次の見出しや工程の名前に影響するか。人物名・順番・章題・シーンは、それらに出る。
+ * 本文だけの変更は影響しない（開いている間の文字数は、画面が自分で数える）。
+ * 項目に分けて開けなかった（YAML が壊れていた）人物資料・章立てを、文字列のまま直して保存した場合は、
+ * 項目が読めるようになりうるので、文書の形ではなく目次の種類で判断する。
  */
-async function refreshWorkspaceAfterWrite(
-  backend: Backend,
+function affectsWorkspaceListing(
   path: string,
-  document: EditableDocument,
-): Promise<void> {
-  const workspace = useWorkspaceStore.getState();
-  const entryKind = findOverviewEntry(workspace.overview, path)?.kind;
-  const isStructured =
-    document.kind !== "text" || entryKind === "character" || entryKind === "chapter";
-  if (workspace.overview === null || !isStructured) {
-    return;
+  previousDocument: EditableDocument | null,
+  savedDocument: EditableDocument,
+): boolean {
+  if (savedDocument.kind === "text") {
+    const entryKind = findOverviewEntry(useWorkspaceStore.getState().overview, path)?.kind;
+    return entryKind === "character" || entryKind === "chapter";
   }
+  return hasChangedMeta(previousDocument, savedDocument);
+}
+
+/**
+ * 目次と工程を読み直す。読み直せなくても保存そのものは済んでいるので、失敗は知らせるだけにする。
+ * 読み直している間に作品が閉じられたら、結果は捨てる（閉じた作品の目次を戻さないため）。
+ */
+async function refreshWorkspace(backend: Backend): Promise<void> {
   try {
-    await Promise.all([workspace.refreshOverview(backend), workspace.refreshPipeline(backend)]);
+    const [overview, pipeline] = await Promise.all([backend.overview(), backend.pipeline()]);
+    const workspace = useWorkspaceStore.getState();
+    if (workspace.overview === null) {
+      return;
+    }
+    workspace.setOverview(overview);
+    workspace.setPipeline(pipeline);
   } catch (error) {
+    if (useWorkspaceStore.getState().overview === null) {
+      return;
+    }
     useUiStore.getState().showToast(toErrorMessage(error, "目次を読み直せませんでした。"), "error");
   }
 }
@@ -72,6 +89,8 @@ class DocumentSaveController {
   private latestBackend: Backend | null = null;
   private saving: Promise<void> | null = null;
   private saveAgainFor: Backend | null = null;
+  /** 目次・工程の読み直しの待ち行列。古い読み直しの結果が新しいものを上書きしないよう、1 つずつ行う。 */
+  private refreshQueue: Promise<void> = Promise.resolve();
 
   private readonly scheduler = createAutosaveScheduler(AUTOSAVE_DELAY_MS, () => {
     if (this.latestBackend) {
@@ -137,11 +156,17 @@ class DocumentSaveController {
   }
 
   private async runSave(backend: Backend): Promise<void> {
-    const { path, document, revision, savedHash } = useEditorStore.getState();
+    const { path, document, revision, savedHash, savedDocument } = useEditorStore.getState();
     if (path === null || document === null) {
       return;
     }
-    const target: SaveTarget = { path, document, revision, expectedHash: savedHash };
+    const target: SaveTarget = {
+      path,
+      document,
+      revision,
+      expectedHash: savedHash,
+      previousDocument: savedDocument,
+    };
     if (useEditorStore.getState().path === target.path) {
       useEditorStore.getState().markSaving();
     }
@@ -152,7 +177,12 @@ class DocumentSaveController {
         target.expectedHash,
       );
       this.applySaveSuccess(target, newHash);
-      await refreshWorkspaceAfterWrite(backend, target.path, target.document);
+      this.refreshWorkspaceIfAffected(
+        backend,
+        target.path,
+        target.previousDocument,
+        target.document,
+      );
     } catch (error) {
       if (error instanceof BackendError && error.kind === "conflict") {
         this.setConflict({
@@ -184,11 +214,30 @@ class DocumentSaveController {
       return;
     }
     if (current.revision === target.revision) {
-      useEditorStore.getState().markSaved(hash);
+      useEditorStore.getState().markSaved(hash, target.document);
     } else {
-      // 保存中にさらに編集が進んだ。まだ dirty のまま、次の保存の基準ハッシュだけ更新する。
-      useEditorStore.getState().recordSavedHash(hash);
+      // 保存中にさらに編集が進んだ。まだ dirty のまま、次の保存の基準だけ更新する。
+      useEditorStore.getState().recordSaved(hash, target.document);
     }
+  }
+
+  /**
+   * 目次・工程に影響する保存だったときだけ、読み直しを待ち行列に入れる。
+   * 保存の直列化（`saving`）の外で行うので、読み直しが遅くても `flush`（文書の切り替えなど）を待たせない。
+   */
+  private refreshWorkspaceIfAffected(
+    backend: Backend,
+    path: string,
+    previousDocument: EditableDocument | null,
+    savedDocument: EditableDocument,
+  ): void {
+    if (
+      useWorkspaceStore.getState().overview === null ||
+      !affectsWorkspaceListing(path, previousDocument, savedDocument)
+    ) {
+      return;
+    }
+    this.refreshQueue = this.refreshQueue.then(() => refreshWorkspace(backend));
   }
 
   private setConflict(next: ConflictState | null): void {
@@ -230,13 +279,14 @@ class DocumentSaveController {
       this.setConflict(null);
       if (useEditorStore.getState().path === current.path) {
         if (useEditorStore.getState().revision === current.revision) {
-          useEditorStore.getState().markSaved(newHash);
+          useEditorStore.getState().markSaved(newHash, current.document);
         } else {
-          useEditorStore.getState().recordSavedHash(newHash);
+          useEditorStore.getState().recordSaved(newHash, current.document);
         }
       }
       useUiStore.getState().showToast("上書きして保存しました。");
-      await refreshWorkspaceAfterWrite(backend, current.path, current.document);
+      // 外で書き換えられたファイルの前の内容は分からないので、前回の文書は無いものとして扱う。
+      this.refreshWorkspaceIfAffected(backend, current.path, null, current.document);
     } catch (error) {
       useUiStore.getState().showToast(toErrorMessage(error, "上書きできませんでした。"), "error");
     }
@@ -270,6 +320,7 @@ class DocumentSaveController {
     this.scheduler.cancel();
     this.saving = null;
     this.saveAgainFor = null;
+    this.refreshQueue = Promise.resolve();
     this.latestBackend = null;
     this.setConflict(null);
   };

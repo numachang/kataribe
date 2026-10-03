@@ -25,16 +25,18 @@ enum DocumentKind {
 
 impl DocumentKind {
     fn of(path: &RelPath) -> Result<Self> {
-        let is_under = |directory: &str| {
-            path.as_str()
-                .strip_prefix(directory)
-                .is_some_and(|rest| rest.starts_with('/'))
-        };
+        let is_manuscript = path
+            .as_str()
+            .strip_prefix(layout::MANUSCRIPT_DIR)
+            .is_some_and(|rest| rest.starts_with('/'));
         match path.extension() {
-            Some("txt") if is_under(layout::MANUSCRIPT_DIR) => Ok(Self::Manuscript),
-            Some("md") if is_under(layout::CHARACTERS_DIR) => Ok(Self::Character),
-            Some("md") if is_under(layout::CHAPTERS_DIR) => Ok(Self::Chapter),
-            Some("md") => Ok(Self::Markdown),
+            Some("txt") if is_manuscript => Ok(Self::Manuscript),
+            // 人物資料・章立ては、画面や一覧が扱うファイルと同じ判定（layout）に従う
+            Some("md") => Ok(match layout::document_kind(path) {
+                layout::DocumentKind::Character(_) => Self::Character,
+                layout::DocumentKind::Chapter(_) => Self::Chapter,
+                layout::DocumentKind::Other => Self::Markdown,
+            }),
             _ => Err(EngineError::InvalidInput(format!(
                 "{path} は書き直しの対象にできません（Markdown の資料と本文だけが対象です）。"
             ))),
@@ -147,6 +149,18 @@ mod tests {
         assert_eq!(kind("plot/chapters/01.md").unwrap(), DocumentKind::Chapter);
         assert_eq!(kind("world/overview.md").unwrap(), DocumentKind::Markdown);
         assert!(kind("kataribe.yaml").is_err());
+    }
+
+    #[test]
+    fn files_that_the_project_does_not_treat_as_characters_or_chapters_are_plain_markdown() {
+        for path in [
+            "characters/old/rin.md",
+            "characters/霧島.md",
+            "plot/chapters/draft/01.md",
+            "plot/chapters/1.md",
+        ] {
+            assert_eq!(kind(path).unwrap(), DocumentKind::Markdown, "path: {path}");
+        }
     }
 
     #[test]

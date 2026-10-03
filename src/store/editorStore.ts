@@ -16,6 +16,8 @@ interface EditorState {
   revision: number;
   /** 読み込み時・前回保存時のファイル全体のハッシュ。次の保存の競合検出に使う。 */
   savedHash: string | null;
+  /** 読み込み時・前回保存時の文書（ファイルにある内容）。目次と工程を読み直す必要があるかの判断に使う。 */
+  savedDocument: EditableDocument | null;
   status: SaveStatus;
   errorMessage: string | null;
   rubyPreview: boolean;
@@ -23,9 +25,9 @@ interface EditorState {
   loadDocument: (path: string, file: DocumentFile) => void;
   updateDocument: (document: EditableDocument) => void;
   markSaving: () => void;
-  markSaved: (hash: string) => void;
-  /** 保存は成功したが、保存中にさらに編集が進んでいるときに使う。dirty のまま基準ハッシュだけ更新する。 */
-  recordSavedHash: (hash: string) => void;
+  markSaved: (hash: string, document: EditableDocument) => void;
+  /** 保存は成功したが、保存中にさらに編集が進んでいるときに使う。dirty のまま、保存した内容の基準（ハッシュと文書）だけ更新する。 */
+  recordSaved: (hash: string, document: EditableDocument) => void;
   markError: (message: string) => void;
   toggleRubyPreview: () => void;
   setVertical: (vertical: boolean) => void;
@@ -37,6 +39,7 @@ const initialDocumentState = {
   document: null,
   parseError: null,
   savedHash: null,
+  savedDocument: null,
   status: "clean" as SaveStatus,
   errorMessage: null,
 };
@@ -54,6 +57,7 @@ export const useEditorStore = create<EditorState>((set) => ({
       parseError: file.parse_error,
       revision: state.revision + 1,
       savedHash: file.hash,
+      savedDocument: file.document,
       status: "clean",
       errorMessage: null,
       rubyPreview: false,
@@ -65,11 +69,11 @@ export const useEditorStore = create<EditorState>((set) => ({
   markSaving() {
     set({ status: "saving" });
   },
-  markSaved(hash) {
-    set({ status: "clean", savedHash: hash, errorMessage: null });
+  markSaved(hash, document) {
+    set({ status: "clean", savedHash: hash, savedDocument: document, errorMessage: null });
   },
-  recordSavedHash(hash) {
-    set({ savedHash: hash });
+  recordSaved(hash, document) {
+    set({ savedHash: hash, savedDocument: document });
   },
   markError(message) {
     set({ status: "error", errorMessage: message });

@@ -6,7 +6,7 @@
 use std::fs;
 use std::path::Path;
 
-use crate::document::{self, DocumentFile, EditableDocument};
+use crate::document::{self, EditableDocument, LoadedDocument};
 use crate::error::ProjectError;
 use crate::layout::{self, DocumentKind};
 use crate::model::{
@@ -171,9 +171,9 @@ impl Project {
 
     /// ファイルを、画面で編集する形（人物資料・章立ては front matter を項目に分けた形）で読み込む。
     ///
-    /// front matter を解釈できない人物資料・章立ては、直して保存できるよう文字列のまま返し、
-    /// その理由を [`DocumentFile::parse_error`] に入れる。
-    pub fn read_document(&self, path: &RelPath) -> Result<DocumentFile, ProjectError> {
+    /// 項目に分けられない人物資料・章立て（front matter を解釈できない、章立てのシーンの `id` が重複している）は、
+    /// 直して保存できるよう文字列のまま返し、その理由を [`LoadedDocument::parse_error`] に入れる。
+    pub fn read_document(&self, path: &RelPath) -> Result<LoadedDocument, ProjectError> {
         document::read_document(&self.store, path)
     }
 
@@ -184,7 +184,8 @@ impl Project {
     ///
     /// 人物資料・章立ては、画面が知らない項目を保存されている側の値で残す。項目が変わっていなければ
     /// 本文だけを差し替え、YAML は書かれたまま（コメントや項目の順番も）残す。項目が変わったときは
-    /// YAML を書き直す（コメントや項目の順番は残らない）。
+    /// YAML を書き直す（コメントや項目の順番は残らない）。章立てのシーンの `id` が重複していれば
+    /// [`ProjectError::DuplicateSceneId`]。
     /// [`EditableDocument::Text`] はどのパスにも書ける。
     pub fn write_document(
         &self,
@@ -230,11 +231,11 @@ impl Project {
         }
         let mut characters = Vec::new();
         for entry in self.store.list_dir(&dir)? {
-            if entry.kind != DirEntryKind::File {
+            if entry.kind != DirEntryKind::File || entry.path.extension() != Some("md") {
                 continue;
             }
             let DocumentKind::Character(id) = layout::document_kind(&entry.path) else {
-                tracing::warn!(path = %entry.path, "登場人物の資料（<id>.md）として解釈できないため無視しました");
+                tracing::warn!(path = %entry.path, "登場人物 ID として解釈できないため無視しました");
                 continue;
             };
             if let Some(character) = self.character(&id)? {
@@ -268,11 +269,11 @@ impl Project {
         }
         let mut chapters = Vec::new();
         for entry in self.store.list_dir(&dir)? {
-            if entry.kind != DirEntryKind::File {
+            if entry.kind != DirEntryKind::File || entry.path.extension() != Some("md") {
                 continue;
             }
             let DocumentKind::Chapter(id) = layout::document_kind(&entry.path) else {
-                tracing::warn!(path = %entry.path, "章（<NN>.md）として解釈できないため無視しました");
+                tracing::warn!(path = %entry.path, "章番号として解釈できないため無視しました");
                 continue;
             };
             if let Some(chapter) = self.chapter(&id)? {

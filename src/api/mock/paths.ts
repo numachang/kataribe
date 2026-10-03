@@ -18,3 +18,40 @@ export function chapterPath(chapterId: string): string {
 export function scenePath(chapterId: string, sceneId: string): string {
   return `manuscript/${chapterId}/${sceneId}.txt`;
 }
+
+// Windows が予約しているファイル名（kataribe-project の `RESERVED_STEMS` と同じ）。
+const WINDOWS_RESERVED_NAMES = new Set([
+  "con",
+  "prn",
+  "aux",
+  "nul",
+  ...Array.from({ length: 9 }, (_, index) => `com${index + 1}`),
+  ...Array.from({ length: 9 }, (_, index) => `lpt${index + 1}`),
+]);
+
+const CHARACTER_ID_MAX_LENGTH = 48;
+const CHARACTER_ID_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const CHAPTER_ID_PATTERN = /^\d{2,3}$/;
+const CHARACTER_FILE_PATTERN = /^characters\/([^/]+)\.md$/;
+const CHAPTER_FILE_PATTERN = /^plot\/chapters\/([^/]+)\.md$/;
+
+/** 人物 id として有効か（`CharacterId::new` と同じ規則）。小文字の英数字をハイフン 1 つずつでつないだ slug。 */
+function isValidCharacterId(id: string): boolean {
+  return (
+    id.length <= CHARACTER_ID_MAX_LENGTH &&
+    CHARACTER_ID_PATTERN.test(id) &&
+    !WINDOWS_RESERVED_NAMES.has(id)
+  );
+}
+
+/** `characters/<有効な id>.md` なら id、それ以外は null（`document_kind` が人物資料と判定する条件）。 */
+export function characterIdFromPath(path: string): string | null {
+  const id = CHARACTER_FILE_PATTERN.exec(path)?.[1];
+  return id !== undefined && isValidCharacterId(id) ? id : null;
+}
+
+/** `plot/chapters/<NN または NNN>.md` なら章 id、それ以外は null（`ChapterId::new` と同じ規則）。 */
+export function chapterIdFromPath(path: string): string | null {
+  const id = CHAPTER_FILE_PATTERN.exec(path)?.[1];
+  return id !== undefined && CHAPTER_ID_PATTERN.test(id) ? id : null;
+}

@@ -89,6 +89,7 @@ fn project_error_kind(error: &ProjectError) -> CommandErrorKind {
         ProjectError::InvalidPath(_)
         | ProjectError::InvalidId(_)
         | ProjectError::DocumentKindMismatch { .. }
+        | ProjectError::DuplicateSceneId { .. }
         | ProjectError::AlreadyExists { .. }
         | ProjectError::PathEscapesRoot { .. }
         | ProjectError::DirectoryNotEmpty { .. } => CommandErrorKind::InvalidInput,
@@ -149,6 +150,18 @@ mod tests {
         let source = ProjectError::DocumentKindMismatch {
             path: RelPath::new("concept.md").unwrap(),
             expected: "人物資料",
+        };
+        assert_eq!(
+            CommandError::from(source).kind,
+            CommandErrorKind::InvalidInput
+        );
+    }
+
+    #[test]
+    fn duplicate_scene_id_maps_to_invalid_input() {
+        let source = ProjectError::DuplicateSceneId {
+            path: RelPath::new("plot/chapters/01.md").unwrap(),
+            id: kataribe_project::SceneId::from_number(1),
         };
         assert_eq!(
             CommandError::from(source).kind,

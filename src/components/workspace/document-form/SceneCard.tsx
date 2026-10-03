@@ -66,8 +66,9 @@ export function SceneCard({ scene, onChange }: SceneCardProps) {
               ビート（生成された展開。ここでは直せません）
             </p>
             <ol>
-              {beats.map((beat) => (
-                <li key={beat}>{beat}</li>
+              {beats.map((beat, index) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: 同じ文のビートが並びうる。ここでは並べ替えないので、位置が安定した識別子になる
+                <li key={`${index}-${beat}`}>{beat}</li>
               ))}
             </ol>
           </div>

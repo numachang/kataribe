@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Backend } from "../../api/backend";
 import { createMockBackend } from "../../api/mock";
 import { SAMPLE_PROJECT_FOLDER } from "../../api/mock/sampleProject";
+import { useEditorStore } from "../../store/editorStore";
 import { useUiStore } from "../../store/uiStore";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { editorBody, editText, loadIntoEditor, readText, textDocument } from "../../test/documents";
@@ -42,6 +43,38 @@ describe("writeBesideEditor", () => {
     });
 
     expect(editorBody()).toBe("書き換えた企画");
+  });
+
+  it("項目に分けて開いている人物資料も、書き換えた項目と本文を読み直す", async () => {
+    const backend = createMockBackend({ delayMs: 0 });
+    const characterPath = "characters/kirishima-rin.md";
+    useWorkspaceStore.getState().openWorkspace(await backend.openProject(SAMPLE_PROJECT_FOLDER));
+    useWorkspaceStore.getState().openDocument(characterPath);
+    await loadIntoEditor(backend, characterPath);
+
+    await writeBesideEditor(backend, {
+      touches: (path) => path === characterPath,
+      write: async () => {
+        const { document, hash } = await backend.readDocument(characterPath);
+        if (document.kind !== "character") {
+          throw new Error("人物資料として読めるはず");
+        }
+        return backend.writeDocument(
+          characterPath,
+          { ...document, meta: { ...document.meta, name: "霧島 凛子" }, body: "書き換えた本文" },
+          hash,
+        );
+      },
+      unsavedWorkMessage: "未保存",
+    });
+
+    const { document } = useEditorStore.getState();
+    expect(document).toMatchObject({
+      kind: "character",
+      meta: { name: "霧島 凛子" },
+      body: "書き換えた本文",
+    });
+    expect(useEditorStore.getState().status).toBe("clean");
   });
 
   it("保存できない編集が残っていれば、書き換えずに止める", async () => {

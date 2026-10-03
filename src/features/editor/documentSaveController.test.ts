@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Backend } from "../../api/backend";
 import { createMockBackend } from "../../api/mock";
 import { SAMPLE_PROJECT_FOLDER } from "../../api/mock/sampleProject";
@@ -184,7 +184,7 @@ describe("人物資料・章立てを保存したあと", () => {
     documentSaveController.saveNow(backend);
     await documentSaveController.flush(backend);
 
-    expect(characterLabels()).toContain("霧島 凛子");
+    await vi.waitFor(() => expect(characterLabels()).toContain("霧島 凛子"));
   });
 
   it("YAML が壊れていて文字列で開いた人物資料も、直して保存すれば目次が変わる", async () => {
@@ -201,7 +201,91 @@ describe("人物資料・章立てを保存したあと", () => {
     documentSaveController.saveNow(backend);
     await documentSaveController.flush(backend);
 
-    expect(characterLabels()).toContain("霧島 凛子");
+    await vi.waitFor(() => expect(characterLabels()).toContain("霧島 凛子"));
+  });
+
+  /** 目次と工程の読み直しの回数を数える Backend。 */
+  function countingBackend(inner: Backend, overrides: Partial<Backend> = {}) {
+    const calls = { overview: 0, pipeline: 0 };
+    const backend = wrapBackend(inner, {
+      async overview() {
+        calls.overview += 1;
+        return inner.overview();
+      },
+      async pipeline() {
+        calls.pipeline += 1;
+        return inner.pipeline();
+      },
+      ...overrides,
+    });
+    return { backend, calls };
+  }
+
+  async function openCharacter(backend: Backend) {
+    const file = await loadIntoEditor(backend, "characters/kirishima-rin.md");
+    if (file.document.kind !== "character") {
+      throw new Error("人物資料として読めるはず");
+    }
+    return file.document;
+  }
+
+  /** 読み直しは保存の外で行うので、始まっていれば済むだけの時間を置いてから確かめる。 */
+  async function letRefreshRun(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  it("本文だけを直して保存しても、目次と工程は読み直さない", async () => {
+    const inner = createMockBackend({ delayMs: 0 });
+    await openWorkspaceFor(inner);
+    const { backend, calls } = countingBackend(inner);
+    calls.pipeline = 0;
+    const character = await openCharacter(backend);
+
+    useEditorStore.getState().updateDocument({ ...character, body: "本文だけ直した" });
+    documentSaveController.saveNow(backend);
+    await documentSaveController.flush(backend);
+    await letRefreshRun();
+
+    expect(useEditorStore.getState().status).toBe("clean");
+    expect(calls).toEqual({ overview: 0, pipeline: 0 });
+  });
+
+  it("名前を直して保存すると、目次と工程を読み直す。続けて本文だけ直しても、もう読み直さない", async () => {
+    const inner = createMockBackend({ delayMs: 0 });
+    await openWorkspaceFor(inner);
+    const { backend, calls } = countingBackend(inner);
+    calls.pipeline = 0;
+    const character = await openCharacter(backend);
+
+    const renamed = { ...character, meta: { ...character.meta, name: "霧島 凛子" } };
+    useEditorStore.getState().updateDocument(renamed);
+    documentSaveController.saveNow(backend);
+    await documentSaveController.flush(backend);
+    await vi.waitFor(() => expect(calls).toEqual({ overview: 1, pipeline: 1 }));
+
+    useEditorStore.getState().updateDocument({ ...renamed, body: "本文だけ直した" });
+    documentSaveController.saveNow(backend);
+    await documentSaveController.flush(backend);
+    await letRefreshRun();
+
+    expect(calls).toEqual({ overview: 1, pipeline: 1 });
+  });
+
+  it("目次の読み直しが終わらなくても、flush は待たされない", async () => {
+    const inner = createMockBackend({ delayMs: 0 });
+    await openWorkspaceFor(inner);
+    const backend = wrapBackend(inner, { overview: () => new Promise(() => {}) });
+    const character = await openCharacter(backend);
+
+    useEditorStore.getState().updateDocument({
+      ...character,
+      meta: { ...character.meta, name: "霧島 凛子" },
+    });
+    documentSaveController.saveNow(backend);
+    await documentSaveController.flush(backend);
+
+    expect(useEditorStore.getState().status).toBe("clean");
+    expect(documentSaveController.hasUnsavedWork()).toBe(false);
   });
 
   it("手で書く文書（企画など）を保存しても、目次は読み直さない", async () => {
@@ -244,7 +328,9 @@ describe("人物資料・章立てを保存したあと", () => {
     await documentSaveController.flush(backend);
 
     expect(useEditorStore.getState().status).toBe("clean");
-    expect(useUiStore.getState().toasts.some((toast) => toast.kind === "error")).toBe(true);
+    await vi.waitFor(() =>
+      expect(useUiStore.getState().toasts.some((toast) => toast.kind === "error")).toBe(true),
+    );
   });
 });
 

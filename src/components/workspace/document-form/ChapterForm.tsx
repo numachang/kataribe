@@ -11,10 +11,11 @@ interface ChapterFormProps {
 export function ChapterForm({ meta, onChange }: ChapterFormProps) {
   const scenes = meta.scenes ?? [];
 
-  function changeScene(changed: ScenePlan): void {
+  // シーンは id ではなく並びの位置で特定する（手で書いた章立てに、同じ id が並ぶことがあっても取り違えないため）。
+  function changeScene(index: number, changed: ScenePlan): void {
     onChange({
       ...meta,
-      scenes: scenes.map((scene) => (scene.id === changed.id ? changed : scene)),
+      scenes: scenes.map((scene, position) => (position === index ? changed : scene)),
     });
   }
 
@@ -28,8 +29,13 @@ export function ChapterForm({ meta, onChange }: ChapterFormProps) {
       {scenes.length > 0 && (
         <div className="document-form__scenes">
           <p className="document-form__heading">シーン</p>
-          {scenes.map((scene) => (
-            <SceneCard key={scene.id} scene={scene} onChange={changeScene} />
+          {scenes.map((scene, index) => (
+            <SceneCard
+              // biome-ignore lint/suspicious/noArrayIndexKey: 手で書いた章立てには同じ id のシーンが並びうる。ここではシーンを並べ替えないので、位置が安定した識別子になる
+              key={`${index}-${scene.id}`}
+              scene={scene}
+              onChange={(changed) => changeScene(index, changed)}
+            />
           ))}
         </div>
       )}

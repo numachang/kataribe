@@ -15,6 +15,8 @@ interface WorkspaceState {
   clearCurrentDocument: () => void;
   /** Backend を呼ばず、既に持っている目次で置き換える（applyChangeSet の戻り値の反映など）。 */
   setOverview: (overview: ProjectOverview) => void;
+  /** `setOverview` の工程版。 */
+  setPipeline: (pipeline: PipelineStep[]) => void;
   refreshOverview: (backend: Backend) => Promise<void>;
   refreshPipeline: (backend: Backend) => Promise<void>;
 }
@@ -43,6 +45,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
 
   setOverview(overview) {
     set({ overview });
+  },
+
+  setPipeline(pipeline) {
+    set({ pipeline });
   },
 
   async refreshOverview(backend) {

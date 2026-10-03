@@ -2,7 +2,7 @@
 import type { EditableDocument } from "./EditableDocument";
 
 /**
- * 画面へ返す、項目に分けた文書。[`kataribe_project::DocumentFile`] の `hash` を文字列にしたもの。
+ * 画面へ返す、項目に分けた文書。[`kataribe_project::LoadedDocument`] の `hash` を文字列にしたもの。
  */
 export type DocumentFile = { document: EditableDocument, 
 /**

@@ -3,7 +3,7 @@
 use kataribe_project::EditableDocument;
 use serde::Serialize;
 
-/// 画面へ返す、項目に分けた文書。[`kataribe_project::DocumentFile`] の `hash` を文字列にしたもの。
+/// 画面へ返す、項目に分けた文書。[`kataribe_project::LoadedDocument`] の `hash` を文字列にしたもの。
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct DocumentFile {
@@ -23,8 +23,8 @@ pub struct ProjectSettingsFile {
     pub hash: String,
 }
 
-impl From<kataribe_project::DocumentFile> for DocumentFile {
-    fn from(file: kataribe_project::DocumentFile) -> Self {
+impl From<kataribe_project::LoadedDocument> for DocumentFile {
+    fn from(file: kataribe_project::LoadedDocument) -> Self {
         Self {
             document: file.document,
             hash: file.hash.to_string(),
