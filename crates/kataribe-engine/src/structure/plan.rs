@@ -18,7 +18,7 @@ pub struct StructurePlan {
     pub created: Option<RelPath>,
     /// 人物を消すとき、その人物の名前を挙げているシーン。名前は書き換えない（知らせるだけ）。
     pub references: Vec<SceneReference>,
-    /// 章を足す・消すときに、番号が変わる章（後ろの章）。番号の小さい順。
+    /// 章を足す・消す・並べ替えるときに、番号が変わる章（後ろの章。並べ替えでは動く範囲の章）。番号の小さい順。
     pub renumbered: Vec<RenumberedChapter>,
     /// 利用者への注意書き（「第 3 章は読めないため参照を確かめられませんでした」など）。
     pub notices: Vec<String>,

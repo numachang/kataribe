@@ -7,7 +7,7 @@ use kataribe_engine::{DraftUnit, LlmProvider};
 use kataribe_project::Rating;
 
 use crate::stage::Stage;
-use crate::structure_args::{AddArgs, RemoveArgs};
+use crate::structure_args::{AddArgs, MoveArgs, RemoveArgs};
 use crate::task_spec::TaskSpec;
 
 /// GUI と同じ執筆エンジンを画面なしで動かす。
@@ -105,6 +105,8 @@ pub enum Command {
     Add(AddArgs),
     /// 登場人物・世界観の資料・章・シーンを、ゴミ箱（.kataribe/trash/）へ移して消す（LLM は使わない）。
     Remove(RemoveArgs),
+    /// 登場人物・章・シーンの順番を変える（LLM は使わない）。章を動かすと、動く範囲の章の番号を振り直す。
+    Move(MoveArgs),
     /// シーンごとの品質レポートを表示する。
     Quality(QualityArgs),
     /// 本文を章題付きの一つのテキストにまとめる。
@@ -359,7 +361,7 @@ impl From<DraftUnitArg> for DraftUnit {
 mod tests {
     use super::*;
     use crate::structure_args::AddTarget;
-    use crate::target_spec::RemoveTarget;
+    use crate::target_spec::{MoveTarget, RemoveTarget};
     use kataribe_project::{ChapterId, RelPath, SceneId};
 
     fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
@@ -693,5 +695,25 @@ mod tests {
             args.target,
             RemoveTarget::Chapter(ChapterId::from_number(3))
         );
+    }
+
+    #[test]
+    fn move_takes_a_target_a_one_based_position_and_a_dry_run_flag() {
+        let cli = parse(&["move", "folder", "chapter:03", "--to", "1", "--dry-run"]).unwrap();
+
+        let Command::Move(args) = cli.command else {
+            panic!("move が来るはず");
+        };
+        assert_eq!(args.target, MoveTarget::Chapter(ChapterId::from_number(3)));
+        assert_eq!(args.to.get(), 1);
+        assert!(args.dry_run);
+    }
+
+    #[test]
+    fn move_needs_a_position_of_at_least_one() {
+        assert!(parse(&["move", "folder", "chapter:03"]).is_err());
+        assert!(parse(&["move", "folder", "chapter:03", "--to", "0"]).is_err());
+        assert!(parse(&["move", "folder", "chapter:03", "--to", "-1"]).is_err());
+        assert!(parse(&["move", "folder", "world:glossary", "--to", "1"]).is_err());
     }
 }

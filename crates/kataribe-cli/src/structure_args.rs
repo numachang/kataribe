@@ -1,11 +1,12 @@
-//! `add` / `remove` サブコマンドの引数（clap）。作品の構成（人物・世界観の資料・章・シーン）を自分で足したり消したりする。
+//! `add` / `remove` / `move` サブコマンドの引数（clap）。作品の構成（人物・世界観の資料・章・シーン）を自分で足したり消したり並べ替えたりする。
 
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
 use kataribe_project::{ChapterId, SceneId};
 
-use crate::target_spec::RemoveTarget;
+use crate::target_spec::{MoveTarget, RemoveTarget};
 
 #[derive(Debug, Args)]
 pub struct AddArgs {
@@ -193,6 +194,29 @@ pub struct RemoveArgs {
     pub target: RemoveTarget,
 
     /// 変更案を表示するだけで、何も移さない。
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct MoveArgs {
+    /// 作品フォルダ。
+    #[arg(value_name = "FOLDER")]
+    pub folder: PathBuf,
+
+    /// 並べ替えるもの。
+    ///
+    /// character:<id> | chapter:<NN> | scene:<NN>/<sNN>
+    #[arg(value_name = "TARGET")]
+    pub target: MoveTarget,
+
+    /// 並べ替えたあとに、一覧の何番目に来るか（1 始まり）。
+    ///
+    /// 人物は目次の人物の中、章は章の中、シーンは章のシーンの中で数える。
+    #[arg(long, value_name = "N")]
+    pub to: NonZeroUsize,
+
+    /// 変更案を表示するだけで、何も書き換えない。
     #[arg(long)]
     pub dry_run: bool,
 }

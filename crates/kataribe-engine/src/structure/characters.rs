@@ -1,14 +1,21 @@
-//! 人物の追加と削除。
+//! 人物の追加・削除・並べ替え。
+//!
+//! 並べ替えは、読める人物資料の `order` を 1, 2, 3… に振り直して書き直す。YAML は書き直すので、人物資料の
+//! front matter に手で書いたコメントや項目の順番は残らない（アプリが知らない項目は残る）。`order` の行だけを
+//! 行単位で書き換えて YAML をそのまま保つ方法もあるが、YAML の書き方（引用符・ブロック表記・別の位置の `order`）を
+//! 文字列として追うことになり壊れやすいので採らない。
 
 use kataribe_project::{
-    Character, CharacterId, CharacterMeta, Project, RelPath, frontmatter, layout,
+    Character, CharacterId, CharacterMeta, Project, RelPath, TextFile, frontmatter, layout,
 };
 use kataribe_text::romaji::to_romaji;
 
 use super::plan::{StructurePlan, Wording};
+use super::position::{ensure_new_position, move_item};
 use super::references;
 use crate::change_set::ChangeSet;
 use crate::error::{EngineError, Result};
+use crate::overview::{markdown_files, sort_for_display};
 use crate::stages::materials::non_empty;
 
 /// 人物を足す変更案。`characters/<id>.md` を新規に書く。
@@ -56,11 +63,7 @@ pub(super) fn add(
 /// `characters/` 直下の Markdown なら、ファイル名が人物 ID の規則に合わないもの（`Rin.md`・`凛.md`）も消せる。
 /// YAML が壊れた人物資料も消せる。その場合は名前を読めないので、シーンでの参照は調べられない。
 pub(super) fn remove(project: &Project, path: &RelPath) -> Result<StructurePlan> {
-    if !layout::is_character_document(path) {
-        return Err(EngineError::InvalidInput(format!(
-            "{path} は消せる人物資料ではありません（消せるのは、characters/ 直下の Markdown です）。"
-        )));
-    }
+    ensure_character_document(path, "消せる")?;
     let file = project
         .store()
         .read_text_opt(path)?
@@ -90,6 +93,127 @@ pub(super) fn remove(project: &Project, path: &RelPath) -> Result<StructurePlan>
         notices,
         ..StructurePlan::new(changes, &wording)
     })
+}
+
+/// 人物の表示順を変える変更案。読める人物の `order` を、並べ替えたあとの並びで 1, 2, 3… に振り直し、
+/// 値が変わる人物資料だけを書き直す。
+///
+/// `position` は、並べ替えたあとに、目次の人物の何番目に来るか（0 始まり）。目次と同じ並び
+/// （`order` の昇順、`order` の無い人物は最後）の中で数える。YAML が読めない人物資料は動かせず、
+/// ほかの人物を動かすときも `order` を変えずに飛ばす（読めないので、書き直すと壊れた中身を失うため）。
+/// 読めない資料は目次でも最後に並ぶので、その位置へ動かした人物は、読める人物の最後になる。
+pub(super) fn move_to(project: &Project, path: &RelPath, position: usize) -> Result<StructurePlan> {
+    ensure_character_document(path, "並べ替えられる")?;
+    let mut roster = load_roster(project)?;
+    let (current, name) = locate_movable(&roster, path)?;
+    let subject = format!("人物「{name}」");
+    ensure_new_position(&subject, "人物", current, position, roster.len())?;
+    move_item(&mut roster, current, position);
+
+    let wording = Wording::new(format!("{subject}を {} 番目に移し", position + 1));
+    let mut changes = ChangeSet::new(wording.planned());
+    let mut unreadable = Vec::new();
+    let mut next_order = 1;
+    for entry in roster {
+        match entry.state {
+            Ok(mut loaded) => {
+                if loaded.character.meta.order != Some(next_order) {
+                    loaded.character.meta.order = Some(next_order);
+                    changes.put(entry.path, loaded.character.render()?, Some(loaded.file));
+                }
+                next_order += 1;
+            }
+            Err(_) => unreadable.push(entry.path),
+        }
+    }
+    if changes.is_empty() {
+        return Err(EngineError::InvalidInput(format!(
+            "{subject}の順番は変わりません（読めない人物資料は、いちばん後ろに並びます）。"
+        )));
+    }
+    let mut plan = StructurePlan::new(changes, &wording);
+    if !unreadable.is_empty() {
+        let paths: Vec<String> = unreadable.iter().map(ToString::to_string).collect();
+        plan.notices.push(format!(
+            "読めない人物資料（{}）は、順番を変えずにいちばん後ろに並べたままにしています。",
+            paths.join("、")
+        ));
+    }
+    Ok(plan)
+}
+
+/// 動かす人物資料の、目次での位置（0 始まり）と人物の名前。読めない人物資料は動かせない。
+fn locate_movable(roster: &[RosterEntry], path: &RelPath) -> Result<(usize, String)> {
+    let (position, entry) = roster
+        .iter()
+        .enumerate()
+        .find(|(_, entry)| entry.path == *path)
+        .ok_or_else(|| EngineError::NotFound(format!("人物資料 {path} がありません。")))?;
+    match &entry.state {
+        Ok(loaded) => Ok((position, loaded.character.meta.name.clone())),
+        Err(reason) => Err(EngineError::InvalidInput(format!(
+            "{path} を読めないため、並べ替えられません。先に直してください（{reason}）。"
+        ))),
+    }
+}
+
+/// `characters/` 直下の Markdown（ファイル名の規則には照らさない）だけを指しているか確かめる。
+/// `action` は「消せる」「並べ替えられる」のように、この操作でできることの言い方。
+fn ensure_character_document(path: &RelPath, action: &str) -> Result<()> {
+    if layout::is_character_document(path) {
+        return Ok(());
+    }
+    Err(EngineError::InvalidInput(format!(
+        "{path} は{action}人物資料ではありません（{action}のは、characters/ 直下の Markdown です）。"
+    )))
+}
+
+/// 目次の「登場人物」の 1 行。
+struct RosterEntry {
+    path: RelPath,
+    /// 読めた人物資料。読めなければ理由（目次の項目の `error` と同じ規則で決まる）。
+    state: std::result::Result<LoadedCharacter, String>,
+}
+
+struct LoadedCharacter {
+    character: Character,
+    /// 読んだときのファイル。変更案の基準にする（そのあとの編集との競合を確かめるため）。
+    file: TextFile,
+}
+
+/// 目次と同じ並び（[`sort_for_display`]）の人物資料。読めないものも含む。
+///
+/// 目次と同じく、ファイル名が人物 ID の規則に合わない資料（`Rin.md`）は読めないものとして数える。
+fn load_roster(project: &Project) -> Result<Vec<RosterEntry>> {
+    let mut roster: Vec<RosterEntry> = markdown_files(project, layout::CHARACTERS_DIR)?
+        .into_iter()
+        .map(|path| {
+            let state = load_character(project, &path);
+            RosterEntry { path, state }
+        })
+        .collect();
+    sort_for_display(&mut roster, |entry| {
+        entry
+            .state
+            .as_ref()
+            .ok()
+            .and_then(|loaded| loaded.character.meta.order)
+    });
+    Ok(roster)
+}
+
+fn load_character(
+    project: &Project,
+    path: &RelPath,
+) -> std::result::Result<LoadedCharacter, String> {
+    let id = CharacterId::new(path.file_stem()).map_err(|error| error.to_string())?;
+    let file = project
+        .store()
+        .read_text_opt(path)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| format!("{path} がありません。"))?;
+    let character = Character::parse(id, &file.content).map_err(|error| error.to_string())?;
+    Ok(LoadedCharacter { character, file })
 }
 
 /// 人物の ID の案。読み、無ければ名前をローマ字にして、使用済みの ID を避ける。

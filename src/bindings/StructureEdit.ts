@@ -82,4 +82,32 @@ chapter: ChapterId,
 /**
  * 消すシーン。
  */
-scene: SceneId, };
+scene: SceneId, } | { "kind": "move_character", 
+/**
+ * 動かす人物資料。`characters/` 直下の Markdown で、YAML が読めるもの。
+ */
+path: RelPath, 
+/**
+ * 並べ替えたあとに、目次の人物の何番目に来るか（0 始まり）。範囲外・今と同じ位置は `InvalidInput`。
+ */
+position: number, } | { "kind": "move_chapter", 
+/**
+ * 動かす章。
+ */
+chapter: ChapterId, 
+/**
+ * 並べ替えたあとに、章の何番目に来るか（0 始まり）。範囲外・今と同じ位置は `InvalidInput`。
+ */
+position: number, } | { "kind": "move_scene", 
+/**
+ * シーンのある章。
+ */
+chapter: ChapterId, 
+/**
+ * 動かすシーン。
+ */
+scene: SceneId, 
+/**
+ * 並べ替えたあとに、章のシーンの何番目に来るか（0 始まり）。範囲外・今と同じ位置は `InvalidInput`。
+ */
+position: number, };

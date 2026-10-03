@@ -44,7 +44,9 @@
 - 文字コードは UTF-8（BOM なし）、改行は LF。読み込み時は BOM と CRLF を許容して正規化する。
 - 章の順序はファイル名（`01`, `02`, …）の順。章を途中に足す・消すときは、後ろの章の番号を振り直す
   （`plot/chapters/<NN>.md` と `manuscript/<NN>/` を改名する。ファイル名＝順番のまま。§4.8）。
-  シーンの順序は章ファイルの `scenes` の並び順。
+  章を並べ替えるときも、動く範囲の章の番号を割り当て直す（同じ改名）。
+  シーンの順序は章ファイルの `scenes` の並び順。人物の順序は front matter の `order`（小さい順。無ければ最後）。
+  シーンと人物は、並べ替えても本文のファイル名（シーンの `id`）や人物資料のファイル名は変わらない（§4.8）。
   シーン本文のファイル名はシーンの `id` なので、`scenes` を手で並べ替えても本文との対応は崩れない。
 - 人が追加した未知の YAML 項目は、アプリが書き戻すときも保持する。画面から人物資料・章立てを保存するときは、
   項目（front matter）に変更がなく本文だけが変わったなら、YAML を解釈し直さず書かれたまま
@@ -495,7 +497,7 @@ Gemma には前者だけ、Qwen には後者だけが効き、両方を指定す
 
 ### 4.8 構成の操作（structure）
 
-人物・世界観の資料・章・シーンを、利用者が自分で書いて足したり消したりする操作。LLM も設定も要らないので、`Engine` の外の関数
+人物・世界観の資料・章・シーンを、利用者が自分で書いて足したり消したり、人物・章・シーンを並べ替えたりする操作。LLM も設定も要らないので、`Engine` の外の関数
 （`plan_structure_edit` / `suggest_character_id`）にしてあり、GUI と CLI が同じ関数を使う。作品フォルダは直接書き換えず、
 変更案を `StructurePlan` に入れて返す。適用は `ChangeSet::apply`（§4.1）。
 
@@ -507,7 +509,7 @@ pub struct StructurePlan {
     pub change_set: ChangeSet,           // made_for(project) 済み
     pub created: Option<RelPath>,        // 適用したあとに開く文書
     pub references: Vec<SceneReference>, // 人物を削除するときだけ。その人物の名前を挙げているシーン
-    pub renumbered: Vec<RenumberedChapter>, // 章を足す・消すときだけ。番号が変わる章（変わる前・後の番号と章題）
+    pub renumbered: Vec<RenumberedChapter>, // 章を足す・消す・並べ替えるときだけ。番号が変わる章（変わる前・後の番号と章題）
     pub notices: Vec<String>,            // 「第 3 章は読めないため参照を確かめられませんでした」など
 }
 ```
@@ -522,16 +524,30 @@ pub struct StructurePlan {
 | `RemoveChapter { chapter }` | 章立てを `Trash`、本文のフォルダがあれば中のファイルごと `Trash`（フォルダ）、後ろの章を `Move` | 章が無ければ `NotFound`。本文のフォルダの中にテキストとして読めないファイルがあれば `InvalidInput`。ほかの章の YAML は読まない |
 | `AddScene { chapter, before, scene }` | 章立てを `Write`（今の内容を条件にする） | `scene` は `ScenePlan` から id とビートを除いたもの（`NewScenePlan`）。`before` が `None` なら章の末尾。新しい id は、章立てにある id と、本文のフォルダに残っている本文（章立てから消えたシーンのもの）の id を避けて決める（消したシーンの本文を引き継がないため）。章立てが壊れている・シーンの id が重複しているときは `InvalidInput`（直してから操作する） |
 | `RemoveScene { chapter, scene }` | 章立てを `Write`、本文があれば本文を `Trash`、無ければ `Expect`（本文が無いこと） | 確認している間に外のエディタや CLI で本文ができたら、章立てだけが書き換わって本文が章立てに無いまま残らないよう、適用のときに競合にする |
+| `MoveCharacter { path, position }` | 読める人物資料のうち `order` が変わるものだけを `Write`（今の内容を条件にする） | ID ではなくパスで指す。`position` は、並べ替えたあとに目次の人物の何番目に来るか（0 始まり。目次と同じ並び＝`order` → ファイル名の順、`order` の無い人物は最後）。読める人物の `order` を 1, 2, 3… に振り直す（`order` の欠番・重複・無しもここでそろう）。YAML が読めない人物資料は動かせず `InvalidInput`（`characters/Rin.md` のようにファイル名が ID の規則に合わない資料も、目次と同じく読めないものとして数える）。ほかの人物を動かすときは、読めない資料の `order` を変えずに飛ばし、`notices` で知らせる（読めない資料は目次の最後に並ぶので、その位置へ動かした人物は読める人物の最後になる）。`characters/` 直下の Markdown 以外のパスは `InvalidInput`、資料が無ければ `NotFound` |
+| `MoveChapter { chapter, position }` | `Move`（動く範囲の章の章立てと本文のフォルダ。本文のフォルダの無い章は `Expect`） | `position` は、並べ替えたあとに章（番号順）の何番目に来るか（0 始まり）。章が無ければ `NotFound`。章立てを読まず、番号だけで決まる。番号の振り直しは下記 |
+| `MoveScene { chapter, scene, position }` | 章立てを `Write`（今の内容を条件にする） | 章立ての `scenes` の並びだけを変える。シーンの `id` と本文のファイル（`manuscript/<NN>/<id>.txt`）は変えない（本文との対応は `id` で決まるので崩れない）。`position` は章のシーンの何番目か（0 始まり）。章立てが壊れている・シーンの `id` が重複しているときは `InvalidInput`（`AddScene` / `RemoveScene` と同じ）、章・シーンが無ければ `NotFound` |
+
+- 並べ替えの `position` は、どれも「並べ替えたあとに、その項目が一覧の何番目に来るか」（0 始まり）。範囲外と、今と同じ位置は
+  `InvalidInput` にする（空の変更案にはしない。何も起きない操作を成功として返すと、呼び出し側の数え間違いが見えなくなるため。
+  画面は今と同じ位置を送らない）。人物は、並べ替えても `order` が 1 つも変わらないとき（読めない資料の位置へ動かしたなど）も同じ。
 
 - 章立ての YAML は書き直すので、利用者が手で書いたコメントや項目の順番は残らない（アプリが知らない項目は残る。画面から項目を
   変えて保存したときと同じ）。
-- 章の番号の振り直し（`structure/chapters.rs`）。章の順序はファイル名なので、途中に足す・消すときは後ろの章の
-  `plot/chapters/<NN>.md` と `manuscript/<NN>/` を改名する。
+- 章の番号の振り直し（`structure/chapters.rs`）。章の順序はファイル名なので、途中に足す・消す・動かすときは
+  動く範囲の章の `plot/chapters/<NN>.md` と `manuscript/<NN>/` を改名する。
   - `before = X` で足すなら、X 以上の章を 1 つ後ろへずらし、新しい章を X にする。末尾に足すときは、最大の番号の次（無ければ 01）で、
     ほかの章は改名しない。消すときは、それより後ろの章を 1 つ前へずらす。
   - 途中が抜けた番号は抜けたまま残す（手で作った番号を勝手に詰めない）。ずらすのは操作した位置より後ろの章だけ。
     `001` のように手で付けた 3 桁の番号は、ずらした章だけが 2 桁になる（`ChapterId::shifted`。並び順は番号で決まるので崩れない）。
     999 を超えるときは `InvalidInput`。
+  - 章を動かす（`MoveChapter`）ときは、動く範囲（今の位置と行き先の位置の間）の章が持っている番号の集合を、並べ替えたあとの
+    並びへそのまま割り当てる（01・02・03 で 03 を先頭へなら 03→01、01→02、02→03。01・02・05 で 05 を先頭へなら
+    05→01、01→02、02→05）。番号の集合は変わらないので、抜けた番号は抜けたまま、桁数（`001` など）も章ごとに保たれ、
+    999 を超えることもない（`shifted` を使わない）。範囲の外の章は改名しない。入れ替えのような循環の改名は、適用が
+    2 段階の移動（§3.3）で扱うので、全部か無しかになる。行き先は全部、同じ変更案で動く章の元の場所なので、
+    塞がっているかの確認（下の項目）は通り、行き先を足す `Expect` は要らない（本文のフォルダの無い章の
+    移動元の `Expect` は、ほかの章の行き先になっても重複させない）。
   - 本文のフォルダは、フォルダごと 1 回の `Move`（中のファイルを 1 つずつ移すと、章立てに載っていない本文が古い番号のフォルダに
     残り、別の章の本文と混ざる）。本文がまだ無い章（フォルダが無い章）は `Move` も `Trash` も作らず、適用のときに移動元にまだ無いことを
     `Expect` で確かめる（計画のあとに外で本文ができて、改名から取り残されないように）。移動先も、同じ変更案の `Move`（移動元）・
@@ -542,12 +558,21 @@ pub struct StructurePlan {
     いれば、計画の段階で「manuscript/02 が既にあるため…」と断る（本文のフォルダが無い章をずらすときも、行き先に残っていると
     ずらした章の本文として読まれてしまうため）。同じ変更案のゴミ箱や改名で空く場所は塞がっていない。
   - 利用者に見せる材料は、`Trash` の `files`（本文のフォルダの中のファイルと字数）と、`StructurePlan.renumbered`
-    （変わる前・後の番号と、章題。章立てが読めなければ章題は `null`）。要約は「第3章「…」を追加します。」「第3章「…」をゴミ箱へ
-    移します。」（章題が読めなければ番号だけ）。
+    （変わる前・後の番号と、章題。章立てが読めなければ章題は `null`。番号の小さい順）。要約は「第3章「…」を追加します。」「第3章「…」をゴミ箱へ
+    移します。」「第3章「…」を第1章へ移します。」（章題が読めなければ番号だけ。行き先は、並べ替えたあとにその章が持つ番号）。
+    並べ替えの `renumbered` には、動く範囲の章（動かした章自身を含む）が入る。
   - 影響（設計上の割り切り）。要約のキャッシュ（`.kataribe/cache` の `NN/sNN` の鍵）は番号が変わると合わなくなり、
     作り直すぶん LLM の呼び出しが増える（誤った要約は使われない）。バックアップは古いパスの名前で残るので、
     改名した章の履歴は別の番号に見える。生成の変更案は章番号を含むパスに書くので、画面は生成のセッションが落ち着いていない間は
-    章の追加・削除を止める。GUI と CLI を同時に使ったときの排他は、今と同じく効かない。
+    章の追加・削除・並べ替えを止める。GUI と CLI を同時に使ったときの排他は、今と同じく効かない。
+    章の並べ替えも同じで、要約のキャッシュの鍵が合わなくなり（作り直しで LLM の呼び出しが増える）、バックアップは
+    古い名前のまま別の章の履歴に見える。
+- 人物の並べ替えは、`order` が変わる人物資料の YAML を書き直す。front matter に手で書いたコメントや項目の順番は残らない
+  （アプリが知らない項目と本文は残る。画面から人物資料の項目を変えて保存したときと同じ）。`order` の行だけを行単位で
+  書き換えて YAML を保つ方法は、引用符・ブロック表記・同じ項目の重なりなどを文字列として追うことになり壊れやすいので採らない。
+  `order` が変わらない人物資料は書き直さない（コメントを不必要に失わせない）。シーンの並べ替えが章立てを書き直すのも同じ。
+  人物の並びを決める規則（`order` の昇順、無ければ最後、同じ値はファイル名の順）は、目次（`overview`）と並べ替えが
+  `overview::sort_for_display` を共有する。
 - 参照の確認（人物を消すとき）: 全部の章を 1 つずつ解釈し、各シーンの `pov` と `characters` を、名前の一致（空白の違いと、
   「凛」のような姓や名だけの書き方を同一人物とみなす。`names.rs`。本文の生成が名前から人物を探す規則と同じ）で調べる。
   読めない章は `notices` に入れて続ける。シーンの名前は自動では書き換えず、知らせるだけにする。
@@ -703,7 +728,7 @@ Tauri コマンド名と引数（JS 側の名前。Rust 側は snake_case で受
 | textStats / parseRuby / analyzeQuality | `text_stats` / `parse_ruby` / `analyze_quality` | `text` / `text` / `text, targetChars` |
 | generate / cancelGeneration | `generate` / `cancel_generation` | `jobId, task, onEvent`（`Channel<GenerationEvent>`）/ `jobId` |
 | applyChangeSet | `apply_change_set` | `changeSet`（`files` の各要素は `kind` が `write`・`trash`・`move`・`expect` のどれか。構成の変更もこれで適用する） |
-| planStructureEdit | `plan_structure_edit` | `edit`（`StructureEdit`。`kind` が `add_character`・`remove_character`・`add_world_document`・`remove_world_document`・`add_chapter`・`remove_chapter`・`add_scene`・`remove_scene` のどれか。`add_character` の `id` は文字列か `null`、`remove_character` は ID ではなく `path` で指す）。`StructurePlan`（`change_set`・`completed_summary`・`created`・`references`・`renumbered`・`notices`）を返す。作品フォルダは書き換えない（§4.8）。入力の誤り・消せない資料は `invalid_input`、対象が無ければ `not_found` |
+| planStructureEdit | `plan_structure_edit` | `edit`（`StructureEdit`。`kind` が `add_character`・`remove_character`・`add_world_document`・`remove_world_document`・`add_chapter`・`remove_chapter`・`add_scene`・`remove_scene`・`move_character`・`move_chapter`・`move_scene` のどれか。`add_character` の `id` は文字列か `null`、`remove_character`・`move_character` は ID ではなく `path` で指す。`move_*` の `position` は、並べ替えたあとにその項目が一覧の何番目に来るか（0 始まり）で、範囲外・今と同じ位置は `invalid_input`）。`StructurePlan`（`change_set`・`completed_summary`・`created`・`references`・`renumbered`・`notices`）を返す。作品フォルダは書き換えない（§4.8）。入力の誤り・消せない資料は `invalid_input`、対象が無ければ `not_found` |
 | suggestCharacterId | `suggest_character_id` | `reading, name`。人物の ID の案（文字列）を返す。使用済みの ID は避ける |
 
 コマンドの失敗は `{ kind: BackendErrorKind, message: string }` で返り、画面側で `BackendError` に変換する。
@@ -770,6 +795,13 @@ kataribe-cli [グローバルオプション] <サブコマンド>
       ゴミ箱（.kataribe/trash/）へ移して消す。chapter:<NN> は章立てと本文のフォルダ（中のファイルごと）を移し、
       後ろの章の番号を 1 つずつ前へずらす。書式は generate の TASK と同じ。character:<id> は characters/<id>.md の人物資料を
       指す（ID の規則は確かめないので、手で足した character:Rin のような名前も指定できる）
+  move <FOLDER> <TARGET> --to <N> [--dry-run]
+      TARGET = character:<id> | chapter:<NN> | scene:<NN>/<sNN>
+      人物・章・シーンの順番を変える（LLM は使わない。§4.8）。N は 1 始まりの位置（並べ替えたあとに、その項目が
+      人物（目次の人物の中）・章・章のシーンの何番目に来るか）。範囲外・今と同じ位置は使い方の誤りではなく失敗（終了コード 1）にする
+      （0 以下・数字でない・world: は使い方の誤り）。character:<id> は remove と同じく characters/<id>.md を指す。
+      chapter:<NN> は、動く範囲の章の番号を振り直す（章立てと本文のフォルダを改名する）。
+      character: は読める人物の order を 1, 2, 3… に振り直して書き直す（YAML は書き直され、コメントは残らない）
   quality <FOLDER> [--json]           シーンごとの品質レポート
   export <FOLDER> [--output <FILE>] [--force]
       本文を章題付きの一つのテキストにまとめる。--output は作品フォルダの外を指定すること
@@ -787,7 +819,7 @@ kataribe-cli [グローバルオプション] <サブコマンド>
                                        パイプで渡す）
 ```
 
-- `add` / `remove` は `Project::open` だけで動き（LLM も設定ファイルも使わない）、GUI のような確認の手順は挟まない。
+- `add` / `remove` / `move` は `Project::open` だけで動き（LLM も設定ファイルも使わない）、GUI のような確認の手順は挟まない。
   代わりに、適用の前に必ず標準エラー出力へ、ゴミ箱へ移るもの（フォルダは中のファイルと文字数）・番号が変わる章
   （「第3章「雨の匂い」 → 第2章」）・その人物の名前を挙げているシーン・注意書きを出す。
   `--dry-run` なら、変更案（書き込む内容・ゴミ箱へ移すものの一覧・「移動: A → B」）を標準出力に出して、何も書かない

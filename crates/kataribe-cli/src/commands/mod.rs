@@ -9,6 +9,7 @@ pub mod new;
 pub mod project_settings;
 pub mod quality;
 pub mod remove;
+pub mod reorder;
 pub mod run;
 pub mod status;
 mod structure_edit;
