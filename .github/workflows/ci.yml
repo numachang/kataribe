@@ -41,9 +41,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      - name: rust-toolchain.toml の版の Rust を入れる
+        run: rustup toolchain install
       # 失敗した回でも依存のビルド結果を残し、直したあとの回がゼロからビルドし直さないようにする
       - uses: Swatinem/rust-cache@v2
         with:
@@ -90,7 +89,8 @@ jobs:
       KATARIBE_E2E_DEBUG_PORT: "9222"
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: rust-toolchain.toml の版の Rust を入れる
+        run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
