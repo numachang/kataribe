@@ -325,7 +325,7 @@ describe("開いている文書の追従", () => {
 });
 
 describe("生成のセッションが落ち着いていない間", () => {
-  it("生成している間は、章の追加と削除も無効にし、理由を title に出す", async () => {
+  it("生成している間は、章の追加・削除・並べ替えも無効にし、理由を title に出す", async () => {
     const user = userEvent.setup();
     const backend = wrapBackend(createMockBackend({ delayMs: 0 }), {
       generate: () => new Promise(() => {}),
@@ -337,9 +337,12 @@ describe("生成のセッションが落ち着いていない間", () => {
 
     const addChapter = screen.getByRole("button", { name: "章を追加" });
     expect(addChapter).toBeDisabled();
-    expect(addChapter).toHaveAttribute("title", "生成している間は、追加・削除できません。");
+    expect(addChapter).toHaveAttribute(
+      "title",
+      "生成している間は、追加・削除・並べ替えできません。",
+    );
     await user.click(screen.getByRole("button", { name: "「雨の匂い」の章立ての操作" }));
-    for (const item of ["この前に章を追加", "この後に章を追加", "削除"]) {
+    for (const item of ["この前に章を追加", "この後に章を追加", "下へ移す", "削除"]) {
       expect(screen.getByRole("menuitem", { name: item })).toBeDisabled();
     }
   });

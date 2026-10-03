@@ -10,10 +10,17 @@ import { chapterPath, chapterTextDir, shiftedChapterId } from "./paths";
 import { renderChapterFile } from "./render";
 import type { MockChapter, ProjectState } from "./state";
 import { sortedByNumber } from "./state";
-import { chapterNumber, described, invalidInput, requireChapter } from "./structureSupport";
+import {
+  chapterNumber,
+  described,
+  ensureNewPosition,
+  invalidInput,
+  movedItem,
+  requireChapter,
+} from "./structureSupport";
 
-// 章の追加と削除の変更案を作る。kataribe-engine の `structure/chapters.rs` と同じ形の変更案
-// （後ろの章の章立てと本文のフォルダを Move、新しい章を Write、消す章を Trash）にする。
+// 章の追加・削除・並べ替えの変更案を作る。kataribe-engine の `structure/chapters.rs` と同じ形の変更案
+// （動く範囲の章の章立てと本文のフォルダを Move、新しい章を Write、消す章を Trash）にする。
 
 const TOO_MANY_CHAPTERS = "章は 999 までです。これより後ろには足せません。";
 
@@ -45,32 +52,41 @@ function accountedPaths(files: FileChange[]): Set<string> {
   return paths;
 }
 
+/** 章立てと本文のフォルダを移す、章の番号の付け替え 1 件（今の番号 → 移す先の番号）。 */
+interface ChapterAssignment {
+  from: string;
+  to: string;
+}
+
+/** `chapters` の番号を `delta` ずらす付け替え。 */
+function shiftAssignments(chapters: MockChapter[], delta: number): ChapterAssignment[] {
+  return chapters.map((chapter) => ({ from: chapter.id, to: shiftedId(chapter.id, delta) }));
+}
+
 /**
- * `chapters` の章立てと本文のフォルダを、番号を `delta` ずらした場所へ改名する変更。
+ * 付け替えのとおりに、章立てと本文のフォルダを改名する変更。
  * 本文のフォルダがまだ無い章には、適用のときにまだ無いことの確認を付ける。移す先も、同じ変更案の
  * 移動・ゴミ箱・確認で扱っていなければ、外で本文のフォルダができていないことを確かめる
  * （番号が抜けていて行き先が空いているときに、そこへ取り残された本文を作らないため）。
  * `alreadyPlanned` は、同じ変更案のほかの部分（章を消すときの、消す章の分）。
  */
-function renumber(
+function relocate(
   state: ProjectState,
-  chapters: MockChapter[],
-  delta: number,
+  assignments: ChapterAssignment[],
   alreadyPlanned: FileChange[] = [],
 ): { files: FileChange[]; renumbered: RenumberedChapter[] } {
   const files: FileChange[] = [];
   const renumbered: RenumberedChapter[] = [];
   const destinationsWithoutText: string[] = [];
-  for (const chapter of chapters) {
-    const to = shiftedId(chapter.id, delta);
-    files.push(moveChange(chapterPath(chapter.id), chapterPath(to)));
-    if (chapterTextFiles(state, chapter.id).length > 0) {
-      files.push(moveChange(chapterTextDir(chapter.id), chapterTextDir(to)));
+  for (const { from, to } of assignments) {
+    files.push(moveChange(chapterPath(from), chapterPath(to)));
+    if (chapterTextFiles(state, from).length > 0) {
+      files.push(moveChange(chapterTextDir(from), chapterTextDir(to)));
     } else {
-      files.push(expectAbsentChange(chapterTextDir(chapter.id)));
+      files.push(expectAbsentChange(chapterTextDir(from)));
       destinationsWithoutText.push(chapterTextDir(to));
     }
-    renumbered.push({ from: chapter.id, to, title: chapter.title.trim() || null });
+    renumbered.push({ from, to, title: requireChapter(state, from).title.trim() || null });
   }
   const accounted = accountedPaths([...alreadyPlanned, ...files]);
   for (const destination of destinationsWithoutText) {
@@ -121,7 +137,7 @@ export function planAddChapter(
     before === null
       ? []
       : chapters.filter((chapter) => chapterNumber(chapter.id) >= chapterNumber(before));
-  const { files, renumbered } = renumber(state, shifted, 1);
+  const { files, renumbered } = relocate(state, shiftAssignments(shifted, 1));
   if (before === null) {
     // 末尾に足す章の本文のフォルダは、まだ無いはず。外で作られたら適用を止める
     files.push(expectAbsentChange(chapterTextDir(newId)));
@@ -153,7 +169,7 @@ export function planRemoveChapter(state: ProjectState, chapterId: string): Struc
     trashChange(state, chapterPath(chapterId)),
     trashChapterTextChange(state, chapterId) ?? expectAbsentChange(chapterTextDir(chapterId)),
   ];
-  const { files: moves, renumbered } = renumber(state, shifted, -1, files);
+  const { files: moves, renumbered } = relocate(state, shiftAssignments(shifted, -1), files);
   return {
     ...described(state, `${chapterLabel(chapterId, chapter.title.trim() || null)}をゴミ箱へ移し`, [
       ...files,
@@ -162,6 +178,37 @@ export function planRemoveChapter(state: ProjectState, chapterId: string): Struc
     created: null,
     references: [],
     renumbered,
+    notices: [],
+  };
+}
+
+/**
+ * 章を並べ替える変更案。動く範囲の章が持っている番号を、並べ替えたあとの並びへそのまま割り当てる
+ * （番号の集合は変わらないので、抜けた番号は抜けたまま。入れ替えのような循環は、適用が一度にまとめて付け替える）。
+ */
+export function planMoveChapter(
+  state: ProjectState,
+  chapterId: string,
+  position: number,
+): StructurePlan {
+  const chapter = requireChapter(state, chapterId);
+  const existing = sortedByNumber(state.chapters ?? []).map((candidate) => candidate.id);
+  const subject = chapterLabel(chapterId, chapter.title.trim() || null);
+  ensureNewPosition(subject, "章", existing.indexOf(chapterId), position, existing.length);
+
+  // 並べ替えたあとの並びの i 番目の章に、今の並びの i 番目の番号を割り当てる。動かない章は同じ番号に割り当たるので除く
+  const assignments = movedItem(existing, existing.indexOf(chapterId), position)
+    .map((from, index) => ({ from, to: existing[index] ?? from }))
+    .filter(({ from, to }) => from !== to);
+  const destination = assignments.find(({ from }) => from === chapterId)?.to ?? chapterId;
+  const { files, renumbered } = relocate(state, assignments);
+  return {
+    ...described(state, `${subject}を第${chapterNumber(destination)}章へ移し`, files),
+    created: null,
+    references: [],
+    renumbered: renumbered.toSorted(
+      (left, right) => chapterNumber(left.from) - chapterNumber(right.from),
+    ),
     notices: [],
   };
 }

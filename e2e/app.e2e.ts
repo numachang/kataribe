@@ -20,6 +20,7 @@ import {
   SECOND_CHAPTER_SCENE_PATH,
   SECOND_CHAPTER_SCENE_TEXT,
   SECOND_CHAPTER_SCENE_TITLE,
+  SECOND_CHAPTER_SECOND_SCENE_TITLE,
   SECOND_CHAPTER_TITLE,
   SECOND_SCENE_PATH,
   SECOND_SCENE_TEXT,
@@ -449,4 +450,130 @@ test("章を削除すると、確認で番号が変わる章と本文も移る�
   await documentEditor("manuscript/02/s01.txt");
   await waitForElement(buttonWithText(chapterLabel(2, SECOND_CHAPTER_TITLE)));
   await saveScreenshot("chapter-removed.png");
+});
+
+/** 目次の節（見出しの名前で探す）に並ぶ項目の題。本文の節なら章見出しとシーンが、並びの順に出る。 */
+async function treeLabels(sectionName: string): Promise<string[]> {
+  return app.executeScript<string[]>(
+    `const section = Array.from(document.querySelectorAll(".project-tree__section"))
+       .find((candidate) => candidate.querySelector("h3")?.textContent === arguments[0]);
+     return Array.from(section.querySelectorAll(".project-tree__label")).map((label) => label.textContent);`,
+    sectionName,
+  );
+}
+
+async function waitForTreeLabels(
+  sectionName: string,
+  expected: string[],
+  message: string,
+): Promise<void> {
+  await app.wait(
+    async () => (await treeLabels(sectionName)).join("\n") === expected.join("\n"),
+    UI_TIMEOUT_MS,
+    message,
+  );
+}
+
+async function waitForToast(text: string): Promise<void> {
+  await waitForElement(
+    By.xpath(`//*[contains(@class, 'toast-host__item')][contains(., '${text}')]`),
+  );
+}
+
+test("人物を「上へ移す」と、確認なしに目次の順が変わり、人物資料の順番（order）が書き換わり、開いていた人物資料の順番の欄も読み直される", async () => {
+  // ここまでの人物は、順番の無い「霧島 凛子」と、追加で順番 1 になった「霧島 蓮」（順番の無い人物は目次の最後）
+  await waitForTreeLabels("登場人物", ["霧島 蓮", "霧島 凛子"], "人物の初めの並びが違います。");
+  await (await waitForElement(buttonWithText("霧島 凛子"))).click();
+  await documentEditor(CHARACTER_PATH);
+
+  await chooseRowMenuItem("「霧島 凛子」の操作", "上へ移す");
+
+  await waitForToast("人物「霧島 凛子」を 1 番目に移しました。");
+  await waitForTreeLabels(
+    "登場人物",
+    ["霧島 凛子", "霧島 蓮"],
+    "人物の並びが入れ替わりませんでした。",
+  );
+  const moved = await waitForFile(
+    CHARACTER_PATH,
+    (content) => content.includes("order: 1"),
+    "人物資料の order が書き換わりませんでした。",
+  );
+  // 書き直しても、手で足した項目と本文は残る
+  expect(moved).toContain(UNKNOWN_FIELD);
+  expect(moved).toContain("口癖は「なるほど」。");
+  expect(await readProjectFile("characters/kirishima-ren.md")).toContain("order: 2");
+  // 開いていた人物資料は、書き換えられた順番を読み直して見せる
+  await app.wait(
+    async () => (await (await fieldInput("順番")).getAttribute("value")) === "1",
+    UI_TIMEOUT_MS,
+    "開いていた人物資料の順番の欄が読み直されませんでした。",
+  );
+  await saveScreenshot("character-moved.png");
+});
+
+test("シーンを「下へ移す」と、章立ての scenes の順が変わり、本文のファイルはそのまま、開いていた本文も開いたまま", async () => {
+  await (await waitForElement(buttonWithText(SECOND_CHAPTER_SCENE_TITLE))).click();
+  await documentEditor("manuscript/02/s01.txt");
+  const textBefore = await readProjectFile("manuscript/02/s01.txt");
+  const chapterBefore = await readProjectFile("plot/chapters/02.md");
+  expect(chapterBefore.indexOf("id: s01")).toBeLessThan(chapterBefore.indexOf("id: s02"));
+
+  await chooseRowMenuItem(`「1. ${SECOND_CHAPTER_SCENE_TITLE}」の操作`, "下へ移す");
+
+  await waitForToast(`第2章のシーン「${SECOND_CHAPTER_SCENE_TITLE}」を 2 番目に移しました。`);
+  const chapter = await waitForFile(
+    "plot/chapters/02.md",
+    (content) => content.indexOf("id: s02") < content.indexOf("id: s01"),
+    "章立ての scenes の順が変わりませんでした。",
+  );
+  expect(chapter).toContain(`title: ${SECOND_CHAPTER_SECOND_SCENE_TITLE}`);
+  // シーンの id と本文のファイルは変わらない
+  expect(await readProjectFile("manuscript/02/s01.txt")).toBe(textBefore);
+  expect(await projectFileExists("manuscript/02/s02.txt")).toBe(false);
+  await app.wait(
+    async () =>
+      (await treeLabels("本文")).slice(-2).join("\n") ===
+      [`1. ${SECOND_CHAPTER_SECOND_SCENE_TITLE}`, `2. ${SECOND_CHAPTER_SCENE_TITLE}`].join("\n"),
+    UI_TIMEOUT_MS,
+    "目次のシーンの並びが入れ替わりませんでした。",
+  );
+  await documentEditor("manuscript/02/s01.txt");
+  await saveScreenshot("scene-moved.png");
+});
+
+test("開いている本文の章を「下へ移す」と、章立てと本文のフォルダが入れ替わり、開いていた本文に続けて入力した分が新しいパスに保存される", async () => {
+  // ここまでの章は、本文の無い第 1 章「序章」と、本文のある第 2 章「第二章」。開いているのは第 2 章の本文
+  await documentEditor("manuscript/02/s01.txt");
+  const secondChapterText = await readProjectFile("manuscript/02/s01.txt");
+  expect(await projectFileExists("manuscript/01")).toBe(false);
+
+  await chooseRowMenuItem(`「${chapterLabel(1, "序章")}」の章立ての操作`, "下へ移す");
+
+  await waitForToast("第1章「序章」を第2章へ移しました。");
+  // 章立ては入れ替わり、本文のフォルダは、本文のある第二章に付いて 01 へ移る（本文の無い序章の側には作られない）
+  await waitForFile(
+    "plot/chapters/01.md",
+    (content) => content.includes(`title: ${SECOND_CHAPTER_TITLE}`),
+    "章立てが入れ替わりませんでした。",
+  );
+  expect(await readProjectFile("plot/chapters/02.md")).toContain("title: 序章");
+  expect(await readProjectFile("manuscript/01/s01.txt")).toBe(secondChapterText);
+  expect(await projectFileExists("manuscript/02")).toBe(false);
+  await waitForElement(buttonWithText(chapterLabel(1, SECOND_CHAPTER_TITLE)));
+  await waitForElement(buttonWithText(chapterLabel(2, "序章")));
+
+  // 開いていた本文は、読み直されずに新しいパスで開いたまま。続けて入力して保存すると、新しいパスへ書かれる
+  const moved = await documentEditor("manuscript/01/s01.txt");
+  expect(await moved.getAttribute("value")).toBe(secondChapterText);
+  await typeAtEnd(moved, "　入れ替えのあとに書いた。");
+  await saveWithShortcut(moved);
+  const saved = await waitForFile(
+    "manuscript/01/s01.txt",
+    (content) => content.includes("入れ替えのあとに書いた。"),
+    "入れ替えのあとに入力した文章が、新しいパスに保存されませんでした。",
+  );
+  expect(saved).toBe(`${secondChapterText}　入れ替えのあとに書いた。`);
+  expect(await projectFileExists("manuscript/02")).toBe(false);
+  await saveScreenshot("chapter-moved.png");
 });

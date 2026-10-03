@@ -81,6 +81,14 @@ export function sortedByNumber(chapters: MockChapter[]): MockChapter[] {
   );
 }
 
+/** 人物を目次に並べる順（表示順、無ければ最後。同じ値は id 順。Rust の `Project::characters` と同じ）。 */
+export function sortedForDisplay(characters: MockCharacter[]): MockCharacter[] {
+  const orderOf = (character: MockCharacter): number => character.order ?? Number.MAX_SAFE_INTEGER;
+  return [...characters].sort(
+    (left, right) => orderOf(left) - orderOf(right) || left.id.localeCompare(right.id),
+  );
+}
+
 export function findScene(
   state: ProjectState,
   chapterId: string,

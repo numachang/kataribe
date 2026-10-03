@@ -11,18 +11,11 @@ import {
   WORLD_OVERVIEW_PATH,
   worldDocumentPath,
 } from "./paths";
-import type { MockCharacter, MockScene, ProjectState } from "./state";
-import { worldDocumentTitle } from "./state";
+import type { MockScene, ProjectState } from "./state";
+import { sortedForDisplay, worldDocumentTitle } from "./state";
 
 function charsOf(text: string | null): number {
   return text === null ? 0 : computeTextStats(text).chars;
-}
-
-/** 表示順、無ければ id 順で後ろへ並べる（Rust の Project::characters と同じ）。 */
-function compareByOrder(left: MockCharacter, right: MockCharacter): number {
-  const leftOrder = left.order ?? Number.MAX_SAFE_INTEGER;
-  const rightOrder = right.order ?? Number.MAX_SAFE_INTEGER;
-  return leftOrder - rightOrder || left.id.localeCompare(right.id);
 }
 
 /** 章・シーンに属さない項目は、`chapter` と `scene` を省いてよい。 */
@@ -137,7 +130,7 @@ function buildCharactersSection(state: ProjectState): OverviewSection {
       ],
     };
   }
-  const entries = [...state.characters].sort(compareByOrder).map((character) =>
+  const entries = sortedForDisplay(state.characters).map((character) =>
     leaf({
       path: characterPath(character.id),
       label: character.name,

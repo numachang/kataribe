@@ -7,7 +7,7 @@ import type {
   StructureEdit,
   StructurePlan,
 } from "../types";
-import { planAddChapter, planRemoveChapter } from "./chapters";
+import { planAddChapter, planMoveChapter, planRemoveChapter } from "./chapters";
 import { expectAbsentChange, trashChange, writeChange } from "./fileChange";
 import { refersTo } from "./names";
 import {
@@ -20,16 +20,18 @@ import {
 } from "./paths";
 import { renderChapterFile, renderCharacterFile } from "./render";
 import type { MockChapter, MockScene, ProjectState } from "./state";
-import { findCharacter, findWorldDocument, worldDocumentTitle } from "./state";
+import { findCharacter, findWorldDocument, sortedForDisplay, worldDocumentTitle } from "./state";
 import {
   chapterNumber,
   described,
+  ensureNewPosition,
   invalidInput,
+  movedItem,
   notFound,
   requireChapter,
 } from "./structureSupport";
 
-// 構成の操作（人物・世界観の資料・シーンの追加と削除）の変更案を作る。kataribe-engine の `structure/` と同じ形の
+// 構成の操作（人物・世界観の資料・シーンの追加と削除、人物・シーンの並べ替え）の変更案を作る。kataribe-engine の `structure/` と同じ形の
 // 変更案（Write / Trash）と、削除の確認に見せる材料（参照・注意書き）を返す。状態は書き換えない。
 // 本物と違い、かなはローマ字にしない（変換表を二重に持たないため）。ID の提案は英数字だけで作る。
 
@@ -171,6 +173,47 @@ function planRemoveCharacter(state: ProjectState, path: string): StructurePlan {
     ...described(state, `人物「${character.name}」をゴミ箱へ移し`, [trashChange(state, path)]),
     created: null,
     references: scenesMentioning(state, character.name),
+    renumbered: [],
+    notices: [],
+  };
+}
+
+/**
+ * 人物を並べ替える変更案。目次と同じ並びの中で数え、並べ替えたあとの並びで `order` を 1, 2, 3… に振り直し、
+ * 値が変わる人物資料だけを書き直す。偽の作品には読めない人物資料が無いので、本物のような飛ばし方（と注意書き）は無い。
+ */
+function planMoveCharacter(state: ProjectState, path: string, position: number): StructurePlan {
+  const stem = characterFileStem(path);
+  if (stem === null) {
+    throw invalidInput(
+      `${path} は並べ替えられる人物資料ではありません（並べ替えられるのは、characters/ 直下の Markdown です）。`,
+    );
+  }
+  const roster = sortedForDisplay(state.characters ?? []);
+  const current = roster.findIndex((character) => character.id === stem);
+  const moving = roster[current];
+  if (moving === undefined) {
+    throw notFound(`人物資料 ${path} がありません。`);
+  }
+  const subject = `人物「${moving.name}」`;
+  ensureNewPosition(subject, "人物", current, position, roster.length);
+
+  const files = movedItem(roster, current, position).flatMap((character, index) => {
+    const order = index + 1;
+    return character.order === order
+      ? []
+      : [
+          writeChange(
+            state,
+            characterPath(character.id),
+            renderCharacterFile({ ...character, order }),
+          ),
+        ];
+  });
+  return {
+    ...described(state, `${subject}を ${position + 1} 番目に移し`, files),
+    created: null,
+    references: [],
     renumbered: [],
     notices: [],
   };
@@ -355,6 +398,33 @@ function planRemoveScene(state: ProjectState, chapterId: string, sceneId: string
   };
 }
 
+/** シーンを並べ替える変更案。章立ての `scenes` の並びだけを変える（シーンの id と本文は変えない）。 */
+function planMoveScene(
+  state: ProjectState,
+  chapterId: string,
+  sceneId: string,
+  position: number,
+): StructurePlan {
+  const chapter = requireChapter(state, chapterId);
+  const scenes = chapter.scenes ?? [];
+  const current = scenes.findIndex((scene) => scene.id === sceneId);
+  const moving = scenes[current];
+  if (moving === undefined) {
+    throw notFound(`シーン ${sceneId} が第${chapterNumber(chapterId)}章にありません。`);
+  }
+  const subject = `第${chapterNumber(chapterId)}章のシーン「${moving.title}」`;
+  ensureNewPosition(subject, "シーン", current, position, scenes.length);
+  return {
+    ...described(state, `${subject}を ${position + 1} 番目に移し`, [
+      rewriteChapter(state, chapter, movedItem(scenes, current, position)),
+    ]),
+    created: null,
+    references: [],
+    renumbered: [],
+    notices: [],
+  };
+}
+
 // ---- 入口 ----
 
 /** 構成の操作の変更案を作る。状態は書き換えない。 */
@@ -376,5 +446,11 @@ export function planMockStructureEdit(state: ProjectState, edit: StructureEdit):
       return planAddScene(state, edit.chapter, edit.before, edit.scene);
     case "remove_scene":
       return planRemoveScene(state, edit.chapter, edit.scene);
+    case "move_character":
+      return planMoveCharacter(state, edit.path, edit.position);
+    case "move_chapter":
+      return planMoveChapter(state, edit.chapter, edit.position);
+    case "move_scene":
+      return planMoveScene(state, edit.chapter, edit.scene, edit.position);
   }
 }

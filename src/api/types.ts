@@ -368,7 +368,7 @@ export interface ChangeSet {
   project_root: string;
 }
 
-// ---- 構成の操作（人物・世界観の資料・章・シーンの追加と削除） ----
+// ---- 構成の操作（人物・世界観の資料・章・シーンの追加・削除と、人物・章・シーンの並べ替え） ----
 
 /** 足すシーンの設計。ScenePlan から、足すときに決まる項目（id・ビート）を除いたもの。 */
 export interface NewScenePlan {
@@ -419,7 +419,27 @@ export type StructureEdit =
       before: string | null;
       scene: NewScenePlan;
     }
-  | { kind: "remove_scene"; chapter: string; scene: string };
+  | { kind: "remove_scene"; chapter: string; scene: string }
+  | {
+      kind: "move_character";
+      /** 動かす人物資料。`characters/` 直下の Markdown で、YAML が読めるもの。 */
+      path: string;
+      /** 並べ替えたあとに、目次の人物の何番目に来るか（0 始まり）。範囲外・今と同じ位置は `invalid_input`。 */
+      position: number;
+    }
+  | {
+      kind: "move_chapter";
+      chapter: string;
+      /** 並べ替えたあとに、章の何番目に来るか（0 始まり）。範囲外・今と同じ位置は `invalid_input`。 */
+      position: number;
+    }
+  | {
+      kind: "move_scene";
+      chapter: string;
+      scene: string;
+      /** 並べ替えたあとに、章のシーンの何番目に来るか（0 始まり）。範囲外・今と同じ位置は `invalid_input`。 */
+      position: number;
+    };
 
 /** 人物の名前を挙げているシーン。 */
 export interface SceneReference {
@@ -451,7 +471,7 @@ export interface StructurePlan {
   created: string | null;
   /** 人物を消すとき、その人物の名前を挙げているシーン。 */
   references: SceneReference[];
-  /** 章を足す・消すときに、番号が変わる章（後ろの章）。番号の小さい順。 */
+  /** 章を足す・消す・並べ替えるときに、番号が変わる章（後ろの章。並べ替えでは動く範囲の章）。番号の小さい順。 */
   renumbered: RenumberedChapter[];
   /** 利用者への注意書き。 */
   notices: string[];
