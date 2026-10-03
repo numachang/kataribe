@@ -2,11 +2,22 @@ name: CI
 
 # 非公開リポジトリの Windows ランナーは実行時間の 2 倍で課金されるので、待ち時間と課金を抑える。
 # - 各ジョブは互いを待たずに並列に走らせる
-# - インストーラの作成（LTO 付きのリリースビルドで最も重い）は、PR では行わず、main へのプッシュと手動実行のときだけ行う
+# - Windows でなくてよいフロントエンドの検査は、1 倍で数える Linux で走らせる
+# - ドラフトの PR では走らせず、レビューできる状態にしたときに走らせる
+# - 文書だけの変更では走らせない
+# - インストーラの作成（LTO 付きのリリースビルドで最も重い）は installer.yml に分け、手動とタグのときだけ行う
+# - 止まらなくなった実行で課金が膨らまないよう、各ジョブに時間の上限を付ける
 on:
   push:
     branches: [main]
+    paths-ignore: &docs-only
+      - "**.md"
+      - "docs/**"
+      - ".claude/**"
+      - "LICENSE"
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore: *docs-only
   workflow_dispatch:
 
 concurrency:
@@ -15,17 +26,27 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Windows ではデバッグ情報（PDB）の生成とリンクが重く、キャッシュも大きくなって復元に時間がかかる。
+  # CI ではデバッガを使わず、テストが失敗した位置は panic の位置情報で出るので作らない
+  CARGO_PROFILE_DEV_DEBUG: "0"
 
+# ドラフトの PR を除く条件は、ジョブごとに書く（ワークフロー全体には if を付けられない）。
+# push と手動実行では github.event.pull_request が無いので、常に走る
 jobs:
   rust:
     name: Rust（整形・lint・テスト）
+    if: github.event.pull_request.draft != true
     runs-on: windows-latest
+    # ふだんは 5 分ほどだが、キャッシュが無い回（Rust の版が上がったときなど）は 20 分近くかかる
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      - name: rust-toolchain.toml の版の Rust を入れる
+        run: rustup toolchain install
+      # 失敗した回でも依存のビルド結果を残し、直したあとの回がゼロからビルドし直さないようにする
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - name: フロントエンドの成果物の置き場所を用意（Tauri のビルドに必要）
         run: mkdir dist
       - run: cargo fmt --all -- --check
@@ -44,7 +65,9 @@ jobs:
 
   frontend:
     name: フロントエンド（型検査・lint・テスト）
-    runs-on: windows-latest
+    if: github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -57,34 +80,17 @@ jobs:
       - run: pnpm lint
       - run: pnpm test
 
-  bundle:
-    name: インストーラの作成
-    if: github.event_name != 'pull_request'
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm tauri build
-      - uses: actions/upload-artifact@v4
-        with:
-          name: kataribe-installer
-          path: target/release/bundle/nsis/*.exe
-
   e2e:
     name: E2E（本物のアプリを WebView2 で操作）
+    if: github.event.pull_request.draft != true
     runs-on: windows-latest
+    timeout-minutes: 20
     env:
       KATARIBE_E2E_DEBUG_PORT: "9222"
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: rust-toolchain.toml の版の Rust を入れる
+        run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true

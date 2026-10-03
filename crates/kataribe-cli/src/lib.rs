@@ -185,7 +185,7 @@ mod tests {
         .await;
 
         assert_eq!(code, ExitCode::from(EXIT_USAGE_ERROR));
-        assert!(!console.stderr().is_empty());
+        assert_ne!(console.stderr(), "");
     }
 
     #[tokio::test]

@@ -53,8 +53,9 @@ Claude Code をインストールしてログインしておけば、
 
 ## インストール
 
-リリースはまだ無い。main の CI（GitHub Actions）が作るインストーラ（成果物 `kataribe-installer`）を使うか、
-ソースからインストーラを作る（「開発」を参照）。CI の「Run workflow」から手動で作ることもできる。
+リリースはまだ無い。GitHub Actions の「インストーラ」ワークフローを「Run workflow」で手動実行して
+インストーラ（成果物 `kataribe-installer`）を作るか、ソースからインストーラを作る（「開発」を参照）。
+`v` で始まるタグを付けてプッシュしたときにも、同じワークフローがインストーラを作る。
 `pnpm tauri build` で `target/release/bundle/nsis/kataribe_<版>_x64-setup.exe` ができる。ユーザー単位でインストールされ、管理者権限はいらない。
 
 ## 使い方

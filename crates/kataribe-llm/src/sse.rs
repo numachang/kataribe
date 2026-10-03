@@ -130,7 +130,7 @@ mod tests {
     fn 空行だけでは何も起きない() {
         let mut decoder = SseDecoder::default();
         let events = push_all(&mut decoder, &[b"\n\n\n"]);
-        assert!(events.is_empty());
+        assert_eq!(events, Vec::<SseEvent>::new());
     }
 
     #[test]

@@ -139,7 +139,7 @@ mod tests {
         assert!(!loaded.editor.vertical);
         assert_eq!(loaded.llm, LlmSettings::default());
         assert_eq!(loaded.generation, GenerationSettings::default());
-        assert!(loaded.recent_projects.is_empty());
+        assert_eq!(loaded.recent_projects, Vec::<String>::new());
     }
 
     #[test]

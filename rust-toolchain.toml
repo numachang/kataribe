@@ -1,0 +1,7 @@
+# 手元と CI で同じ版の Rust を使う。stable のままだと、新しい版の clippy の検査で CI だけが突然落ちたり、
+# 版が上がるたびに CI のキャッシュが外れて遅い回が出たりする。
+# 版を上げるときは channel を書き換え、cargo clippy と cargo test が通ることを確かめてからコミットする。
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

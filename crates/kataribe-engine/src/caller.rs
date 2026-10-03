@@ -497,7 +497,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(names.names.is_empty());
+        assert_eq!(names.names, Vec::<String>::new());
         assert_eq!(model.requests().len(), 2);
     }
 
