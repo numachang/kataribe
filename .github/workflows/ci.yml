@@ -1,12 +1,12 @@
 name: CI
 
-# 非公開リポジトリの Windows ランナーは実行時間の 2 倍で課金されるので、待ち時間と課金を抑える。
+# Windows のジョブは時間がかかるので、待ち時間と無駄な実行を抑える。
 # - 各ジョブは互いを待たずに並列に走らせる
-# - Windows でなくてよいフロントエンドの検査は、1 倍で数える Linux で走らせる
+# - Windows でなくてよいフロントエンドの検査は Linux で走らせる
 # - ドラフトの PR では走らせず、レビューできる状態にしたときに走らせる
 # - 文書だけの変更では走らせない
 # - インストーラの作成（LTO 付きのリリースビルドで最も重い）は installer.yml に分け、手動とタグのときだけ行う
-# - 止まらなくなった実行で課金が膨らまないよう、各ジョブに時間の上限を付ける
+# - 止まらなくなった実行がランナーを使い続けないよう、各ジョブに時間の上限を付ける
 on:
   push:
     branches: [main]
@@ -19,6 +19,11 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths-ignore: *docs-only
   workflow_dispatch:
+
+# トークンは読むだけにする。外部のアクションは、タグを付け替えられても中身が変わらないよう
+# コミットの SHA で固定する（新しい版は Dependabot が PR で知らせる）
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -40,11 +45,11 @@ jobs:
     # ふだんは 5 分ほどだが、キャッシュが無い回（Rust の版が上がったときなど）は 20 分近くかかる
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: rust-toolchain.toml の版の Rust を入れる
         run: rustup toolchain install
       # 失敗した回でも依存のビルド結果を残し、直したあとの回がゼロからビルドし直さないようにする
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           cache-on-failure: true
       - name: フロントエンドの成果物の置き場所を用意（Tauri のビルドに必要）
@@ -69,9 +74,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -88,14 +93,14 @@ jobs:
     env:
       KATARIBE_E2E_DEBUG_PORT: "9222"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: rust-toolchain.toml の版の Rust を入れる
         run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           cache-on-failure: true
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -130,7 +135,7 @@ jobs:
       - run: pnpm e2e
       - name: テスト中に撮った画面を残す
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: e2e-screenshots
           path: e2e/artifacts/
