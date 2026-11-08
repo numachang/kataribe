@@ -861,6 +861,65 @@ async fn short_contexts_keep_summarizing_finished_scenes() {
 }
 
 #[tokio::test]
+async fn short_contexts_with_long_prose_still_get_only_the_end_of_the_previous_scene() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path());
+    prepare_two_scene_chapter(&project);
+    write(
+        &project,
+        "manuscript/01/s01.txt",
+        &format!(
+            "　本文の先頭の目印。{}本文の末尾の目印。\n",
+            "雨".repeat(20_000)
+        ),
+    );
+    let model = Arc::new(ScriptedChatModel::new([
+        Script::reply(["二人は洋館に着いた。"]),
+        Script::reply(["書斎は静かだった。\n"]),
+    ]));
+    let engine = Engine::new(model.clone(), settings_with_context(16_384)).unwrap();
+
+    run(&engine, &project, &scene_two()).await;
+
+    let requests = model.requests();
+    assert_eq!(requests.len(), 2, "1 回目が要約、2 回目が本文");
+    let prompt = &requests[1].messages[1].content;
+    assert!(prompt.contains("本文の末尾の目印"), "直前の末尾は渡す");
+    assert!(!prompt.contains("本文の先頭の目印"), "先頭までは渡さない");
+    assert!(!prompt.contains("ここまでの本文（そのまま"), "{prompt}");
+}
+
+#[tokio::test]
+async fn a_long_chapter_keeps_its_output_room_and_summarizes_prose_that_does_not_fit() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path());
+    write(&project, "style.md", STYLE);
+    write(
+        &project,
+        "plot/chapters/01.md",
+        "---\ntitle: 雨の匂い\nscenes:\n  - id: s01\n    title: 古い場面\n    summary: 着く。\n    target_chars: 1000\n  - id: s02\n    title: 長い場面\n    summary: 解く。\n    target_chars: 10000\n---\n洋館を訪れる。\n",
+    );
+    write(
+        &project,
+        "manuscript/01/s01.txt",
+        &format!("　古い本文の目印{}\n", "雨".repeat(15_000)),
+    );
+    let model = Arc::new(ScriptedChatModel::new([
+        Script::reply(["二人は洋館に着いた。"]),
+        Script::reply(["書斎は静かだった。\n"]),
+    ]));
+    let engine = Engine::new(model.clone(), settings_with_context(32_000)).unwrap();
+
+    run(&engine, &project, &scene_two()).await;
+
+    let requests = model.requests();
+    assert_eq!(requests.len(), 2, "1 回目が要約、2 回目が本文");
+    assert!(!requests[1].messages[1].content.contains("古い本文の目印"));
+    // 10,000 字 × 1.5 ＋ 余裕 256。そのまま渡す本文のせいで切り詰められていないこと
+    assert_eq!(requests[1].max_tokens, Some(15_256));
+}
+
+#[tokio::test]
 async fn scenes_beyond_the_verbatim_budget_are_summarized_instead() {
     let folder = tempfile::tempdir().unwrap();
     let project = new_project(folder.path());

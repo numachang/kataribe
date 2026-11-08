@@ -30,6 +30,9 @@ const MAX_OVERUSED_PHRASES: usize = 8;
 /// この長さ以上の文脈を持つモデルには、資料を広く渡し、書き終えた本文をそのまま渡す。
 /// ローカル LLM の 16,384 トークンで実測して決めた `LEVELS` の動きを変えないよう、それより十分に大きい値にしている。
 const WIDE_CONTEXT_TOKENS: u32 = 32_000;
+/// そのまま渡す本文を決めるときに、資料（文体ガイド・人物・シーンの設計など）のために残すトークン数。
+/// `LEVELS` の上のほうの段が入る大きさにして、本文を増やしたせいで資料が今より減らないようにする。
+const MATERIAL_RESERVE_TOKENS: usize = 8_000;
 
 /// 資料ごとの文字数の上限。上の段から順に試し、文脈に収まった段を使う。
 /// 優先度の低い資料（世界観 → これまでの要約 → 人物の詳細 → 直前の本文 → 文体）から先に減らす。
@@ -117,14 +120,16 @@ fn levels_for(context_tokens: u32) -> impl Iterator<Item = Caps> {
     wide.iter().chain(&LEVELS).copied()
 }
 
-/// 書き終えた本文をそのまま渡すのに使ってよいトークン数。残りの半分は資料と出力のために空けておく。
+/// 書き終えた本文をそのまま渡すのに使ってよいトークン数。文脈の半分を上限に、出力と資料の分を空けておく。
 /// 要約を作るかどうかを先に決めるため、資料の段を選ぶ前に求める。
-pub(crate) fn verbatim_prose_tokens(context_tokens: u32) -> usize {
-    if context_tokens >= WIDE_CONTEXT_TOKENS {
-        context_tokens as usize / 2
-    } else {
-        0
+///
+/// `prompt_budget` は、今回の出力を確保したあとにプロンプトへ使えるトークン数。章単位のように出力が長いときに
+/// 本文で埋めると、資料を削っても収まらず、出力の上限が切り詰められて章が途中で切れる。
+pub(crate) fn verbatim_prose_tokens(context_tokens: u32, prompt_budget: usize) -> usize {
+    if context_tokens < WIDE_CONTEXT_TOKENS {
+        return 0;
     }
+    (context_tokens as usize / 2).min(prompt_budget.saturating_sub(MATERIAL_RESERVE_TOKENS))
 }
 
 /// 1 回の生成で書かせる範囲。
@@ -358,7 +363,7 @@ mod tests {
         let below_wide = WIDE_CONTEXT_TOKENS - 1;
         assert_eq!(levels_for(below_wide).count(), LEVELS.len());
         assert!(levels_for(below_wide).all(|caps| caps.style <= LEVELS[0].style));
-        assert_eq!(verbatim_prose_tokens(below_wide), 0);
+        assert_eq!(verbatim_prose_tokens(below_wide, 100_000), 0);
     }
 
     #[test]
@@ -367,7 +372,13 @@ mod tests {
             levels_for(WIDE_CONTEXT_TOKENS).count(),
             WIDE_LEVELS.len() + LEVELS.len()
         );
-        assert_eq!(verbatim_prose_tokens(100_000), 50_000);
+        assert_eq!(verbatim_prose_tokens(100_000, 90_000), 50_000);
+    }
+
+    #[test]
+    fn verbatim_prose_gives_way_to_a_long_output_and_keeps_room_for_the_materials() {
+        assert_eq!(verbatim_prose_tokens(32_000, 15_000), 7_000);
+        assert_eq!(verbatim_prose_tokens(32_000, 5_000), 0);
     }
 
     #[test]
