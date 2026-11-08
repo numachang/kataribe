@@ -13,6 +13,9 @@ const APP_LLM: LlmSettings = {
   model: "gemma",
   claude_command: "claude",
   claude_model: "sonnet",
+  codex_command: "codex",
+  codex_model: "",
+  codex_reasoning_effort: "",
 };
 
 const APP_GENERATION: GenerationSettings = {
@@ -34,6 +37,20 @@ describe("applyProjectSettings", () => {
 
     expect(applied.llm).toEqual({ ...APP_LLM, provider: "claude_code", claude_model: "haiku" });
     expect(applied.generation).toEqual({ ...APP_GENERATION, context_tokens: 100000 });
+  });
+
+  it("Codex のモデルと推論の強さも重ねる", () => {
+    const applied = applyProjectSettings(
+      { llm: APP_LLM, generation: APP_GENERATION },
+      { provider: "codex", codex_model: "gpt-6.1-sol", codex_reasoning_effort: "high" },
+    );
+
+    expect(applied.llm).toEqual({
+      ...APP_LLM,
+      provider: "codex",
+      codex_model: "gpt-6.1-sol",
+      codex_reasoning_effort: "high",
+    });
   });
 
   it("作品の設定が空なら、アプリ全体の設定のまま", () => {

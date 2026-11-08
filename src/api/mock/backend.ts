@@ -58,6 +58,9 @@ const DEFAULT_SETTINGS: AppSettings = {
     model: "",
     claude_command: "claude",
     claude_model: "sonnet",
+    codex_command: "codex",
+    codex_model: "",
+    codex_reasoning_effort: "",
   },
   generation: {
     draft_unit: "beat",
@@ -82,6 +85,11 @@ const CLAUDE_CODE_MODELS: ModelInfo[] = [
   { id: "sonnet", context_length: null },
   { id: "opus", context_length: null },
   { id: "haiku", context_length: null },
+];
+
+const CODEX_MODELS: ModelInfo[] = [
+  { id: "gpt-6.1-sol", context_length: 500000 },
+  { id: "gpt-6-sol", context_length: 272000 },
 ];
 
 export interface MockBackendOptions {
@@ -186,6 +194,9 @@ class MockBackend implements Backend {
     const effective = llm ?? this.effectiveSettings().llm;
     if (effective.provider === "claude_code") {
       return CLAUDE_CODE_MODELS;
+    }
+    if (effective.provider === "codex") {
+      return CODEX_MODELS;
     }
     if (effective.base_url.trim().length === 0) {
       throw new BackendError("invalid_input", "接続先 URL を入力してください。");
@@ -371,6 +382,9 @@ function manifestHash(project: ProjectState): string {
 function describeLlm(llm: LlmSettings): string {
   if (llm.provider === "claude_code") {
     return `Claude Code（${llm.claude_model}）`;
+  }
+  if (llm.provider === "codex") {
+    return `Codex（${llm.codex_model.trim() || "既定のモデル"}）`;
   }
   return `OpenAI 互換 API（${serverName(llm.base_url)}）・${llm.model.trim() || "サーバーの既定のモデル"}`;
 }

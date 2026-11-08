@@ -29,10 +29,13 @@ pub fn run(
 
 /// コマンドラインで指定した値のうち、作品に保存できるものを保存する。
 fn save(project: &Project, global: &GlobalOptions, console: &dyn Console) -> anyhow::Result<()> {
-    if global.base_url.is_some() || global.claude_command.is_some() {
+    if global.base_url.is_some()
+        || global.claude_command.is_some()
+        || global.codex_command.is_some()
+    {
         // 注意を出せなくても保存はできるので、書き込みの失敗は無視する
         let _ = console.eprint(
-            "--base-url と --claude-command は PC ごとの設定なので、作品には保存しません。\n",
+            "--base-url・--claude-command・--codex-command は PC ごとの設定なので、作品には保存しません。\n",
         );
     }
     // --model は、保存したあとに使われる接続先のモデルとして保存する
@@ -72,8 +75,12 @@ fn with_overrides(
         let target = match provider {
             LlmProvider::OpenaiCompatible => &mut stored.model,
             LlmProvider::ClaudeCode => &mut stored.claude_model,
+            LlmProvider::Codex => &mut stored.codex_model,
         };
         *target = Some(model.clone());
+    }
+    if let Some(effort) = &global.codex_reasoning_effort {
+        stored.codex_reasoning_effort = Some(effort.clone());
     }
     if let Some(unit) = global.unit {
         stored.draft_unit = Some(unit.into());
@@ -122,6 +129,10 @@ fn as_project_settings(effective: &EngineSettings) -> ProjectSettings {
     match llm.provider {
         LlmProvider::OpenaiCompatible => settings.model = Some(llm.model.clone()),
         LlmProvider::ClaudeCode => settings.claude_model = Some(llm.claude_model.clone()),
+        LlmProvider::Codex => {
+            settings.codex_model = Some(llm.codex_model.clone());
+            settings.codex_reasoning_effort = Some(llm.codex_reasoning_effort.clone());
+        }
     }
     settings.draft_unit = Some(generation.draft_unit);
     settings.chars_per_call = Some(generation.chars_per_call);
@@ -159,6 +170,24 @@ mod tests {
         let path = dir.path().join("settings.json");
         std::fs::write(&path, "{}").unwrap();
         path
+    }
+
+    #[test]
+    fn saving_for_codex_stores_its_model_and_reasoning_effort() {
+        let global = GlobalOptions {
+            provider: Some(ProviderArg::Codex),
+            model: Some("gpt-6.1-sol".to_owned()),
+            codex_reasoning_effort: Some("high".to_owned()),
+            ..GlobalOptions::default()
+        };
+
+        let saved = with_overrides(ProjectSettings::default(), &global, LlmProvider::Codex);
+
+        let mut expected = ProjectSettings::default();
+        expected.provider = Some(LlmProvider::Codex);
+        expected.codex_model = Some("gpt-6.1-sol".to_owned());
+        expected.codex_reasoning_effort = Some("high".to_owned());
+        assert_eq!(saved, expected);
     }
 
     #[test]

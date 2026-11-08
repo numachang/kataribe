@@ -12,6 +12,9 @@ function llmSettings(changes: Partial<LlmSettings>): LlmSettings {
     model: "",
     claude_command: "claude",
     claude_model: "sonnet",
+    codex_command: "codex",
+    codex_model: "",
+    codex_reasoning_effort: "",
     ...changes,
   };
 }
@@ -74,6 +77,12 @@ describe("createMockBackend / listModels", () => {
     const backend = createMockBackend({ delayMs: 0 });
     const models = await backend.listModels(llmSettings({ provider: "claude_code", base_url: "" }));
     expect(models.map((model) => model.id)).toEqual(["sonnet", "opus", "haiku"]);
+  });
+
+  it("Codex では接続先 URL が空でも、モデルの一覧を返す", async () => {
+    const backend = createMockBackend({ delayMs: 0 });
+    const models = await backend.listModels(llmSettings({ provider: "codex", base_url: "" }));
+    expect(models[0]).toEqual({ id: "gpt-6.1-sol", context_length: 500000 });
   });
 });
 
@@ -392,6 +401,16 @@ describe("createMockBackend / 生成", () => {
     );
 
     expect(event).toEqual({ kind: "started", model: "Claude Code（haiku）" });
+  });
+
+  it("生成の最初に、Codex とそのモデルの名前を知らせる", async () => {
+    const named = await firstEventOfGeneration(
+      llmSettings({ provider: "codex", codex_model: "gpt-6.1-sol" }),
+    );
+    const unnamed = await firstEventOfGeneration(llmSettings({ provider: "codex" }));
+
+    expect(named).toEqual({ kind: "started", model: "Codex（gpt-6.1-sol）" });
+    expect(unnamed).toEqual({ kind: "started", model: "Codex（既定のモデル）" });
   });
 
   it("接続先の名前には、URL の認証情報やクエリを出さない（Rust と同じ）", async () => {

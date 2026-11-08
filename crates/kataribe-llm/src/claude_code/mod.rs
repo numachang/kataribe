@@ -14,11 +14,9 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::time::Duration;
 
-use tokio::process::Command;
-
 use crate::chat_model::{ChatModel, ChatStream};
+use crate::cli_process::CliTool;
 use crate::error::LlmError;
-use crate::message::{Message, Role};
 use crate::model_info::ModelInfo;
 use crate::request::ChatRequest;
 
@@ -26,9 +24,11 @@ use crate::request::ChatRequest;
 const MODEL_ALIASES: [&str; 3] = ["sonnet", "opus", "haiku"];
 /// 考えている間も思考の差分が流れるので、これだけ何も出なければ固まっているとみなす。
 const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_mins(5);
-/// GUI のアプリから起動したときに、コンソールの窓を出さない（Windows の `CREATE_NO_WINDOW`）。
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+const TOOL: CliTool = CliTool {
+    command: "claude",
+    install_hint: "Claude Code をインストールしてログインするか、設定で claude コマンドの場所を指定してください（npm でインストールした場合は claude.cmd）。",
+    wrap_error: LlmError::ClaudeCode,
+};
 
 /// [`ClaudeCodeModel`] の設定。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,32 +92,6 @@ impl ChatModel for ClaudeCodeModel {
     }
 }
 
-/// メッセージを、システムプロンプトと、標準入力で渡す本文に分けたもの。
-#[derive(Debug, PartialEq, Eq)]
-struct SplitPrompt {
-    system: String,
-    user: String,
-}
-
-impl SplitPrompt {
-    /// アシスタントの発言（応答の書き出しの指定など）は `claude -p` に渡せないので使わない。
-    /// 執筆エンジンが渡すのは、推論モデルの思考を止めるための空の思考ブロックだけで、Claude には要らない。
-    fn from_messages(messages: &[Message]) -> Self {
-        let join = |role: Role| {
-            messages
-                .iter()
-                .filter(|message| message.role == role)
-                .map(|message| message.content.as_str())
-                .collect::<Vec<_>>()
-                .join("\n\n")
-        };
-        Self {
-            system: join(Role::System),
-            user: join(Role::User),
-        }
-    }
-}
-
 /// `--json-schema` に渡すスキーマ。Claude Code の検証器は draft 2020-12 のメタスキーマを知らず、
 /// `$schema` でそれを名乗るスキーマ（schemars が既定で作る）を拒むため、`$schema` だけを外す。
 fn schema_argument(schema: &serde_json::Value) -> String {
@@ -126,15 +100,6 @@ fn schema_argument(schema: &serde_json::Value) -> String {
         object.remove("$schema");
     }
     schema.to_string()
-}
-
-/// `claude` を起動する [`Command`]。待つのをやめたら（drop したら）プロセスも終わらせる。
-fn claude_command(program: &str) -> Command {
-    let mut command = Command::new(program);
-    command.kill_on_drop(true);
-    #[cfg(windows)]
-    command.creation_flags(CREATE_NO_WINDOW);
-    command
 }
 
 /// `claude` に渡す引数。ツール・設定・MCP サーバーを読み込ませず、セッションも残さない。
@@ -170,44 +135,10 @@ fn command_args(
     args
 }
 
-fn spawn_error(program: &str, error: &std::io::Error) -> LlmError {
-    if error.kind() == std::io::ErrorKind::NotFound {
-        LlmError::ClaudeCode(format!(
-            "claude コマンド（{program}）が見つかりません。Claude Code をインストールしてログインするか、設定で claude コマンドの場所を指定してください（npm でインストールした場合は claude.cmd）。"
-        ))
-    } else {
-        local_error(
-            &format!("claude コマンド（{program}）を起動できません"),
-            error,
-        )
-    }
-}
-
-fn local_error(what: &str, error: &std::io::Error) -> LlmError {
-    LlmError::ClaudeCode(format!("{what}: {error}"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
-
-    #[test]
-    fn messages_are_split_into_system_prompt_and_input_without_the_prefill() {
-        let messages = vec![
-            Message::system("あなたは小説家です。"),
-            Message::user("雨の場面を書いてください。"),
-            Message::assistant("<think>\n\n</think>\n\n"),
-        ];
-
-        assert_eq!(
-            SplitPrompt::from_messages(&messages),
-            SplitPrompt {
-                system: "あなたは小説家です。".to_owned(),
-                user: "雨の場面を書いてください。".to_owned(),
-            }
-        );
-    }
 
     #[test]
     fn arguments_disable_tools_settings_and_sessions() {

@@ -8,7 +8,7 @@
   人が直接編集するか、LLM に指示して書き直させる。
 - 本文は **ローカル LLM でも精度が落ちない単位** に分けて生成する。単位と 1 回あたりの分量は設定で変えられる。
 - GUI と CLI（ヘッドレス）は同じ執筆エンジン（`kataribe-engine`）を使う。GUI でできる生成はすべて CLI でもできる。
-- LLM は OpenAI 互換 API（ローカル LLM・クラウド）のほか、Claude Code（`claude -p`）でも動かせる（§4.5）。
+- LLM は OpenAI 互換 API（ローカル LLM・クラウド）のほか、Claude Code（`claude -p`）・Codex（`codex exec`）でも動かせる（§4.5）。
 
 ## 2. 作品フォルダの形式（format: 1）
 
@@ -170,7 +170,7 @@ kataribe-project ─┘          │
 ### 3.2 kataribe-llm
 
 LLM を呼ぶ層。OpenAI 互換 Chat Completions API（LM Studio / Ollama / KoboldCpp / OpenRouter / OpenAI など）への
-ストリーミングクライアントと、Claude Code の `claude -p` を使うモデル（§3.2.1）を持つ。
+ストリーミングクライアントと、Claude Code の `claude -p` を使うモデル（§3.2.1）、Codex の `codex exec` を使うモデル（§3.2.2）を持つ。
 
 ```rust
 pub struct ClientConfig { base_url, api_key: Option<String>, model, connect_timeout, idle_timeout, max_retries }
@@ -180,6 +180,10 @@ impl OpenAiCompatClient { async fn list_models(&self) -> Result<Vec<ModelInfo>, 
 pub struct ClaudeCodeConfig { program, model, idle_timeout }  // 既定は "claude"・"sonnet"・5 分
 pub struct ClaudeCodeModel;                  // new(ClaudeCodeConfig)
 impl ClaudeCodeModel { async fn list_models(&self) -> Result<Vec<ModelInfo>, LlmError> }
+
+pub struct CodexConfig { program, model, reasoning_effort, idle_timeout }  // 既定は "codex"・空・空・30 分
+pub struct CodexModel;                       // new(CodexConfig)
+impl CodexModel { async fn list_models(&self) -> Result<Vec<ModelInfo>, LlmError> }
 
 pub trait ChatModel: Send + Sync + Debug {
     fn stream_chat(&self, request: ChatRequest) -> ChatStream;
@@ -223,13 +227,45 @@ pub async fn collect(stream, on_event) -> Result<Completion, LlmError>;   // 全
 - JSON Schema を指定したときは、前置きの文章を捨て、`result` 行の `structured_output` だけを本文にする。
   スキーマからは `$schema` を外して渡す（Claude Code の検証器は draft 2020-12 を名乗るスキーマを拒むため）。
 - `--bare` は使わない。付けるとログイン（OAuth）を読まなくなり、API キーが必須になる。
-- ストリームを drop するとプロセスも止める（中止）。`claude.cmd`（npm 版）を指定したときに止まるのは間の `cmd.exe` で、
-  その下の `claude` は出力先が閉じたことで数秒のうちに自分で終わる（実測 6 秒以内）。
+- ストリームを drop するとプロセスも止める（中止）。`claude.cmd`（npm 版）のようなバッチファイルを指定しても、`taskkill /T` で下のプロセスごと止める。
   正常に終わったときは、`claude` が自分で終わるのを裏で待ち（10 秒まで。過ぎたら止める）、利用者は待たせない。
   待っている間にアプリや CLI が終わるときは、待たずに止める（結果はもう受け取っているので失うものはない）。
 - GUI から起動してもコンソールの窓を出さない（`CREATE_NO_WINDOW`）。
 - `list_models` は `claude auth status --json` でログインしているかを確かめ（利用枠を使わない）、モデルの別名
   （`sonnet` / `opus` / `haiku`）を返す。GUI の接続テストと CLI の `models` がこれを使う。
+
+#### 3.2.2 Codex（`codex exec`）
+
+Claude Code と同じ考え方で、ChatGPT のログインで動く Codex CLI を呼ぶ。起動・入出力のつなぎ方・待ち時間・後始末は
+`cli_process`（`claude -p` と共通）に置き、`codex/` は引数と出力の読み方だけを持つ。
+
+- 呼び出しごとに、空の作業フォルダ（一時フォルダの下の `kataribe-codex`）で次のように起動する。利用者の設定（`config.toml`）と実行ポリシー
+  （`.rules`）を読み込ませず、履歴も残さない。`--sandbox read-only` でもモデルはコマンドを試すことがあるが、作業フォルダが空なので実害はない。
+
+  ```
+  codex exec --json --ephemeral --ignore-user-config --ignore-rules --skip-git-repo-check
+             --sandbox read-only --color never -C <作業フォルダ>
+             -c model_instructions_file="<一時ファイル>" [-c model_reasoning_effort="<強さ>"]
+             [-m <モデル>] [--output-schema <一時ファイル>] -
+  ```
+
+- `--ignore-user-config` を付けるとモデルと推論の強さも `config.toml` から読まれないので、指定があれば毎回渡す。空欄なら渡さず、Codex の既定にする。
+- `--ignore-user-config` を付けても `~/.codex/AGENTS.md` は読み込まれる（`CODEX_HOME` を変えれば避けられるかもしれないが、認証情報も同じ場所にあるので触らない）。
+- `system` のメッセージは `model_instructions_file` のファイル（`-c` の値は TOML なので、パスは `/` 区切りの文字列にする）、`user` のメッセージは標準入力で渡す。
+  `assistant` のメッセージ・サンプリング・`max_tokens`・`extra` は Claude Code と同じ理由で使わない。
+- 本文の差分は流れず、応答は最後にまとめて届く（`item.completed` の `agent_message`）。発言は複数届くことがあるので（ツールを試す前の「確認します」など）、
+  `turn.completed` のときに、最後の発言の全文を 1 回の `Content` として流す。途中の発言は本文に混ぜない。`turn.completed` の `usage` を使用トークン数にする（`input_tokens` にはキャッシュの分が、`output_tokens` には推論の分が含まれる）。
+- 書いている間は何も出力されない（gpt-6.1-sol・推論 high で 2,500 字に 2 分）ので、`idle_timeout` は 30 分と長くする。
+- 次の場合はエラーにする。`turn.failed`。`turn.completed` が来ないまま終わったとき（報告された `error` の内容を添える。無ければエラー出力と終了コード）。発言が 1 つも無いまま `turn.completed` になったとき。
+  `error` のイベントだけでは失敗にしない（接続のやり直しの知らせなどで、そのあと成功することがあるため）。`item.completed` の `error` の項目や、標準エラー出力の `ERROR` も同じ。
+- `error`・`turn.failed` の `message` は API のエラーの JSON を文字列にしたものなので、もう一度解釈する。`code` が `invalid_json_schema` のときは `LlmError::Status { status: 400 }` にして、
+  LM Studio などのスキーマが断られたときと同じく、指示文で JSON を求める方法に切り替える。
+- JSON Schema は `--output-schema` の一時ファイルで渡す。OpenAI の strict モードで検証される（`additionalProperties: false` と、全項目の `required`）。工程のスキーマは
+  すべて `deny_unknown_fields` で必須の項目だけなので、そのままで通る（`$schema`・`$defs` が付いていても受け付けられる。実測）。strict に合わない型を足しても、上のとおり指示文に切り替わる。
+- ストリームを drop するとプロセスも止める。`codex.cmd`（npm 版）の場合、間の `cmd.exe` だけを止めると、下の `codex` は出力先が閉じても止まらず、書き終えるまで利用枠を使い続ける（実測）。
+  `taskkill /T` で下のプロセスごと止める（`Child::kill` は起動したプロセスしか止めないため。§3.2.1 と共通）。
+- GUI から起動してもコンソールの窓を出さない。`list_models` は `codex login status`（ログインしていないと終了コード 1 と「Not logged in」）でログインを確かめ、
+  `codex debug models` の `visibility` が `list` のモデルを、`context_window` を文脈の長さとして返す。どちらも利用枠を使わない。
 
 ### 3.3 kataribe-project
 
@@ -465,6 +501,7 @@ Gemma には前者だけ、Qwen には後者だけが効き、両方を指定す
 |---|---|---|
 | `openai_compatible`（既定） | `base_url`・`model` | 資格情報マネージャー（要るサーバーだけ） |
 | `claude_code` | `claude_command`（既定 `claude`）・`claude_model`（既定 `sonnet`） | 使わない（資格情報マネージャーも読まない） |
+| `codex` | `codex_command`（既定 `codex`）・`codex_model`・`codex_reasoning_effort`（どちらも空なら Codex の既定） | 使わない（資格情報マネージャーも読まない） |
 
 モデルの指定は接続先ごとに分けて持つ。接続先を切り替えても、もう一方のモデルの指定を失わない。
 
@@ -476,7 +513,7 @@ Gemma には前者だけ、Qwen には後者だけが効き、両方を指定す
 
 | 書ける項目 | 書けない項目（アプリ全体の設定だけ） |
 |---|---|
-| `provider`・`model`・`claude_model`・`draft_unit`・`chars_per_call`・`context_tokens`・`temperature`・`polish`・`quality_retries`・`disable_thinking` | `base_url`・`claude_command`（PC ごとに違いうる）、API キー、エディタの見た目、最近の作品 |
+| `provider`・`model`・`claude_model`・`codex_model`・`codex_reasoning_effort`・`draft_unit`・`chars_per_call`・`context_tokens`・`temperature`・`polish`・`quality_retries`・`disable_thinking` | `base_url`・`claude_command`・`codex_command`（PC ごとに違いうる）、API キー、エディタの見た目、最近の作品 |
 
 - どの項目も省略でき、省略した項目はアプリ全体の設定を使う。空なら `settings` の項目ごと書かない。
 - この版が知らない項目は、保存し直しても残す（新しい版で足した設定を古い版で消さないため）。
@@ -849,9 +886,10 @@ kataribe-cli [グローバルオプション] <サブコマンド>
 
 グローバルオプション（設定ファイルの値を上書き）
   --settings <PATH>          設定ファイル（既定: GUI と同じ場所。明示したのに無ければエラー）
-  --provider <openai-compatible|claude-code>
-  --base-url <URL>  --claude-command <PATH>
-  --model <ID>               選んでいる接続先のモデル（Claude Code なら sonnet / opus / haiku など）
+  --provider <openai-compatible|claude-code|codex>
+  --base-url <URL>  --claude-command <PATH>  --codex-command <PATH>
+  --model <ID>               選んでいる接続先のモデル（Claude Code なら sonnet / opus / haiku など、Codex なら gpt-6.1-sol など）
+  --codex-reasoning-effort <LEVEL>  Codex の推論の強さ（low・medium・high など）
   --api-key-env <VAR>        API キーを読む環境変数（既定 KATARIBE_API_KEY。未設定なら資格情報マネージャーのキーを使う）
   --unit <chapter|scene|beat>  --chars-per-call <N>  --context-tokens <N>
   --temperature <T>  --polish | --no-polish  --quality-retries <N>
@@ -904,7 +942,7 @@ kataribe-cli [グローバルオプション] <サブコマンド>
       （中を指すと拒否する）。既存ファイルへの上書きは --force を指定したときだけ許す
   models                              選べるモデルの一覧（接続の確認を兼ねる）
   project-settings <FOLDER> [--save]  作品ごとの設定（§4.6）と、実際に使う設定を表示する。
-                                      --save で、グローバルオプションで指定した値（--provider・--model・
+                                      --save で、グローバルオプションで指定した値（--provider・--model・--codex-reasoning-effort・
                                       --unit・--chars-per-call・--context-tokens・--temperature・--polish・
                                       --no-polish・--quality-retries）を作品に保存する（--model は保存後に使う
                                       接続先のモデル。数値は使うときと同じ範囲に収める。保存できる項目を
@@ -925,7 +963,7 @@ kataribe-cli [グローバルオプション] <サブコマンド>
 - `generate add-character` / `add-world` の注意書き（古くなった工程など）は、ほかの生成と同じく標準エラー出力に出る。
   適用と `--dry-run` も `generate` のとおり。足す名前の誤り（`--name` が規則に合わない・使用済み）は、LLM を呼ぶ前に失敗にする。
 - API キーは `--api-key-env` の環境変数 → 資格情報マネージャー（GUI と共有、`kataribe_engine::ApiKeyStore`）の順に探す。
-  Claude Code のときは API キーを使わないので探さない。
+  Claude Code と Codex のときは API キーを使わないので探さない。
 
 - 生成中の本文は標準出力、進捗・注意・エラーは標準エラー出力に出す。工程が切り替わるときは
   標準出力側にも区切りの空行を入れる。`--dry-run` のときは生成そのものを流さず、最後に

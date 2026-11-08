@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useBackend } from "../../api/context";
-import type { LlmSettings, ModelInfo } from "../../api/types";
+import type { LlmProvider, LlmSettings, ModelInfo } from "../../api/types";
 import { toErrorMessage } from "../../lib/errorMessage";
 import { useUiStore } from "../../store/uiStore";
 
@@ -12,6 +12,17 @@ export interface ConnectionTest {
   run: (llm: LlmSettings) => Promise<void>;
   /** 結果を捨てる。試している途中なら、その結果も出さない（接続先を切り替えたときに呼ぶ）。 */
   reset: () => void;
+}
+
+function successMessage(provider: LlmProvider, modelCount: number): string {
+  switch (provider) {
+    case "claude_code":
+      return "Claude Code を使えます（ログインしています）。";
+    case "codex":
+      return `Codex を使えます（ログインしています）。${modelCount} 件のモデルが見つかりました。`;
+    case "openai_compatible":
+      return `接続できました。${modelCount} 件のモデルが見つかりました。`;
+  }
 }
 
 export function useConnectionTest(): ConnectionTest {
@@ -38,11 +49,7 @@ export function useConnectionTest(): ConnectionTest {
         return;
       }
       setModels(list);
-      showToast(
-        llm.provider === "claude_code"
-          ? "Claude Code を使えます（ログインしています）。"
-          : `接続できました。${list.length} 件のモデルが見つかりました。`,
-      );
+      showToast(successMessage(llm.provider, list.length));
     } catch (error) {
       if (isCurrent()) {
         showToast(toErrorMessage(error, "接続できませんでした。"), "error");

@@ -83,6 +83,54 @@ describe("設定の保存", () => {
     });
   });
 
+  it("Codex に切り替えると URL と API キーの欄が消え、codex コマンド・モデル・推論の強さを保存できる", async () => {
+    const user = userEvent.setup();
+    const backend = createMockBackend({ delayMs: 0 });
+    await useSettingsStore.getState().load(backend);
+    renderWithBackend(<SettingsDialog onClose={() => {}} />, backend);
+
+    await user.click(await screen.findByRole("radio", { name: /Codex/ }));
+
+    expect(screen.queryByDisplayValue("http://localhost:1234/v1")).not.toBeInTheDocument();
+    expect(screen.queryByText(/^API キー/)).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "codex コマンド" }), {
+      target: { value: "C:/tools/codex.exe" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "モデル" }), {
+      target: { value: "gpt-6.1-sol" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "推論の強さ" }), {
+      target: { value: "high" },
+    });
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(async () => {
+      const saved = await backend.loadSettings();
+      expect(saved.llm.provider).toBe("codex");
+      expect(saved.llm.codex_command).toBe("C:/tools/codex.exe");
+      expect(saved.llm.codex_model).toBe("gpt-6.1-sol");
+      expect(saved.llm.codex_reasoning_effort).toBe("high");
+    });
+  });
+
+  it("Codex の接続テストでは、ログインしていることとモデルの数を知らせる", async () => {
+    const user = userEvent.setup();
+    const backend = createMockBackend({ delayMs: 0 });
+    await useSettingsStore.getState().load(backend);
+    renderWithBackend(
+      <>
+        <ToastHost />
+        <SettingsDialog onClose={() => {}} />
+      </>,
+      backend,
+    );
+
+    await user.click(await screen.findByRole("radio", { name: /Codex/ }));
+    await user.click(screen.getByRole("button", { name: "接続テスト" }));
+
+    expect(await screen.findByText(/Codex を使えます/)).toBeInTheDocument();
+  });
+
   it("Claude Code の接続テストでは、ログインしていることを知らせる", async () => {
     const user = userEvent.setup();
     const backend = createMockBackend({ delayMs: 0 });

@@ -3,4 +3,4 @@
 /**
  * 生成に使う LLM の種類。
  */
-export type LlmProvider = "openai_compatible" | "claude_code";
+export type LlmProvider = "openai_compatible" | "claude_code" | "codex";

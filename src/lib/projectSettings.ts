@@ -8,6 +8,8 @@ const KNOWN_PROJECT_SETTINGS: Record<keyof ProjectSettings, true> = {
   provider: true,
   model: true,
   claude_model: true,
+  codex_model: true,
+  codex_reasoning_effort: true,
   draft_unit: true,
   chars_per_call: true,
   context_tokens: true,
@@ -50,6 +52,8 @@ export function applyProjectSettings(
       provider: project.provider ?? base.llm.provider,
       model: project.model ?? base.llm.model,
       claude_model: project.claude_model ?? base.llm.claude_model,
+      codex_model: project.codex_model ?? base.llm.codex_model,
+      codex_reasoning_effort: project.codex_reasoning_effort ?? base.llm.codex_reasoning_effort,
     },
     generation: {
       ...base.generation,

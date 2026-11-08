@@ -16,7 +16,23 @@ export const PROVIDERS: Record<LlmProvider, { title: string; description: string
     description:
       "Claude Code（claude -p）で Claude に書かせます。API キーは使わず、Claude Code にログインしているアカウントの利用枠を使います。",
   },
+  codex: {
+    title: "Codex",
+    description:
+      "Codex CLI（codex exec）で書かせます。API キーは使わず、Codex にログインしているアカウントの利用枠を使います。",
+  },
 };
+
+/** 接続先ごとの、モデルの項目の名前（設定にも作品の設定にも同じ名前である）。 */
+export const MODEL_KEYS = {
+  openai_compatible: "model",
+  claude_code: "claude_model",
+  codex: "codex_model",
+} as const satisfies Record<LlmProvider, keyof LlmSettings>;
+
+/** 推論の強さの候補。モデルによって使えるものが違うので、欄には自由に書ける。 */
+export const CODEX_REASONING_EFFORTS = ["low", "medium", "high", "xhigh"];
+export const CODEX_EFFORT_LIST_ID = "settings-dialog-codex-efforts";
 
 const MODEL_LIST_ID = "settings-dialog-models";
 
@@ -63,7 +79,7 @@ export function LlmSettingsSection({ llm, onChange }: LlmSettingsSectionProps) {
         ))}
       </div>
 
-      {llm.provider === "openai_compatible" ? (
+      {llm.provider === "openai_compatible" && (
         <>
           <label className="app-field">
             <span>接続先 URL</span>
@@ -85,7 +101,8 @@ export function LlmSettingsSection({ llm, onChange }: LlmSettingsSectionProps) {
           {connectionTestButton}
           <ApiKeyField />
         </>
-      ) : (
+      )}
+      {llm.provider === "claude_code" && (
         <>
           <label className="app-field">
             <span>モデル</span>
@@ -109,6 +126,45 @@ export function LlmSettingsSection({ llm, onChange }: LlmSettingsSectionProps) {
             PATH に無い場合は実行ファイルの場所を指定します（npm でインストールした場合は
             claude.cmd）。temperature と「推論モデルの思考を止める」は使われません。文脈の長さは
             100000 トークン程度まで増やせます。
+          </p>
+          {connectionTestButton}
+        </>
+      )}
+      {llm.provider === "codex" && (
+        <>
+          <label className="app-field">
+            <span>モデル</span>
+            <input
+              list={MODEL_LIST_ID}
+              value={llm.codex_model}
+              onChange={(event) => update({ codex_model: event.target.value })}
+              placeholder="gpt-6.1-sol（空欄なら Codex の既定）"
+            />
+            {modelList}
+          </label>
+          <label className="app-field">
+            <span>推論の強さ</span>
+            <input
+              list={CODEX_EFFORT_LIST_ID}
+              value={llm.codex_reasoning_effort}
+              onChange={(event) => update({ codex_reasoning_effort: event.target.value })}
+              placeholder="high（空欄なら Codex の既定）"
+            />
+            <CodexEffortList />
+          </label>
+          <label className="app-field">
+            <span>codex コマンド</span>
+            <input
+              value={llm.codex_command}
+              onChange={(event) => update({ codex_command: event.target.value })}
+              placeholder="codex"
+            />
+          </label>
+          <p className="settings-dialog__note">
+            PATH に無い場合は実行ファイルの場所を指定します（npm でインストールした場合は
+            codex.cmd）。temperature と「推論モデルの思考を止める」は使われません。文脈の長さは
+            100000 トークン程度まで増やせます。Codex
+            の個人用の指示（~/.codex/AGENTS.md）は読み込まれます。
           </p>
           {connectionTestButton}
         </>
@@ -148,6 +204,17 @@ export function ModelList({ id, models }: ModelListProps) {
     <datalist id={id}>
       {models.map((model) => (
         <option key={model.id} value={model.id} />
+      ))}
+    </datalist>
+  );
+}
+
+/** 推論の強さの候補。 */
+export function CodexEffortList() {
+  return (
+    <datalist id={CODEX_EFFORT_LIST_ID}>
+      {CODEX_REASONING_EFFORTS.map((effort) => (
+        <option key={effort} value={effort} />
       ))}
     </datalist>
   );

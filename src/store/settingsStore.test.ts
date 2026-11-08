@@ -10,6 +10,9 @@ const SAMPLE_SETTINGS: AppSettings = {
     model: "test-model",
     claude_command: "claude",
     claude_model: "sonnet",
+    codex_command: "codex",
+    codex_model: "",
+    codex_reasoning_effort: "",
   },
   generation: {
     draft_unit: "scene",

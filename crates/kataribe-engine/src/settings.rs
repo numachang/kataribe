@@ -31,6 +31,8 @@ pub enum LlmProvider {
     OpenaiCompatible,
     /// Claude Code の `claude -p`。API キーの代わりに、Claude Code のログインで生成する。
     ClaudeCode,
+    /// Codex CLI の `codex exec`。API キーの代わりに、Codex のログインで生成する。
+    Codex,
 }
 
 impl LlmProvider {
@@ -39,7 +41,7 @@ impl LlmProvider {
     pub fn uses_api_key(self) -> bool {
         match self {
             Self::OpenaiCompatible => true,
-            Self::ClaudeCode => false,
+            Self::ClaudeCode | Self::Codex => false,
         }
     }
 }
@@ -60,6 +62,12 @@ pub struct LlmSettings {
     ///
     /// 接続先を切り替えても、それぞれのモデルの指定を失わないよう `model` と分けている。
     pub claude_model: String,
+    /// Codex の `codex` コマンド（PATH に無ければ実行ファイルの場所）。空なら `codex`。
+    pub codex_command: String,
+    /// Codex のモデル（`gpt-6.1-sol` など）。空なら Codex の既定。
+    pub codex_model: String,
+    /// Codex の推論の強さ（`low`・`medium`・`high` など）。空なら Codex の既定。
+    pub codex_reasoning_effort: String,
 }
 
 impl Default for LlmSettings {
@@ -70,6 +78,9 @@ impl Default for LlmSettings {
             model: String::new(),
             claude_command: "claude".to_owned(),
             claude_model: "sonnet".to_owned(),
+            codex_command: "codex".to_owned(),
+            codex_model: String::new(),
+            codex_reasoning_effort: String::new(),
         }
     }
 }
@@ -181,6 +192,7 @@ mod tests {
     fn only_openai_compatible_apis_use_an_api_key() {
         assert!(LlmProvider::OpenaiCompatible.uses_api_key());
         assert!(!LlmProvider::ClaudeCode.uses_api_key());
+        assert!(!LlmProvider::Codex.uses_api_key());
     }
 
     #[test]

@@ -189,7 +189,7 @@ export interface QualityReport {
 export type DraftUnit = "chapter" | "scene" | "beat";
 
 /** 生成に使う LLM の種類。 */
-export type LlmProvider = "openai_compatible" | "claude_code";
+export type LlmProvider = "openai_compatible" | "claude_code" | "codex";
 
 export interface LlmSettings {
   provider: LlmProvider;
@@ -201,11 +201,17 @@ export interface LlmSettings {
   claude_command: string;
   /** Claude Code のモデル（sonnet・opus・haiku など）。 */
   claude_model: string;
+  /** Codex の codex コマンド（PATH に無ければ実行ファイルの場所）。 */
+  codex_command: string;
+  /** Codex のモデル（gpt-6.1-sol など）。空なら Codex の既定。 */
+  codex_model: string;
+  /** Codex の推論の強さ（low・medium・high など）。空なら Codex の既定。 */
+  codex_reasoning_effort: string;
 }
 
 /**
  * 作品ごとの設定（kataribe.yaml の settings）。書いた項目だけが入り、無い項目はアプリ全体の設定を使う。
- * 接続先 URL・claude コマンドの場所・API キーは PC ごとの設定なので持たない。
+ * 接続先 URL・claude / codex コマンドの場所・API キーは PC ごとの設定なので持たない。
  */
 export interface ProjectSettings {
   provider?: LlmProvider;
@@ -213,6 +219,10 @@ export interface ProjectSettings {
   model?: string;
   /** Claude Code のモデル。 */
   claude_model?: string;
+  /** Codex のモデル。 */
+  codex_model?: string;
+  /** Codex の推論の強さ。 */
+  codex_reasoning_effort?: string;
   draft_unit?: DraftUnit;
   chars_per_call?: number;
   context_tokens?: number;

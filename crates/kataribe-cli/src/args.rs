@@ -37,13 +37,21 @@ pub struct GlobalOptions {
     #[arg(long, global = true, value_name = "URL")]
     pub base_url: Option<String>,
 
-    /// 使用するモデル名（Claude Code では sonnet・opus・haiku など）。選んでいる接続先のモデルを変える。
+    /// 使用するモデル名（Claude Code では sonnet・opus・haiku など、Codex では gpt-6.1-sol など）。選んでいる接続先のモデルを変える。
     #[arg(long, global = true, value_name = "ID")]
     pub model: Option<String>,
 
     /// Claude Code の claude コマンド（PATH に無いときに実行ファイルの場所を指定する）。
     #[arg(long, global = true, value_name = "PATH")]
     pub claude_command: Option<String>,
+
+    /// Codex の codex コマンド（PATH に無いときに実行ファイルの場所を指定する）。
+    #[arg(long, global = true, value_name = "PATH")]
+    pub codex_command: Option<String>,
+
+    /// Codex の推論の強さ（low・medium・high など）。
+    #[arg(long, global = true, value_name = "LEVEL")]
+    pub codex_reasoning_effort: Option<String>,
 
     /// API キーを読む環境変数（未設定なら資格情報マネージャーのキーを使う）。
     #[arg(
@@ -333,6 +341,8 @@ pub enum ProviderArg {
     OpenaiCompatible,
     /// Claude Code の claude -p（API キーの代わりに Claude Code のログインを使う）。
     ClaudeCode,
+    /// Codex CLI の codex exec（API キーの代わりに Codex のログインを使う）。
+    Codex,
 }
 
 impl From<ProviderArg> for LlmProvider {
@@ -340,6 +350,7 @@ impl From<ProviderArg> for LlmProvider {
         match value {
             ProviderArg::OpenaiCompatible => LlmProvider::OpenaiCompatible,
             ProviderArg::ClaudeCode => LlmProvider::ClaudeCode,
+            ProviderArg::Codex => LlmProvider::Codex,
         }
     }
 }
@@ -421,6 +432,8 @@ mod tests {
         assert_eq!(cli.global.provider, Some(ProviderArg::OpenaiCompatible));
 
         assert!(parse(&["--provider", "claude", "models"]).is_err());
+        let cli = parse(&["--provider", "codex", "models"]).unwrap();
+        assert_eq!(cli.global.provider, Some(ProviderArg::Codex));
     }
 
     #[test]

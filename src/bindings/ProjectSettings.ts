@@ -13,4 +13,12 @@ model?: string,
 /**
  * Claude Code のモデル。
  */
-claude_model?: string, draft_unit?: DraftUnit, chars_per_call?: number, context_tokens?: number, temperature?: number, polish?: boolean, quality_retries?: number, disable_thinking?: boolean, };
+claude_model?: string, 
+/**
+ * Codex のモデル。
+ */
+codex_model?: string, 
+/**
+ * Codex の推論の強さ。
+ */
+codex_reasoning_effort?: string, draft_unit?: DraftUnit, chars_per_call?: number, context_tokens?: number, temperature?: number, polish?: boolean, quality_retries?: number, disable_thinking?: boolean, };

@@ -56,11 +56,18 @@ fn apply_overrides(settings: &mut EngineSettings, global: &GlobalOptions) {
         let target = match settings.llm.provider {
             LlmProvider::OpenaiCompatible => &mut settings.llm.model,
             LlmProvider::ClaudeCode => &mut settings.llm.claude_model,
+            LlmProvider::Codex => &mut settings.llm.codex_model,
         };
         target.clone_from(model);
     }
     if let Some(claude_command) = &global.claude_command {
         settings.llm.claude_command.clone_from(claude_command);
+    }
+    if let Some(codex_command) = &global.codex_command {
+        settings.llm.codex_command.clone_from(codex_command);
+    }
+    if let Some(effort) = &global.codex_reasoning_effort {
+        settings.llm.codex_reasoning_effort.clone_from(effort);
     }
     if let Some(unit) = global.unit {
         settings.generation.draft_unit = unit.into();
@@ -115,6 +122,25 @@ mod tests {
         let mut settings = EngineSettings::default();
         apply_overrides(&mut settings, global);
         settings
+    }
+
+    #[test]
+    fn codex_overrides_set_its_command_model_and_effort_only() {
+        let global = GlobalOptions {
+            provider: Some(crate::args::ProviderArg::Codex),
+            model: Some("gpt-6.1-sol".to_owned()),
+            codex_command: Some("C:/tools/codex.exe".to_owned()),
+            codex_reasoning_effort: Some("high".to_owned()),
+            ..GlobalOptions::default()
+        };
+        let mut settings = EngineSettings::default();
+        apply_overrides(&mut settings, &global);
+        assert_eq!(settings.llm.provider, LlmProvider::Codex);
+        assert_eq!(settings.llm.codex_model, "gpt-6.1-sol");
+        assert_eq!(settings.llm.codex_command, "C:/tools/codex.exe");
+        assert_eq!(settings.llm.codex_reasoning_effort, "high");
+        assert_eq!(settings.llm.claude_model, "sonnet");
+        assert_eq!(settings.llm.model, "");
     }
 
     #[test]

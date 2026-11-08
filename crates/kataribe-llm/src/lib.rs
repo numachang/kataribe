@@ -3,14 +3,16 @@
 //!
 //! 主な利用先は LM Studio。[`OpenAiCompatClient`] が HTTP 通信・再試行・SSE の解析・
 //! 推論（`<think>` タグ）の分離を担う。[`ClaudeCodeModel`] は、API キーの代わりに
-//! Claude Code（`claude -p`）で生成する。どちらも [`ChatModel`] トレイトを介して
+//! Claude Code（`claude -p`）で、[`CodexModel`] は Codex CLI（`codex exec`）で生成する。どれも [`ChatModel`] トレイトを介して
 //! `kataribe-engine` から使われる想定で、`testing` feature の
 //! [`testing::ScriptedChatModel`] はその代わりに使えるテスト用の偽モデル。
 
 mod chat_model;
 mod chunk;
 mod claude_code;
+mod cli_process;
 mod client;
+mod codex;
 mod collect;
 mod config;
 mod error;
@@ -27,6 +29,7 @@ pub mod testing;
 pub use chat_model::{ChatModel, ChatStream};
 pub use claude_code::{ClaudeCodeConfig, ClaudeCodeModel};
 pub use client::OpenAiCompatClient;
+pub use codex::{CodexConfig, CodexModel};
 pub use collect::{Completion, collect};
 pub use config::ClientConfig;
 pub use error::LlmError;

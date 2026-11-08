@@ -3,7 +3,8 @@
 use std::sync::Arc;
 
 use kataribe_llm::{
-    ChatModel, ClaudeCodeConfig, ClaudeCodeModel, ClientConfig, ModelInfo, OpenAiCompatClient,
+    ChatModel, ClaudeCodeConfig, ClaudeCodeModel, ClientConfig, CodexConfig, CodexModel, ModelInfo,
+    OpenAiCompatClient,
 };
 
 use crate::error::Result;
@@ -14,11 +15,12 @@ pub fn build_chat_model(llm: &LlmSettings, api_key: Option<String>) -> Result<Ar
     Ok(match llm.provider {
         LlmProvider::OpenaiCompatible => Arc::new(openai_compatible_client(llm, api_key)?),
         LlmProvider::ClaudeCode => Arc::new(ClaudeCodeModel::new(claude_code_config(llm))),
+        LlmProvider::Codex => Arc::new(CodexModel::new(codex_config(llm))),
     })
 }
 
-/// 選べるモデルの一覧。OpenAI 互換 API ならサーバーに問い合わせ、Claude Code ならログインしているかを
-/// 確かめてからモデルの別名を返す。接続テストを兼ねる。
+/// 選べるモデルの一覧。OpenAI 互換 API ならサーバーに問い合わせ、Claude Code と Codex ならログインしているかを
+/// 確かめてからモデルを返す。接続テストを兼ねる。
 pub async fn list_models(llm: &LlmSettings, api_key: Option<String>) -> Result<Vec<ModelInfo>> {
     Ok(match llm.provider {
         LlmProvider::OpenaiCompatible => {
@@ -31,6 +33,7 @@ pub async fn list_models(llm: &LlmSettings, api_key: Option<String>) -> Result<V
                 .list_models()
                 .await?
         }
+        LlmProvider::Codex => CodexModel::new(codex_config(llm)).list_models().await?,
     })
 }
 
@@ -46,16 +49,28 @@ fn openai_compatible_client(
     })?)
 }
 
+fn or_default(value: &str, default: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() { default } else { value }.to_owned()
+}
+
 /// 空欄の項目は Claude Code の既定（`claude` コマンドと `sonnet`）にする。
 fn claude_code_config(llm: &LlmSettings) -> ClaudeCodeConfig {
     let defaults = ClaudeCodeConfig::default();
-    let or_default = |value: &str, default: &str| {
-        let value = value.trim();
-        if value.is_empty() { default } else { value }.to_owned()
-    };
     ClaudeCodeConfig {
         program: or_default(&llm.claude_command, &defaults.program),
         model: or_default(&llm.claude_model, &defaults.model),
+        ..defaults
+    }
+}
+
+/// 空欄のコマンドは `codex` に、空欄のモデルと推論の強さは指定なし（Codex の既定）にする。
+fn codex_config(llm: &LlmSettings) -> CodexConfig {
+    let defaults = CodexConfig::default();
+    CodexConfig {
+        program: or_default(&llm.codex_command, &defaults.program),
+        model: llm.codex_model.trim().to_owned(),
+        reasoning_effort: llm.codex_reasoning_effort.trim().to_owned(),
         ..defaults
     }
 }
@@ -106,6 +121,50 @@ mod tests {
 
         assert!(
             error.to_string().contains("C:/no/such/folder/claude.exe"),
+            "{error}"
+        );
+    }
+
+    fn codex(model: &str, command: &str, effort: &str) -> LlmSettings {
+        LlmSettings {
+            provider: LlmProvider::Codex,
+            codex_model: model.to_owned(),
+            codex_command: command.to_owned(),
+            codex_reasoning_effort: effort.to_owned(),
+            ..LlmSettings::default()
+        }
+    }
+
+    #[test]
+    fn codex_leaves_blank_model_and_effort_to_codex() {
+        assert_eq!(codex_config(&codex(" ", "", " ")), CodexConfig::default());
+    }
+
+    #[test]
+    fn codex_uses_its_own_command_model_and_effort() {
+        let llm = LlmSettings {
+            claude_model: "opus".to_owned(),
+            ..codex("gpt-6.1-sol", "C:/tools/codex.exe", "high")
+        };
+        assert_eq!(
+            codex_config(&llm),
+            CodexConfig {
+                program: "C:/tools/codex.exe".to_owned(),
+                model: "gpt-6.1-sol".to_owned(),
+                reasoning_effort: "high".to_owned(),
+                ..CodexConfig::default()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn listing_codex_models_runs_the_configured_command() {
+        let llm = codex("", "C:/no/such/folder/codex.exe", "");
+
+        let error = list_models(&llm, None).await.unwrap_err();
+
+        assert!(
+            error.to_string().contains("C:/no/such/folder/codex.exe"),
             "{error}"
         );
     }
