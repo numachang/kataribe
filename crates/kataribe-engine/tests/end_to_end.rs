@@ -791,6 +791,220 @@ async fn phrases_repeated_in_earlier_scenes_are_named_so_the_next_scene_avoids_t
     );
 }
 
+fn settings_with_context(context_tokens: u32) -> GenerationSettings {
+    GenerationSettings {
+        context_tokens,
+        ..settings(DraftUnit::Chapter)
+    }
+}
+
+fn scene_two() -> Task {
+    Task::Draft {
+        chapter: ChapterId::from_number(1),
+        scene: SceneId::new("s02").unwrap(),
+    }
+}
+
+#[tokio::test]
+async fn long_contexts_get_finished_scenes_verbatim_and_never_summarize_them() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path());
+    prepare_two_scene_chapter(&project);
+    write(
+        &project,
+        "manuscript/01/s01.txt",
+        "　書き終えた本文の目印。\n",
+    );
+    let model = Arc::new(ScriptedChatModel::new([Script::reply([
+        "書斎は静かだった。\n",
+    ])]));
+    let engine = Engine::new(model.clone(), settings_with_context(100_000)).unwrap();
+
+    run(&engine, &project, &scene_two()).await;
+
+    let requests = model.requests();
+    assert_eq!(requests.len(), 1, "要約の呼び出しがあってはいけない");
+    let prompt = &requests[0].messages[1].content;
+    assert!(
+        prompt.contains("ここまでの本文") && prompt.contains("書き終えた本文の目印"),
+        "{prompt}"
+    );
+    assert!(!prompt.contains("前のシーンの終わり"), "{prompt}");
+}
+
+#[tokio::test]
+async fn short_contexts_keep_summarizing_finished_scenes() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path());
+    prepare_two_scene_chapter(&project);
+    write(
+        &project,
+        "manuscript/01/s01.txt",
+        "　書き終えた本文の目印。\n",
+    );
+    let model = Arc::new(ScriptedChatModel::new([
+        Script::reply(["二人は洋館に着いた。"]),
+        Script::reply(["書斎は静かだった。\n"]),
+    ]));
+    let engine = Engine::new(model.clone(), settings_with_context(16_384)).unwrap();
+
+    run(&engine, &project, &scene_two()).await;
+
+    let requests = model.requests();
+    assert_eq!(requests.len(), 2, "1 回目が要約、2 回目が本文");
+    let prompt = &requests[1].messages[1].content;
+    assert!(
+        prompt.contains("これまでの物語") && prompt.contains("前のシーンの終わり"),
+        "{prompt}"
+    );
+    assert!(!prompt.contains("ここまでの本文"), "{prompt}");
+}
+
+#[tokio::test]
+async fn short_contexts_with_long_prose_still_get_only_the_end_of_the_previous_scene() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path());
+    prepare_two_scene_chapter(&project);
+    write(
+        &project,
+        "manuscript/01/s01.txt",
+        &format!(
+            "　本文の先頭の目印。{}本文の末尾の目印。\n",
+            "雨".repeat(20_000)
+        ),
+    );
+    let model = Arc::new(ScriptedChatModel::new([
+        Script::reply(["二人は洋館に着いた。"]),
+        Script::reply(["書斎は静かだった。\n"]),
+    ]));
+    let engine = Engine::new(model.clone(), settings_with_context(16_384)).unwrap();
+
+    run(&engine, &project, &scene_two()).await;
+
+    let requests = model.requests();
+    assert_eq!(requests.len(), 2, "1 回目が要約、2 回目が本文");
+    let prompt = &requests[1].messages[1].content;
+    assert!(prompt.contains("本文の末尾の目印"), "直前の末尾は渡す");
+    assert!(!prompt.contains("本文の先頭の目印"), "先頭までは渡さない");
+    assert!(!prompt.contains("ここまでの本文（そのまま"), "{prompt}");
+}
+
+#[tokio::test]
+async fn a_long_chapter_keeps_its_output_room_and_summarizes_prose_that_does_not_fit() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path());
+    write(&project, "style.md", STYLE);
+    write(
+        &project,
+        "plot/chapters/01.md",
+        "---\ntitle: 雨の匂い\nscenes:\n  - id: s01\n    title: 古い場面\n    summary: 着く。\n    target_chars: 1000\n  - id: s02\n    title: 長い場面\n    summary: 解く。\n    target_chars: 10000\n---\n洋館を訪れる。\n",
+    );
+    write(
+        &project,
+        "manuscript/01/s01.txt",
+        &format!("　古い本文の目印{}\n", "雨".repeat(15_000)),
+    );
+    let model = Arc::new(ScriptedChatModel::new([
+        Script::reply(["二人は洋館に着いた。"]),
+        Script::reply(["書斎は静かだった。\n"]),
+    ]));
+    let engine = Engine::new(model.clone(), settings_with_context(32_000)).unwrap();
+
+    run(&engine, &project, &scene_two()).await;
+
+    let requests = model.requests();
+    assert_eq!(requests.len(), 2, "1 回目が要約、2 回目が本文");
+    assert!(!requests[1].messages[1].content.contains("古い本文の目印"));
+    // 10,000 字 × 1.5 ＋ 余裕 256。そのまま渡す本文のせいで切り詰められていないこと
+    assert_eq!(requests[1].max_tokens, Some(15_256));
+}
+
+#[tokio::test]
+async fn scenes_beyond_the_verbatim_budget_are_summarized_instead() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path());
+    write(&project, "style.md", STYLE);
+    write(
+        &project,
+        "plot/chapters/01.md",
+        "---\ntitle: 雨の匂い\nscenes:\n  - id: s01\n    title: 古い場面\n    summary: 着く。\n    target_chars: 1000\n  - id: s02\n    title: 近い場面\n    summary: 見つかる。\n    target_chars: 1000\n  - id: s03\n    title: 今の場面\n    summary: 解く。\n    target_chars: 1000\n---\n洋館を訪れる。\n",
+    );
+    // 文脈 40,000 トークンの半分（20,000）には、シーン 2 だけが収まる
+    let long_text = |marker: &str| format!("　{marker}{}\n", "雨".repeat(15_000));
+    write(
+        &project,
+        "manuscript/01/s01.txt",
+        &long_text("古い本文の目印"),
+    );
+    write(
+        &project,
+        "manuscript/01/s02.txt",
+        &long_text("近い本文の目印"),
+    );
+    let model = Arc::new(ScriptedChatModel::new([
+        Script::reply(["二人は洋館に着いた。"]),
+        Script::reply(["謎は解けた。\n"]),
+    ]));
+    let engine = Engine::new(model.clone(), settings_with_context(40_000)).unwrap();
+
+    run(
+        &engine,
+        &project,
+        &Task::Draft {
+            chapter: ChapterId::from_number(1),
+            scene: SceneId::new("s03").unwrap(),
+        },
+    )
+    .await;
+
+    let requests = model.requests();
+    assert_eq!(requests.len(), 2, "1 回目がシーン 1 の要約、2 回目が本文");
+    assert!(requests[0].messages[1].content.contains("古い本文の目印"));
+    let prompt = &requests[1].messages[1].content;
+    assert!(
+        prompt.contains("近い本文の目印"),
+        "そのまま渡すシーンが入る"
+    );
+    assert!(!prompt.contains("古い本文の目印"), "古いシーンは要約だけ");
+    assert!(prompt.contains("二人は洋館に着いた。"), "要約が入る");
+}
+
+/// `context_tokens` の違いだけで、長い文体ガイドの末尾がプロンプトに届くかを調べる。
+async fn long_style_reaches_prompt(context_tokens: u32) -> bool {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path());
+    prepare_two_scene_chapter(&project);
+    let style = format!(
+        "{STYLE}## 語り口\n{}文体ガイドの末尾の目印\n",
+        "語り".repeat(2_000)
+    );
+    write(&project, "style.md", &style);
+    let model = Arc::new(ScriptedChatModel::new([Script::reply([
+        "雨が降っていた。\n\n◇\n\n書斎は静かだった。\n",
+    ])]));
+    let engine = Engine::new(model.clone(), settings_with_context(context_tokens)).unwrap();
+
+    run(
+        &engine,
+        &project,
+        &Task::Draft {
+            chapter: ChapterId::from_number(1),
+            scene: SceneId::new("s01").unwrap(),
+        },
+    )
+    .await;
+
+    model.requests()[0].messages[1]
+        .content
+        .contains("文体ガイドの末尾の目印")
+}
+
+#[tokio::test]
+async fn long_materials_are_passed_in_full_only_with_a_long_context() {
+    assert!(long_style_reaches_prompt(100_000).await);
+    assert!(!long_style_reaches_prompt(16_384).await);
+}
+
 #[tokio::test]
 async fn nothing_is_named_when_no_phrase_is_overused() {
     let folder = tempfile::tempdir().unwrap();

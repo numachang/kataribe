@@ -5,10 +5,14 @@ use std::ops::Range;
 use kataribe_project::{
     Chapter, ChapterId, Character, Manifest, Project, SceneId, ScenePlan, layout,
 };
+use kataribe_text::tokens::estimate_tokens;
+use serde::Serialize;
 
 use crate::error::{EngineError, Result};
 use crate::names;
-use crate::stages::materials::{document_body, find_chapter, round_to_hundreds, world_text};
+use crate::stages::materials::{
+    chapter_label, document_body, find_chapter, round_to_hundreds, world_text,
+};
 
 /// 一度に登場人物の資料を入れる上限（場面に名前の無いときに主要人物から選ぶ人数）。
 const DEFAULT_CAST_SIZE: usize = 4;
@@ -26,6 +30,19 @@ pub(crate) struct Story {
 pub(crate) struct Position {
     pub chapter: usize,
     pub scene: usize,
+}
+
+/// プロンプトにそのまま入れる、書き終えたシーン 1 つ分の本文。
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct VerbatimScene {
+    pub label: String,
+    pub text: String,
+}
+
+/// そのまま渡す本文（読む順）と、その先頭のシーンの位置。これより前は要約で渡す。
+pub(crate) struct VerbatimProse {
+    pub start: Position,
+    pub scenes: Vec<VerbatimScene>,
 }
 
 impl Story {
@@ -103,6 +120,37 @@ impl Story {
         }
         pieces.reverse();
         Ok(pieces.join("\n"))
+    }
+
+    /// このシーンの直前から遡って、`max_tokens` に収まるだけの本文。シーンの途中では切らない。
+    /// 本文の無いシーンに当たったらそこで止める（そのシーンは要約の側で「予定」として渡すため）。
+    pub fn verbatim_prose(
+        &self,
+        project: &Project,
+        position: Position,
+        max_tokens: usize,
+    ) -> Result<VerbatimProse> {
+        let mut scenes = Vec::new();
+        let mut start = position;
+        let mut used_tokens = 0;
+        let mut cursor = self.previous(position);
+        while let Some(previous) = cursor {
+            let text = self.text(project, previous)?;
+            used_tokens += estimate_tokens(&text);
+            if text.trim().is_empty() || used_tokens > max_tokens {
+                break;
+            }
+            let label = format!(
+                "{} {}",
+                chapter_label(self.chapter(previous)),
+                self.scene(previous).title
+            );
+            scenes.push(VerbatimScene { label, text });
+            start = previous;
+            cursor = self.previous(previous);
+        }
+        scenes.reverse();
+        Ok(VerbatimProse { start, scenes })
     }
 
     /// 人物の名前（姓・名に分けたものと、つなげたもの）。本文に繰り返し出てきて当然の語。

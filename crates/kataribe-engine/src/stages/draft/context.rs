@@ -6,7 +6,7 @@ use minijinja::{Value, context};
 use serde::Serialize;
 
 use super::digest::StoryEntry;
-use super::story::{Position, Story};
+use super::story::{Position, Story, VerbatimScene};
 use crate::error::Result;
 use crate::events::{NoticeLevel, notice};
 use crate::excerpt;
@@ -27,6 +27,12 @@ const NARRATION_CHARS: usize = 400;
 /// ローカル LLM は前のシーンの決まり文句を場面をまたいで繰り返しがちなので、機械的に拾って伝える。
 const OVERUSED_MIN_COUNT: usize = 3;
 const MAX_OVERUSED_PHRASES: usize = 8;
+/// この長さ以上の文脈を持つモデルには、資料を広く渡し、書き終えた本文をそのまま渡す。
+/// ローカル LLM の 16,384 トークンで実測して決めた `LEVELS` の動きを変えないよう、それより十分に大きい値にしている。
+const WIDE_CONTEXT_TOKENS: u32 = 32_000;
+/// そのまま渡す本文を決めるときに、資料（文体ガイド・人物・シーンの設計など）のために残すトークン数。
+/// `LEVELS` の上のほうの段が入る大きさにして、本文を増やしたせいで資料が今より減らないようにする。
+const MATERIAL_RESERVE_TOKENS: usize = 8_000;
 
 /// 資料ごとの文字数の上限。上の段から順に試し、文脈に収まった段を使う。
 /// 優先度の低い資料（世界観 → これまでの要約 → 人物の詳細 → 直前の本文 → 文体）から先に減らす。
@@ -84,6 +90,48 @@ const LEVELS: [Caps; 6] = [
     },
 ];
 
+/// 長い文脈を持つモデルで、`LEVELS` より先に試す段。
+const WIDE_LEVELS: [Caps; 2] = [
+    Caps {
+        style: 30_000,
+        world: 30_000,
+        profile: 8_000,
+        story_entries: usize::MAX,
+        previous_text: 30_000,
+    },
+    Caps {
+        style: 8_000,
+        world: 8_000,
+        profile: 3_000,
+        story_entries: 30,
+        previous_text: 8_000,
+    },
+];
+
+const NARROWEST_LEVEL: Caps = LEVELS[LEVELS.len() - 1];
+
+/// 文脈の長さに応じて、上から順に試す段。
+fn levels_for(context_tokens: u32) -> impl Iterator<Item = Caps> {
+    let wide: &[Caps] = if context_tokens >= WIDE_CONTEXT_TOKENS {
+        &WIDE_LEVELS
+    } else {
+        &[]
+    };
+    wide.iter().chain(&LEVELS).copied()
+}
+
+/// 書き終えた本文をそのまま渡すのに使ってよいトークン数。文脈の半分を上限に、出力と資料の分を空けておく。
+/// 要約を作るかどうかを先に決めるため、資料の段を選ぶ前に求める。
+///
+/// `prompt_budget` は、今回の出力を確保したあとにプロンプトへ使えるトークン数。章単位のように出力が長いときに
+/// 本文で埋めると、資料を削っても収まらず、出力の上限が切り詰められて章が途中で切れる。
+pub(crate) fn verbatim_prose_tokens(context_tokens: u32, prompt_budget: usize) -> usize {
+    if context_tokens < WIDE_CONTEXT_TOKENS {
+        return 0;
+    }
+    (context_tokens as usize / 2).min(prompt_budget.saturating_sub(MATERIAL_RESERVE_TOKENS))
+}
+
 /// 1 回の生成で書かせる範囲。
 #[derive(Debug, Clone)]
 pub(crate) struct Assignment<'a> {
@@ -114,6 +162,8 @@ pub(crate) struct DraftMaterial<'a> {
     /// 今回書くシーンの範囲（章の中の添字）。章単位なら複数のシーンになる。
     pub scenes: std::ops::Range<usize>,
     pub story_so_far: &'a [StoryEntry],
+    /// 要約せずそのまま渡す、直前までのシーンの本文（読む順）。
+    pub verbatim_scenes: &'a [VerbatimScene],
     /// このシーンより前の本文の末尾（使いすぎの表現を探すのに使う）。
     pub recent_prose: &'a str,
 }
@@ -139,21 +189,18 @@ impl DraftMaterial<'_> {
     ) -> Result<Prompt> {
         let budget = stage.prompt_budget(output_tokens);
         let overused = self.overused_phrases(assignment.written_so_far);
-        let mut prompt = self.render_with(stage, assignment, &overused, LEVELS[0])?;
-        for caps in &LEVELS[1..] {
+        for caps in levels_for(stage.settings.context_tokens) {
+            let prompt = self.render_with(stage, assignment, &overused, caps)?;
             if prompt.estimated_tokens() <= budget {
                 return Ok(prompt);
             }
-            prompt = self.render_with(stage, assignment, &overused, *caps)?;
         }
-        if prompt.estimated_tokens() > budget {
-            notice(
-                stage.caller.sink(),
-                NoticeLevel::Warning,
-                "資料を切り詰めてもモデルの文脈に収まりません。設定の「文脈の長さ」を増やすか、「1 回あたりの文字数」を減らしてください。",
-            );
-        }
-        Ok(prompt)
+        notice(
+            stage.caller.sink(),
+            NoticeLevel::Warning,
+            "資料を切り詰めてもモデルの文脈に収まりません。設定の「文脈の長さ」を増やすか、「1 回あたりの文字数」を減らしてください。",
+        );
+        self.render_with(stage, assignment, &overused, NARROWEST_LEVEL)
     }
 
     /// 直前までの本文と、このシーンの書きかけの本文で、繰り返し使っている表現。
@@ -181,6 +228,12 @@ impl DraftMaterial<'_> {
         caps: Caps,
     ) -> Result<Prompt> {
         let story_start = self.story_so_far.len().saturating_sub(caps.story_entries);
+        // そのまま渡す本文の末尾は前のシーンそのものなので、二重に渡さない
+        let previous_scene_ending = if self.verbatim_scenes.is_empty() {
+            excerpt::tail(assignment.previous_scene, caps.previous_text)
+        } else {
+            String::new()
+        };
         stage.prompts.render(
             PromptTemplate::Draft,
             &context! {
@@ -191,6 +244,7 @@ impl DraftMaterial<'_> {
                 world => excerpt::head(&self.story.world, caps.world),
                 characters => self.cast(caps.profile),
                 story_so_far => &self.story_so_far[story_start..],
+                verbatim_scenes => self.verbatim_scenes,
                 chapter => self.chapter_context(),
                 scene => self.scene_context(),
                 unit => unit_name(self.unit),
@@ -201,7 +255,7 @@ impl DraftMaterial<'_> {
                 },
                 beat => &assignment.beat,
                 target_chars => assignment.target_chars,
-                previous_scene_ending => excerpt::tail(assignment.previous_scene, caps.previous_text),
+                previous_scene_ending => previous_scene_ending,
                 written_so_far => excerpt::tail(assignment.written_so_far, caps.previous_text),
             },
         )
@@ -302,6 +356,42 @@ mod tests {
         assert_eq!(part_label(1, 2), "前半");
         assert_eq!(part_label(3, 3), "終盤（シーンの終わりまで）");
         assert_eq!(part_label(2, 5), "5 分の 2 の部分");
+    }
+
+    #[test]
+    fn short_contexts_use_only_the_measured_levels_and_get_no_verbatim_prose() {
+        let below_wide = WIDE_CONTEXT_TOKENS - 1;
+        assert_eq!(levels_for(below_wide).count(), LEVELS.len());
+        assert!(levels_for(below_wide).all(|caps| caps.style <= LEVELS[0].style));
+        assert_eq!(verbatim_prose_tokens(below_wide, 100_000), 0);
+    }
+
+    #[test]
+    fn long_contexts_try_the_wide_levels_first_and_keep_half_for_other_material() {
+        assert_eq!(
+            levels_for(WIDE_CONTEXT_TOKENS).count(),
+            WIDE_LEVELS.len() + LEVELS.len()
+        );
+        assert_eq!(verbatim_prose_tokens(100_000, 90_000), 50_000);
+    }
+
+    #[test]
+    fn verbatim_prose_gives_way_to_a_long_output_and_keeps_room_for_the_materials() {
+        assert_eq!(verbatim_prose_tokens(32_000, 15_000), 7_000);
+        assert_eq!(verbatim_prose_tokens(32_000, 5_000), 0);
+    }
+
+    #[test]
+    fn wide_levels_narrow_down_into_the_measured_levels() {
+        let all: Vec<Caps> = levels_for(WIDE_CONTEXT_TOKENS).collect();
+        for pair in all.windows(2) {
+            let (wider, narrower) = (pair[0], pair[1]);
+            assert!(narrower.style <= wider.style);
+            assert!(narrower.world <= wider.world);
+            assert!(narrower.profile <= wider.profile);
+            assert!(narrower.story_entries <= wider.story_entries);
+            assert!(narrower.previous_text <= wider.previous_text);
+        }
     }
 
     #[test]

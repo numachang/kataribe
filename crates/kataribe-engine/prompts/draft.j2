@@ -37,6 +37,14 @@
 {% endfor %}
 
 {% endif %}
+{% if verbatim_scenes %}
+【ここまでの本文（そのまま。この語り口・口調・小道具・伏線を引き継いで続きを書く。同じ文や台詞は繰り返さない）】
+{% for finished in verbatim_scenes %}
+◇ {{ finished.label }}
+{{ finished.text }}
+
+{% endfor %}
+{% endif %}
 【この章「{{ chapter.title }}」の流れ】
 {{ chapter.storyline }}
 
