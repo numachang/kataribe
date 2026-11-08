@@ -22,4 +22,16 @@ claude_command: string,
  *
  * 接続先を切り替えても、それぞれのモデルの指定を失わないよう `model` と分けている。
  */
-claude_model: string, };
+claude_model: string, 
+/**
+ * Codex の `codex` コマンド（PATH に無ければ実行ファイルの場所）。空なら `codex`。
+ */
+codex_command: string, 
+/**
+ * Codex のモデル（`gpt-6.1-sol` など）。空なら Codex の既定。
+ */
+codex_model: string, 
+/**
+ * Codex の推論の強さ（`low`・`medium`・`high` など）。空なら Codex の既定。
+ */
+codex_reasoning_effort: string, };

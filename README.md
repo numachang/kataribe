@@ -15,6 +15,7 @@ LLM と一緒に日本語の小説を書くための Windows 向けエディタ�
 - **縦書き・ルビのプレビュー。** 本文はエディタで縦書きのまま書ける。
 - **LLM は OpenAI 互換 API ならどれでも。** LM Studio・Ollama・KoboldCpp・OpenRouter・OpenAI など。API キーは Windows の資格情報マネージャーに保存する。
 - **Claude Code でも書ける。** 自分の PC に入れてログインした Claude Code（`claude -p`）を呼び出して、Claude に書かせられる。
+- **Codex でも書ける。** 自分の PC に入れてログインした Codex CLI（`codex exec`）を呼び出して書かせられる。
 - **画面なしでも同じことができる。** CLI（`kataribe-cli`）は GUI と同じ執筆エンジンを使う。
 
 ## 状態
@@ -24,7 +25,7 @@ LLM と一緒に日本語の小説を書くための Windows 向けエディタ�
 ## 動作環境
 
 - Windows 10 / 11（64 bit）。WebView2 ランタイム（Windows 11 には最初から入っている）。
-- OpenAI 互換 API の LLM サーバー、または Claude Code（ログイン済みのもの）。
+- OpenAI 互換 API の LLM サーバー、または Claude Code か Codex CLI（ログイン済みのもの）。
 
 ### おすすめの設定（ローカル LLM）
 
@@ -52,6 +53,19 @@ kataribe は Anthropic が作ったものでも、Anthropic と提携してい�
 - 「接続テスト」は `claude auth status` でログインしているかを確かめるだけで、利用枠は使わない。
 - 呼び出しのたびにツール・MCP サーバー・Claude Code の設定を読み込まない状態で起動し、会話の履歴も残さない。
 - temperature と「思考を止める」は使われない。長い文脈を扱えるので、文脈の長さを 100,000 トークン程度まで増やせる。
+
+### Codex で書く
+
+自分の PC に Codex CLI をインストールしてログインしておけば、設定の「LLM」で「Codex」を選ぶだけで使える。
+kataribe はその `codex` コマンドを呼び出すだけで、アカウントの認証情報には触れない。
+使った分はログインしているアカウントの契約で数えられ、OpenAI の規約に従う。
+kataribe は OpenAI が作ったものでも、OpenAI と提携しているものでもない。
+
+- モデルは `codex_model`（`gpt-6.1-sol` など）、推論の強さは `codex_reasoning_effort`（`high` など）で選ぶ。空欄なら Codex の既定を使う。
+- `codex` コマンドが PATH に無ければ、設定で実行ファイルの場所を指定する（npm で入れた場合は `codex.cmd`）。
+- 「接続テスト」は `codex login status` でログインを確かめ、`codex debug models` でモデルの一覧を読むだけで、利用枠は使わない。
+- 呼び出しのたびに利用者の設定を読み込まない状態で起動し、会話の履歴も残さない。ただし `~/.codex/AGENTS.md` は読み込まれる。
+- 応答はまとめて届くので、生成中は本文が流れない（数千字で数分かかる）。temperature と「思考を止める」は使われない。文脈の長さは 100,000 トークン程度まで増やせる。
 
 ## インストール
 
@@ -88,6 +102,9 @@ kataribe-cli --model google/gemma-4-12b-qat --unit beat run my-novel --until dra
 # Claude Code で書く場合
 kataribe-cli --provider claude-code --model sonnet --context-tokens 100000 run my-novel --until draft
 
+# Codex で書く場合（作品に保存して常用するときは project-settings my-novel --save）
+kataribe-cli --provider codex --model gpt-6.1-sol --codex-reasoning-effort high --context-tokens 100000 run my-novel --until draft
+
 # 指示から人物・世界観の資料を 1 つ作って足す（変更案を見るだけなら --dry-run）
 kataribe-cli generate my-novel add-character --instruction "凛の助手になる、気の優しい青年"
 kataribe-cli generate my-novel add-world --instruction "舞台になる港町の歴史" --name port-town
@@ -100,7 +117,7 @@ kataribe-cli export my-novel --output my-novel.txt
 
 設定は GUI と同じファイル（`%APPDATA%\io.github.numachang.kataribe\settings.json`）を読み、作品ごとの設定を重ね、コマンドラインの指定で上書きできる。
 API キーは環境変数 `KATARIBE_API_KEY`、無ければ資格情報マネージャー（`kataribe-cli api-key set` で保存）から読む
-（Claude Code のときは読まない）。`models` でモデルの一覧を出すと、接続できるかも確かめられる。
+（Claude Code と Codex のときは読まない）。`models` でモデルの一覧を出すと、接続できるかも確かめられる。
 1 つの工程だけを生成するときは `generate`（例: `generate my-novel draft:01/s02`）、適用せずに変更案だけ見るときは `--dry-run`。
 `generate add-character` / `add-world` は、`--instruction` に書いた内容から人物・世界観の資料を作って足す（資料のファイル名は `--name`、省略すると題から決める）。
 自分で書いて足すときは `add character` / `add world`（LLM は使わない）。

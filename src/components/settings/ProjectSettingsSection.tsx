@@ -1,7 +1,14 @@
 import type { ReactNode } from "react";
 import type { AppSettings, DraftUnit, LlmProvider, ProjectSettings } from "../../api/types";
 import { applyProjectSettings, withProjectSetting } from "../../lib/projectSettings";
-import { ConnectionTestButton, ModelList, PROVIDERS } from "./LlmSettingsSection";
+import {
+  CODEX_EFFORT_LIST_ID,
+  CodexEffortList,
+  ConnectionTestButton,
+  MODEL_KEYS,
+  ModelList,
+  PROVIDERS,
+} from "./LlmSettingsSection";
 import {
   GENERATION_NUMBER_LIMITS,
   type GenerationNumberKey,
@@ -28,7 +35,7 @@ interface ProjectSettingsSectionProps {
 export function ProjectSettingsSection({ app, value, onChange }: ProjectSettingsSectionProps) {
   const connectionTest = useConnectionTest();
   const effective = applyProjectSettings(app, value);
-  const modelKey = effective.llm.provider === "openai_compatible" ? "model" : "claude_model";
+  const modelKey = MODEL_KEYS[effective.llm.provider];
 
   function set<K extends keyof ProjectSettings>(key: K, next: ProjectSettings[K] | undefined) {
     onChange(withProjectSetting(value, key, next));
@@ -159,9 +166,31 @@ export function ProjectSettingsSection({ app, value, onChange }: ProjectSettings
             </>
           )}
         </OverrideRow>
+        {effective.llm.provider === "codex" && (
+          <OverrideRow
+            label="推論の強さ（Codex）"
+            overridden={value.codex_reasoning_effort !== undefined}
+            inherited={app.llm.codex_reasoning_effort || "Codex の既定"}
+            onOverride={override("codex_reasoning_effort", app.llm.codex_reasoning_effort)}
+          >
+            {(disabled) => (
+              <>
+                <input
+                  aria-label="推論の強さ"
+                  className="app-input"
+                  list={CODEX_EFFORT_LIST_ID}
+                  disabled={disabled}
+                  value={effective.llm.codex_reasoning_effort}
+                  onChange={(event) => set("codex_reasoning_effort", event.target.value)}
+                />
+                <CodexEffortList />
+              </>
+            )}
+          </OverrideRow>
+        )}
         <ConnectionTestButton connectionTest={connectionTest} llm={effective.llm} />
         <p className="settings-dialog__note">
-          接続先 URL・claude コマンドの場所・API キーは PC
+          接続先 URL・claude / codex コマンドの場所・API キーは PC
           ごとの設定なので、「アプリ全体」で変えます。
         </p>
       </section>

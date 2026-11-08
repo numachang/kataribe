@@ -1,6 +1,6 @@
 //! 作品ごとの設定（`kataribe.yaml` の `settings`）。書いてある項目だけ、アプリ全体の設定を上書きする。
 //!
-//! 作品と一緒に持ち運べない値（接続先 URL・`claude` コマンドの場所などその PC に固有の値と、API キー）は持たない。
+//! 作品と一緒に持ち運べない値（接続先 URL・`claude`・`codex` コマンドの場所などその PC に固有の値と、API キー）は持たない。
 
 use std::collections::BTreeMap;
 
@@ -23,6 +23,12 @@ pub struct ProjectSettings {
     /// Claude Code のモデル。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub claude_model: Option<String>,
+    /// Codex のモデル。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codex_model: Option<String>,
+    /// Codex の推論の強さ。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codex_reasoning_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub draft_unit: Option<DraftUnit>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -86,6 +92,11 @@ impl ProjectSettings {
         overwrite(&mut llm.provider, self.provider.as_ref());
         overwrite(&mut llm.model, self.model.as_ref());
         overwrite(&mut llm.claude_model, self.claude_model.as_ref());
+        overwrite(&mut llm.codex_model, self.codex_model.as_ref());
+        overwrite(
+            &mut llm.codex_reasoning_effort,
+            self.codex_reasoning_effort.as_ref(),
+        );
         overwrite(&mut generation.draft_unit, self.draft_unit.as_ref());
         overwrite(&mut generation.chars_per_call, self.chars_per_call.as_ref());
         overwrite(&mut generation.context_tokens, self.context_tokens.as_ref());
@@ -210,6 +221,29 @@ mod tests {
                     context_tokens: 100_000,
                     ..base.generation
                 },
+            }
+        );
+    }
+
+    #[test]
+    fn codex_settings_override_only_the_codex_items() {
+        let settings = ProjectSettings {
+            provider: Some(LlmProvider::Codex),
+            codex_model: Some("gpt-6.1-sol".to_owned()),
+            codex_reasoning_effort: Some("high".to_owned()),
+            ..ProjectSettings::default()
+        };
+        let base = EngineSettings::default();
+
+        let applied = settings.apply(base.clone());
+
+        assert_eq!(
+            applied.llm,
+            LlmSettings {
+                provider: LlmProvider::Codex,
+                codex_model: "gpt-6.1-sol".to_owned(),
+                codex_reasoning_effort: "high".to_owned(),
+                ..base.llm
             }
         );
     }

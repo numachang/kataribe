@@ -5,7 +5,8 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-use super::{claude_command, spawn_error};
+use super::TOOL;
+use crate::cli_process::command_for;
 use crate::error::LlmError;
 
 /// `claude auth status` は手元の設定を読むだけなので、これより長くかかるなら固まっているとみなす。
@@ -21,7 +22,7 @@ struct AuthStatus {
 
 /// `program` の Claude Code にログインしていれば `Ok`。
 pub(super) async fn ensure_logged_in(program: &str) -> Result<(), LlmError> {
-    let mut command = claude_command(program);
+    let mut command = command_for(program);
     command
         .args(["auth", "status", "--json"])
         .stdin(Stdio::null())
@@ -32,7 +33,7 @@ pub(super) async fn ensure_logged_in(program: &str) -> Result<(), LlmError> {
         .map_err(|_| {
             LlmError::ClaudeCode("claude コマンドがログイン状態の確認に応答しません。".to_owned())
         })?
-        .map_err(|error| spawn_error(program, &error))?;
+        .map_err(|error| TOOL.spawn_error(program, &error))?;
     // ログインしていないときも JSON は出るが、終了コードは 0 でないことがあるので、先に中身を見る
     let stdout = String::from_utf8_lossy(&output.stdout);
     match parse_logged_in(&stdout) {
