@@ -78,6 +78,24 @@ pub(crate) fn section(markdown: &str, keyword: &str, max_chars: usize) -> String
         .unwrap_or_default()
 }
 
+/// Markdown の資料から、見出しに `keyword` を含む節を除く。該当する節が無ければそのまま返す。
+pub(crate) fn without_section(markdown: &str, keyword: &str) -> String {
+    let sections = split_sections(markdown);
+    let kept: Vec<&str> = sections
+        .iter()
+        .copied()
+        .filter(|section| {
+            let heading = section.lines().next().unwrap_or_default();
+            !(heading.starts_with('#') && heading.contains(keyword))
+        })
+        .collect();
+    if kept.len() == sections.len() {
+        markdown.to_owned()
+    } else {
+        kept.join("\n\n")
+    }
+}
+
 /// 見出し（`#` で始まる行）ごとに分ける。最初の見出しより前の部分も 1 つの節とする。
 fn split_sections(markdown: &str) -> Vec<&str> {
     let markdown = markdown.trim();

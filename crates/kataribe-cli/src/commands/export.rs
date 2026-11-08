@@ -202,6 +202,19 @@ mod tests {
     }
 
     #[test]
+    fn export_leaves_out_the_references() {
+        let folder = tempfile::tempdir().unwrap();
+        let project = new_project(folder.path());
+        write_chapter_with_one_scene(&project);
+        std::fs::create_dir_all(folder.path().join("references")).unwrap();
+        std::fs::write(folder.path().join("references/a.txt"), "　手本の文章。\n").unwrap();
+
+        let text = export_text(&project).unwrap();
+
+        assert!(!text.contains("手本の文章"), "{text}");
+    }
+
+    #[test]
     fn export_joins_heading_and_scene_text() {
         let folder = tempfile::tempdir().unwrap();
         let project = new_project(folder.path());

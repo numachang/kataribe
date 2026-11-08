@@ -15,7 +15,7 @@ use crate::model::{
 };
 use crate::path::RelPath;
 use crate::store::{
-    BackupMode, ContentHash, DirEntryKind, ProjectStore, WriteCondition, WriteOptions,
+    BackupMode, ContentHash, DirEntryKind, FolderFile, ProjectStore, WriteCondition, WriteOptions,
 };
 
 /// 作品フォルダそのもの。
@@ -195,6 +195,17 @@ impl Project {
         expected: Option<&ContentHash>,
     ) -> Result<ContentHash, ProjectError> {
         document::write_document(&self.store, path, document, expected)
+    }
+
+    /// `references/` の参考文（`.txt`・`.md`）を、サブフォルダの下も含めパスの順で読む。フォルダが無ければ空。
+    /// UTF-8 のテキストとして読めないファイルは `text` が `None`。文字数にも工程にも数えない。
+    pub fn reference_files(&self) -> Result<Vec<FolderFile>, ProjectError> {
+        let folder = RelPath::new(layout::REFERENCES_DIR)?;
+        let files = self.store.read_folder(&folder)?.unwrap_or_default();
+        Ok(files
+            .into_iter()
+            .filter(|file| layout::is_reference_text(&file.path))
+            .collect())
     }
 
     /// `world/` 配下の Markdown 文書を、`overview.md` を先頭にして名前順で読み込む。
@@ -950,5 +961,51 @@ mod tests {
         let project = project_with_files(&dir, &[("world/Overview.md", "# 世界観\n")]);
 
         assert_eq!(project.world_document_names().unwrap(), Vec::new());
+    }
+
+    #[test]
+    fn reference_files_are_the_text_files_below_the_folder_in_path_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::create(dir.path(), &sample_manifest()).unwrap();
+        let references = dir.path().join("references");
+        fs::create_dir_all(references.join("sub")).unwrap();
+        fs::write(references.join("b.TXT"), "二").unwrap();
+        fs::write(references.join("人魚.txt"), "一").unwrap();
+        fs::write(references.join("sub/c.md"), "三").unwrap();
+        fs::write(references.join("notes.docx"), "捨てる").unwrap();
+        fs::write(references.join(".hidden.txt"), "捨てる").unwrap();
+
+        let files = project.reference_files().unwrap();
+
+        let paths: Vec<&str> = files.iter().map(|file| file.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "references/b.TXT",
+                "references/sub/c.md",
+                "references/人魚.txt"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_project_without_references_has_no_reference_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::create(dir.path(), &sample_manifest()).unwrap();
+
+        assert_eq!(project.reference_files().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn a_reference_that_is_not_utf8_has_no_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::create(dir.path(), &sample_manifest()).unwrap();
+        fs::create_dir_all(dir.path().join("references")).unwrap();
+        fs::write(dir.path().join("references/a.txt"), [0x82, 0xa0, 0xff]).unwrap();
+
+        let files = project.reference_files().unwrap();
+
+        assert_eq!(files.len(), 1);
+        assert!(files[0].text.is_none());
     }
 }

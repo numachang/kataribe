@@ -6,6 +6,7 @@ mod documents;
 mod draft;
 pub(crate) mod materials;
 mod outline;
+pub(crate) mod references;
 mod revise;
 mod scene_plan;
 

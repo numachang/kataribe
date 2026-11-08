@@ -23,6 +23,8 @@ pub const SYNOPSIS: &str = "plot/synopsis.md";
 pub const CHAPTERS_DIR: &str = "plot/chapters";
 /// 本文フォルダ。
 pub const MANUSCRIPT_DIR: &str = "manuscript";
+/// 文体の手本にする参考文を置くフォルダ。
+pub const REFERENCES_DIR: &str = "references";
 /// アプリの内部データ（Git 管理外）。
 pub const INTERNAL_DIR: &str = ".kataribe";
 /// 生成の中間データ。
@@ -72,6 +74,17 @@ pub fn is_character_document(path: &RelPath) -> bool {
 #[must_use]
 pub fn is_additional_world_document(path: &RelPath) -> bool {
     is_markdown_directly_in(path, WORLD_DIR) && !path.as_str().eq_ignore_ascii_case(WORLD_OVERVIEW)
+}
+
+/// 参考文として読むファイルか（`references/` の下の `.txt`・`.md`。`.` で始まる名前は除く）。
+/// 拡張子の大文字小文字は区別しない。
+#[must_use]
+pub fn is_reference_text(path: &RelPath) -> bool {
+    path.as_str().starts_with(&format!("{REFERENCES_DIR}/"))
+        && !path.file_name().starts_with('.')
+        && path.extension().is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("txt") || extension.eq_ignore_ascii_case("md")
+        })
 }
 
 /// `dir` の直下の Markdown か。拡張子の大文字小文字は区別しない（Windows では `a.MD` も `a.md` と同じファイル）。
