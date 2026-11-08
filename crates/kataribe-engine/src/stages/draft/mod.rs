@@ -13,7 +13,7 @@ use super::materials::require;
 use crate::change_set::ChangeSet;
 use crate::error::Result;
 use crate::settings::DraftUnit;
-use context::DraftMaterial;
+use context::{DraftMaterial, verbatim_prose_tokens};
 use story::Story;
 
 /// 使いすぎの表現を探す範囲（直前までの本文の末尾の文字数）。
@@ -30,7 +30,13 @@ pub(super) async fn write(
         "先に文体ガイドを生成してください。",
     )?;
     let position = story.locate(chapter_id, scene_id)?;
-    let story_so_far = digest::story_so_far(stage, &story, position).await?;
+    let verbatim = story.verbatim_prose(
+        stage.project,
+        position,
+        verbatim_prose_tokens(stage.settings.context_tokens),
+    )?;
+    // そのまま渡すシーンの要約は要らないので、LLM に作らせない
+    let story_so_far = digest::story_so_far(stage, &story, verbatim.start).await?;
     let scenes = match stage.settings.draft_unit {
         DraftUnit::Chapter => story.unwritten_run(stage.project, position)?,
         DraftUnit::Scene | DraftUnit::Beat => position.scene..position.scene + 1,
@@ -42,6 +48,7 @@ pub(super) async fn write(
         unit: stage.settings.draft_unit,
         scenes,
         story_so_far: &story_so_far,
+        verbatim_scenes: &verbatim.scenes,
         recent_prose: &recent_prose,
     };
     match stage.settings.draft_unit {
