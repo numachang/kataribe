@@ -170,6 +170,11 @@ impl Tally {
         }
     }
 
+    /// 空行だけの窓を候補にしない（空行の窓はほかの窓と同点になり、抜粋が空になる）。
+    fn has_text(&self) -> bool {
+        self.narration + self.dialogue > 0
+    }
+
     fn balance(&self) -> usize {
         self.narration.min(self.dialogue)
     }
@@ -190,10 +195,11 @@ fn best_window(lines: &[Line<'_>], max_chars: usize) -> Option<Range<usize>> {
             end += 1;
         }
         if end > start {
-            if best
-                .as_ref()
-                .is_none_or(|(best_balance, _)| tally.balance() > *best_balance)
-            {
+            let is_better = tally.has_text()
+                && best
+                    .as_ref()
+                    .is_none_or(|(best_balance, _)| tally.balance() > *best_balance);
+            if is_better {
                 best = Some((tally.balance(), start..end));
             }
             tally.remove(&lines[start]);
@@ -262,6 +268,13 @@ mod tests {
             "{chosen:?}"
         );
         assert!(chosen.chars().count() <= 60, "{chosen:?}");
+    }
+
+    #[test]
+    fn a_blank_line_is_never_chosen_when_a_longer_paragraph_comes_first() {
+        let text = format!("{}\n\n{}", "長".repeat(700), "短".repeat(99));
+
+        assert_eq!(passage(&text, 110), "短".repeat(99));
     }
 
     #[test]
