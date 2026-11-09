@@ -157,6 +157,32 @@ async fn the_style_guide_describes_the_references_and_quotes_its_sample_from_the
 }
 
 #[tokio::test]
+async fn when_no_reference_fits_the_guide_is_generic_and_the_user_is_told() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path());
+    prepare_concept(folder.path());
+    write_reference(folder.path(), "過去作.txt", &reference_text("手本"));
+    let model = style_model();
+    let engine = Engine::new(model.clone(), settings(4096)).unwrap();
+    let sink = RecordNotices::default();
+
+    let changes = engine
+        .generate(&project, &Task::Style, &sink, &CancellationToken::new())
+        .await
+        .unwrap();
+
+    let request = &model.requests()[0];
+    assert!(request.messages[0].content.contains("最もふさわしい文体"));
+    let guide = written_content(&changes, "style.md");
+    assert!(!guide.contains("手本の会話です"), "{guide}");
+    assert!(
+        sink.0.lock().unwrap().iter().any(
+            |(level, message)| *level == NoticeLevel::Warning && message.contains("文脈の長さ")
+        ),
+    );
+}
+
+#[tokio::test]
 async fn a_sample_the_model_wrote_anyway_is_replaced_by_the_references() {
     let folder = tempfile::tempdir().unwrap();
     let project = new_project(folder.path());

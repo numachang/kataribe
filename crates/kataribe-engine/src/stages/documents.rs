@@ -39,16 +39,29 @@ pub(super) async fn concept(stage: &Stage<'_>) -> Result<ChangeSet> {
 pub(super) async fn style(stage: &Stage<'_>) -> Result<ChangeSet> {
     let concept = required_concept(stage)?;
     let references = references::load(stage)?;
-    let reference_budget = stage.prompt_budget(DOCUMENT_OUTPUT_TOKENS) / 2;
+    let excerpts =
+        references::excerpts(&references, stage.prompt_budget(DOCUMENT_OUTPUT_TOKENS) / 2);
+    // 読ませていない参考文の見本を足すと、ガイドと見本が食い違う
+    let sample = if excerpts.is_empty() {
+        None
+    } else {
+        references::sample(&references, STYLE_SAMPLE_CHARS)
+    };
+    if !references.is_empty() && sample.is_none() {
+        notice(
+            stage.caller.sink(),
+            NoticeLevel::Warning,
+            "文脈の長さが足りず参考文を読ませられないので、参考文を使わずに文体ガイドを作ります。使うには設定の「文脈の長さ」を増やしてください。",
+        );
+    }
     let prompt = stage.prompts.render(
         PromptTemplate::Style,
         &context! {
             project => &stage.info,
             concept => concept,
-            references => references::excerpts(&references, reference_budget),
+            references => excerpts,
         },
     )?;
-    let sample = references::sample(&references, STYLE_SAMPLE_CHARS);
     generate_finished_by(stage, "文体ガイド", layout::STYLE, &prompt, |body| {
         with_style_sample(body, sample.as_deref())
     })

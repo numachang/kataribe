@@ -87,7 +87,8 @@ pub(crate) fn sample(references: &[String], max_chars: usize) -> Option<String> 
 }
 
 /// 地の文と会話の両方が最も多く入る、`max_chars` 字以内の連続した部分（段落の途中では切らない）。
-/// ファイルの先頭から機械的に取ると、書き出しの説明だけに偏るため。
+/// ファイルの先頭から機械的に取ると、書き出しの説明だけに偏るため。段落の間の空行も書かれたまま残す
+/// （段落や場面の間の取り方も、手本の一部なので）。
 fn passage(text: &str, max_chars: usize) -> String {
     if max_chars == 0 {
         return String::new();
@@ -97,73 +98,119 @@ fn passage(text: &str, max_chars: usize) -> String {
     if text.chars().count() <= max_chars {
         return text.to_owned();
     }
-    let paragraphs: Vec<Paragraph<'_>> = text
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(Paragraph::new)
-        .collect();
-    let Some(window) = best_window(&paragraphs, max_chars) else {
+    let lines: Vec<Line<'_>> = text.lines().map(Line::new).collect();
+    let Some(window) = best_window(&lines, max_chars) else {
         // どの段落も長すぎて窓に入らないときは、先頭から切る
         return excerpt::head(text, max_chars);
     };
-    paragraphs[window]
+    lines[without_blank_edges(&lines, window)]
         .iter()
-        .map(|paragraph| paragraph.text)
+        .map(|line| line.text)
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-struct Paragraph<'a> {
+/// 参考文の 1 行。
+struct Line<'a> {
     text: &'a str,
     /// 改行を含めた字数。
     chars: usize,
-    is_dialogue: bool,
+    kind: LineKind,
 }
 
-impl<'a> Paragraph<'a> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LineKind {
+    Narration,
+    Dialogue,
+    Blank,
+}
+
+impl<'a> Line<'a> {
     fn new(text: &'a str) -> Self {
+        let trimmed = text.trim_start();
+        let kind = if trimmed.is_empty() {
+            LineKind::Blank
+        } else if trimmed.starts_with(['「', '『']) {
+            LineKind::Dialogue
+        } else {
+            LineKind::Narration
+        };
         Self {
             text,
             chars: text.chars().count() + 1,
-            is_dialogue: text.trim_start().starts_with(['「', '『']),
+            kind,
         }
+    }
+}
+
+/// 窓の中の字数。
+#[derive(Default)]
+struct Tally {
+    total: usize,
+    narration: usize,
+    dialogue: usize,
+}
+
+impl Tally {
+    fn add(&mut self, line: &Line<'_>) {
+        self.total += line.chars;
+        match line.kind {
+            LineKind::Narration => self.narration += line.chars,
+            LineKind::Dialogue => self.dialogue += line.chars,
+            LineKind::Blank => {}
+        }
+    }
+
+    fn remove(&mut self, line: &Line<'_>) {
+        self.total -= line.chars;
+        match line.kind {
+            LineKind::Narration => self.narration -= line.chars,
+            LineKind::Dialogue => self.dialogue -= line.chars,
+            LineKind::Blank => {}
+        }
+    }
+
+    fn balance(&self) -> usize {
+        self.narration.min(self.dialogue)
     }
 }
 
 /// 窓の中の、地の文と会話の少ないほうの字数が最も多い窓。同じなら前のもの（毎回同じ部分を選ぶため）。
-fn best_window(paragraphs: &[Paragraph<'_>], max_chars: usize) -> Option<Range<usize>> {
+fn best_window(lines: &[Line<'_>], max_chars: usize) -> Option<Range<usize>> {
     let mut best: Option<(usize, Range<usize>)> = None;
     let mut end = 0;
-    let mut total = 0;
-    let mut dialogue = 0;
-    for start in 0..paragraphs.len() {
+    let mut tally = Tally::default();
+    for start in 0..lines.len() {
         if end < start {
             end = start;
-            total = 0;
-            dialogue = 0;
+            tally = Tally::default();
         }
-        while end < paragraphs.len() && total + paragraphs[end].chars <= max_chars {
-            total += paragraphs[end].chars;
-            if paragraphs[end].is_dialogue {
-                dialogue += paragraphs[end].chars;
-            }
+        while end < lines.len() && tally.total + lines[end].chars <= max_chars {
+            tally.add(&lines[end]);
             end += 1;
         }
         if end > start {
-            let balance = dialogue.min(total - dialogue);
             if best
                 .as_ref()
-                .is_none_or(|(best_balance, _)| balance > *best_balance)
+                .is_none_or(|(best_balance, _)| tally.balance() > *best_balance)
             {
-                best = Some((balance, start..end));
+                best = Some((tally.balance(), start..end));
             }
-            total -= paragraphs[start].chars;
-            if paragraphs[start].is_dialogue {
-                dialogue -= paragraphs[start].chars;
-            }
+            tally.remove(&lines[start]);
         }
     }
     best.map(|(_, window)| window)
+}
+
+/// 窓の両端の空行を除く（抜粋の前後に空行は要らない）。
+fn without_blank_edges(lines: &[Line<'_>], mut window: Range<usize>) -> Range<usize> {
+    while window.start < window.end && lines[window.start].kind == LineKind::Blank {
+        window.start += 1;
+    }
+    while window.start < window.end && lines[window.end - 1].kind == LineKind::Blank {
+        window.end -= 1;
+    }
+    window
 }
 
 #[cfg(test)]
@@ -201,6 +248,20 @@ mod tests {
         assert!(chosen.contains("地の文。"), "{chosen}");
         assert!(!text.starts_with(chosen.as_str()), "{chosen}");
         assert!(chosen.chars().count() <= 60);
+    }
+
+    #[test]
+    fn blank_lines_inside_the_passage_are_kept_but_not_at_its_edges() {
+        let text = "　地の文。\n「会話です」\n\n".repeat(10);
+
+        let chosen = passage(&text, 60);
+
+        assert!(chosen.contains("\n\n"), "{chosen:?}");
+        assert!(
+            !chosen.starts_with('\n') && !chosen.ends_with('\n'),
+            "{chosen:?}"
+        );
+        assert!(chosen.chars().count() <= 60, "{chosen:?}");
     }
 
     #[test]
