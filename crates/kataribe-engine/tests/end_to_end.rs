@@ -1060,3 +1060,76 @@ async fn a_cast_with_romanized_names_is_generated_again() {
     assert_eq!(names, vec!["霧島 凛", "佐藤 健二"]);
     assert_eq!(model.requests().len(), 2);
 }
+
+/// 1 シーンの章を、推敲つきで書かせ、本文と推敲それぞれに送ったプロンプト（system と user）を返す。
+async fn draft_and_polish_prompts(show_dont_tell: bool) -> Vec<String> {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path());
+    prepare_one_scene_chapter(&project);
+    let model = Arc::new(ScriptedChatModel::new([
+        Script::reply([prose("雨の夜、凛は洋館に着いた。\n")]),
+        Script::reply([prose("雨の夜、凛は洋館に着いた。\n")]),
+    ]));
+    let engine = Engine::new(
+        model.clone(),
+        GenerationSettings {
+            polish: true,
+            show_dont_tell,
+            chars_per_call: 3000,
+            ..settings(DraftUnit::Scene)
+        },
+    )
+    .unwrap();
+
+    run(
+        &engine,
+        &project,
+        &Task::Draft {
+            chapter: ChapterId::from_number(1),
+            scene: SceneId::new("s01").unwrap(),
+        },
+    )
+    .await;
+
+    let requests = model.requests();
+    assert_eq!(
+        requests.len(),
+        2,
+        "1 回目が本文、2 回目が推敲: {requests:#?}"
+    );
+    requests
+        .iter()
+        .map(|request| {
+            request
+                .messages
+                .iter()
+                .map(|message| message.content.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .collect()
+}
+
+const SHOW_RULE_IN_DRAFT: &str = "行動・会話・五感の描写で場面を立ち上げる";
+const SHOW_RULE_IN_POLISH: &str = "感情を説明しすぎている文";
+
+#[tokio::test]
+async fn show_dont_tell_rules_are_in_the_draft_and_polish_prompts_by_default() {
+    assert!(GenerationSettings::default().show_dont_tell);
+
+    let prompts = draft_and_polish_prompts(GenerationSettings::default().show_dont_tell).await;
+
+    assert!(prompts[0].contains(SHOW_RULE_IN_DRAFT), "{}", prompts[0]);
+    assert!(prompts[1].contains(SHOW_RULE_IN_POLISH), "{}", prompts[1]);
+}
+
+#[tokio::test]
+async fn turning_show_dont_tell_off_removes_its_rules_from_the_draft_and_polish_prompts() {
+    let prompts = draft_and_polish_prompts(false).await;
+
+    assert!(!prompts[0].contains(SHOW_RULE_IN_DRAFT), "{}", prompts[0]);
+    assert!(!prompts[1].contains(SHOW_RULE_IN_POLISH), "{}", prompts[1]);
+    // 外すのはこの約束だけで、ほかの約束と推敲の項目は残る
+    assert!(prompts[0].contains("登場人物の口調"), "{}", prompts[0]);
+    assert!(prompts[1].contains("不自然な日本語"), "{}", prompts[1]);
+}

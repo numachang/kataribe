@@ -21,4 +21,8 @@ codex_model?: string,
 /**
  * Codex の推論の強さ。
  */
-codex_reasoning_effort?: string, draft_unit?: DraftUnit, chars_per_call?: number, context_tokens?: number, temperature?: number, polish?: boolean, quality_retries?: number, disable_thinking?: boolean, };
+codex_reasoning_effort?: string, draft_unit?: DraftUnit, chars_per_call?: number, context_tokens?: number, temperature?: number, polish?: boolean, quality_retries?: number, disable_thinking?: boolean, 
+/**
+ * 「行動・会話・五感の描写で場面を立ち上げる」約束をプロンプトに入れるか。
+ */
+show_dont_tell?: boolean, };

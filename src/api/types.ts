@@ -230,6 +230,7 @@ export interface ProjectSettings {
   polish?: boolean;
   quality_retries?: number;
   disable_thinking?: boolean;
+  show_dont_tell?: boolean;
 }
 
 /** 画面が読み込んだ作品の設定。保存するときの競合の検出に、読んだ時点の kataribe.yaml のハッシュを使う。 */
@@ -254,6 +255,11 @@ export interface GenerationSettings {
    * 本文が空になることがあるため。クラウドの API でエラーになる場合は false にする。
    */
   disable_thinking: boolean;
+  /**
+   * 本文の生成と推敲のプロンプトに、「行動・会話・五感の描写で場面を立ち上げる」約束を入れる（既定 true）。
+   * 地の文で理屈を重ねる文体の作品では、false にすると文体ガイドに従いやすくなる。
+   */
+  show_dont_tell: boolean;
 }
 
 export type FontStyle = "mincho" | "gothic";

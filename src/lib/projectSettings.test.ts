@@ -26,6 +26,7 @@ const APP_GENERATION: GenerationSettings = {
   polish: false,
   quality_retries: 1,
   disable_thinking: true,
+  show_dont_tell: true,
 };
 
 describe("applyProjectSettings", () => {

@@ -43,6 +43,9 @@ pub struct ProjectSettings {
     pub quality_retries: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disable_thinking: Option<bool>,
+    /// 「行動・会話・五感の描写で場面を立ち上げる」約束をプロンプトに入れるか。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub show_dont_tell: Option<bool>,
     /// この版が知らない項目（新しい版で足された設定など）。保存し直しても消さない。
     #[serde(flatten)]
     #[cfg_attr(feature = "ts", ts(skip))]
@@ -110,6 +113,7 @@ impl ProjectSettings {
             &mut generation.disable_thinking,
             self.disable_thinking.as_ref(),
         );
+        overwrite(&mut generation.show_dont_tell, self.show_dont_tell.as_ref());
         EngineSettings {
             llm,
             generation: generation.sanitized(),
@@ -245,6 +249,30 @@ mod tests {
                 codex_reasoning_effort: "high".to_owned(),
                 ..base.llm
             }
+        );
+    }
+
+    #[test]
+    fn show_dont_tell_can_be_turned_off_per_project_and_survives_saving() {
+        let (_dir, project) = project_with_settings(None);
+        let settings = ProjectSettings {
+            show_dont_tell: Some(false),
+            ..ProjectSettings::default()
+        };
+
+        settings.save(&project, None).unwrap();
+
+        let saved = ProjectSettings::load(&project).unwrap();
+        assert_eq!(saved.show_dont_tell, Some(false));
+        assert!(
+            !saved
+                .apply(EngineSettings::default())
+                .generation
+                .show_dont_tell
+        );
+        assert_eq!(
+            project.manifest().unwrap().settings.unwrap()["show_dont_tell"],
+            false
         );
     }
 

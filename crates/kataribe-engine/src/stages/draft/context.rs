@@ -262,6 +262,7 @@ impl DraftMaterial<'_> {
                 style => excerpt::prioritized(&self.story.style, STYLE_ESSENTIALS, caps.style),
                 narration => excerpt::section(&self.story.style, NARRATION_HEADING, NARRATION_CHARS),
                 overused => overused,
+                show_dont_tell => stage.settings.show_dont_tell,
                 world => excerpt::head(&self.story.world, caps.world),
                 characters => self.cast(caps.profile),
                 story_so_far => &self.story_so_far[story_start..],
