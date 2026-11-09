@@ -84,7 +84,8 @@ fn with_style_sample(body: String, sample: Option<&str>) -> String {
 
 pub(super) async fn world(stage: &Stage<'_>) -> Result<ChangeSet> {
     let manuscript = stage.existing_manuscript(DOCUMENT_OUTPUT_TOKENS);
-    let concept = required_concept(stage, stage.material_chars(CONCEPT_CHARS, &manuscript))?;
+    let materials = stage.material_budget(&manuscript, DOCUMENT_OUTPUT_TOKENS);
+    let concept = required_concept(stage, materials.chars(CONCEPT_CHARS))?;
     let prompt = stage.prompts.render(
         PromptTemplate::World,
         &context! { project => &stage.info, concept => concept, manuscript => manuscript },
@@ -94,7 +95,8 @@ pub(super) async fn world(stage: &Stage<'_>) -> Result<ChangeSet> {
 
 pub(super) async fn synopsis(stage: &Stage<'_>) -> Result<ChangeSet> {
     let manuscript = stage.existing_manuscript(DOCUMENT_OUTPUT_TOKENS);
-    let concept = required_concept(stage, stage.material_chars(CONCEPT_CHARS, &manuscript))?;
+    let materials = stage.material_budget(&manuscript, DOCUMENT_OUTPUT_TOKENS);
+    let concept = required_concept(stage, materials.chars(CONCEPT_CHARS))?;
     let characters = stage.project.characters()?;
     require(!characters.is_empty(), "先に登場人物を生成してください。")?;
     let prompt = stage.prompts.render(
@@ -102,11 +104,8 @@ pub(super) async fn synopsis(stage: &Stage<'_>) -> Result<ChangeSet> {
         &context! {
             project => &stage.info,
             concept => concept,
-            world => excerpt::head(
-                &world_text(stage.project)?,
-                stage.material_chars(WORLD_CHARS, &manuscript),
-            ),
-            characters => briefs(&characters, stage.material_chars(PROFILE_CHARS, &manuscript)),
+            world => excerpt::head(&world_text(stage.project)?, materials.chars(WORLD_CHARS)),
+            characters => briefs(&characters, materials.chars_each(PROFILE_CHARS, characters.len())),
             manuscript => manuscript,
         },
     )?;

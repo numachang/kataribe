@@ -216,6 +216,63 @@ fn an_empty_manuscript_or_title_is_refused() {
     assert!(plan_manuscript_import(&project, &untitled).is_err());
 }
 
+#[test]
+fn a_manuscript_with_more_scenes_than_a_chapter_can_hold_is_refused() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path(), 3000);
+    let import = ManuscriptImport {
+        min_scene_chars: 1,
+        ..import_of(&"　段落。\n\n".repeat(1000))
+    };
+
+    let error = plan_manuscript_import(&project, &import).unwrap_err();
+
+    assert!(matches!(error, EngineError::InvalidInput(_)), "{error}");
+    assert!(!folder.path().join("plot/chapters/01.md").exists());
+}
+
+#[tokio::test]
+async fn long_materials_and_manuscript_still_fit_a_context_just_above_the_wide_threshold() {
+    let folder = tempfile::tempdir().unwrap();
+    let project = new_project(folder.path(), 3000);
+    let long = "長い資料の文章。\n".repeat(1250);
+    write_file(folder.path(), "concept.md", &format!("# 企画\n{long}"));
+    write_file(
+        folder.path(),
+        "world/overview.md",
+        &format!("# 世界観\n{long}"),
+    );
+    let plan = plan_manuscript_import(
+        &project,
+        &import_of(&format!("　{}。\n", "雨".repeat(40_000))),
+    )
+    .unwrap();
+    plan.change_set.apply(&project).unwrap();
+    let model = model_replying(ROSTER);
+    let settings = GenerationSettings {
+        context_tokens: 32_000,
+        ..settings()
+    };
+
+    Engine::new(model.clone(), settings)
+        .unwrap()
+        .generate(
+            &project,
+            &Task::Cast,
+            &IgnoreEvents,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+    let prompt = last_prompt(&model);
+    assert!(
+        prompt.chars().count() < 30_400,
+        "{}",
+        prompt.chars().count()
+    );
+}
+
 #[tokio::test]
 async fn generating_documents_reads_the_existing_manuscript() {
     let folder = tempfile::tempdir().unwrap();

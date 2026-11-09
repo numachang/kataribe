@@ -11,6 +11,7 @@ mod revise;
 mod scene_plan;
 
 use kataribe_project::{Manifest, Project, RelPath, TextFile};
+use kataribe_text::tokens::estimate_tokens;
 
 use crate::caller::Caller;
 use crate::change_set::ChangeSet;
@@ -30,6 +31,28 @@ const MIN_OUTPUT_TOKENS: usize = 512;
 pub(crate) const WIDE_CONTEXT_TOKENS: u32 = 32_000;
 /// 長い文脈のモデルに、本文と一緒に資料を渡すときの、資料 1 つの上限の字数。
 const WIDE_MATERIAL_CHARS: usize = 30_000;
+/// 本文を除いた残りの予算を、いくつに分けて資料に割り振るか。1 つのプロンプトに入る資料は多くても
+/// 4 種類（企画・世界観・あらすじ・人物の一覧）なので、全部が上限まであっても文脈に収まる。
+const MATERIAL_SHARES: usize = 4;
+
+/// 本文と一緒に渡す資料の上限（[`Stage::material_budget`]）。
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct MaterialBudget {
+    /// 資料 1 種類に使ってよい字数。広げないときは 0。
+    chars_per_share: usize,
+}
+
+impl MaterialBudget {
+    /// 資料 1 つの上限の字数。広げない場合は `narrow_chars`。
+    pub fn chars(self, narrow_chars: usize) -> usize {
+        narrow_chars.max(self.chars_per_share)
+    }
+
+    /// `count` 個で 1 種類の資料（人物の一覧など）の、1 つあたりの上限の字数。
+    pub fn chars_each(self, narrow_chars: usize, count: usize) -> usize {
+        narrow_chars.max(self.chars_per_share / count.max(1))
+    }
+}
 
 /// 1 つのタスクの実行に必要なものをまとめたもの。
 pub(crate) struct Stage<'a> {
@@ -105,13 +128,18 @@ impl<'a> Stage<'a> {
         excerpt::head(&text, self.prompt_budget(output_tokens) / 2)
     }
 
-    /// 本文と一緒に渡す資料の上限の字数。長い文脈のモデルで本文があるときだけ広げる
-    /// （本文が無いときのプロンプトは変えないため）。
-    pub fn material_chars(&self, narrow_chars: usize, manuscript: &str) -> usize {
-        if self.settings.context_tokens >= WIDE_CONTEXT_TOKENS && !manuscript.is_empty() {
-            narrow_chars.max(WIDE_MATERIAL_CHARS)
-        } else {
-            narrow_chars
+    /// 本文と一緒に渡す資料の上限。長い文脈のモデルで本文があるときだけ広げる（本文が無いときのプロンプトは変えないため）。
+    /// `output_tokens` と本文の分を除いた残りの予算で決めるので、広げたせいで文脈に収まらなくなることはない。
+    pub fn material_budget(&self, manuscript: &str, output_tokens: u32) -> MaterialBudget {
+        let is_wide = self.settings.context_tokens >= WIDE_CONTEXT_TOKENS && !manuscript.is_empty();
+        if !is_wide {
+            return MaterialBudget::default();
+        }
+        let room = self
+            .prompt_budget(output_tokens)
+            .saturating_sub(estimate_tokens(manuscript));
+        MaterialBudget {
+            chars_per_share: (room / MATERIAL_SHARES).min(WIDE_MATERIAL_CHARS),
         }
     }
 

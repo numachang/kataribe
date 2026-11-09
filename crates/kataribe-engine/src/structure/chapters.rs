@@ -28,6 +28,9 @@ use super::position::{ensure_new_position, move_item};
 use crate::change_set::{ChangeSet, FileChange};
 use crate::error::{EngineError, Result};
 
+/// 1 つの章に入れられるシーンの数。シーンの ID は `s999` まで（`s1000` は章立てを読めなくする）。
+const MAX_SCENES_PER_CHAPTER: usize = 999;
+
 /// 章を足す変更案。後ろの章の番号を振り直し、新しい章の章立て（シーン構成なし）を新規に書く。
 pub(super) fn add(
     project: &Project,
@@ -78,6 +81,12 @@ pub(super) fn add_with_manuscript(
     scene_texts: &[&str],
 ) -> Result<StructurePlan> {
     let title = validated_title(title)?;
+    if scene_texts.len() > MAX_SCENES_PER_CHAPTER {
+        return Err(EngineError::InvalidInput(format!(
+            "シーンが {} 個になり、1 つの章に入れられる数（{MAX_SCENES_PER_CHAPTER}）を超えます。--min-scene-chars を大きくするか、原稿を分けて取り込んでください。",
+            scene_texts.len()
+        )));
+    }
     let new_id = next_chapter_id(&project.chapter_ids()?)?;
     let wording = Wording::new(format!(
         "{}を {} シーンで取り込み",
