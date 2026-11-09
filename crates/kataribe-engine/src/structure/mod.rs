@@ -8,6 +8,7 @@
 mod chapters;
 mod characters;
 mod edit;
+mod import;
 mod plan;
 mod position;
 mod references;
@@ -19,6 +20,7 @@ use kataribe_project::{CharacterId, Project};
 pub(crate) use world::check_name as check_world_document_name;
 
 pub use edit::{NewScenePlan, StructureEdit};
+pub use import::{DEFAULT_MIN_SCENE_CHARS, ManuscriptImport, plan_manuscript_import};
 pub use plan::{RenumberedChapter, SceneReference, StructurePlan};
 
 use crate::error::Result;

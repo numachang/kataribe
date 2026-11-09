@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use kataribe_project::{Chapter, ChapterId, ChapterMeta, SceneId, ScenePlan, layout};
+use kataribe_text::count::count_chars;
 use minijinja::context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -16,6 +17,8 @@ use crate::excerpt;
 use crate::prompt::PromptTemplate;
 
 const SCENE_PLAN_OUTPUT_TOKENS: u32 = 4096;
+/// 書き済みの本文が目標を使い切っていても、章に割り振る字数の下限。
+const MIN_CHAPTER_CHARS: u32 = 1000;
 const STORYLINE_CHARS: usize = 600;
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -46,8 +49,7 @@ struct ChapterSummary {
 pub(super) async fn scenes(stage: &Stage<'_>, chapter_id: ChapterId) -> Result<ChangeSet> {
     let chapters = stage.project.chapters()?;
     let (chapter, base) = snapshot_chapter(stage.project, chapter_id)?;
-    let chapter_chars =
-        stage.manifest.target_length / u32::try_from(chapters.len()).unwrap_or(1).max(1);
+    let chapter_chars = chars_for_chapter(stage, &chapters, chapter_id)?;
     let scene_count = scene_count_for(chapter_chars);
     let chars_per_scene = round_to_hundreds(chapter_chars / scene_count);
     let summaries: Vec<ChapterSummary> = chapters
@@ -72,6 +74,7 @@ pub(super) async fn scenes(stage: &Stage<'_>, chapter_id: ChapterId) -> Result<C
             chapter => context! { number => chapter.id.number(), title => &chapter.meta.title },
             scene_count => scene_count,
             chars_per_scene => chars_per_scene,
+            manuscript => stage.existing_manuscript(SCENE_PLAN_OUTPUT_TOKENS),
         },
     )?;
     let output_tokens = stage.output_tokens(&prompt, SCENE_PLAN_OUTPUT_TOKENS)?;
@@ -102,6 +105,41 @@ pub(super) async fn scenes(stage: &Stage<'_>, chapter_id: ChapterId) -> Result<C
         Some(base),
     );
     Ok(changes)
+}
+
+/// この章に割り振る字数。ほかの章にすでに本文があれば、目標からその字数を引いた残りを、本文のない章で分ける。
+/// 取り込んだ原稿のあとの章の目標が、実際の残りと合うようにする。本文が無ければ、これまでどおり目標を章の数で割る。
+fn chars_for_chapter(
+    stage: &Stage<'_>,
+    chapters: &[Chapter],
+    chapter_id: ChapterId,
+) -> Result<u32> {
+    let target = stage.manifest.target_length;
+    let evenly = target / u32::try_from(chapters.len()).unwrap_or(1).max(1);
+    let mut written_chars: u32 = 0;
+    let mut chapters_to_write: u32 = 1;
+    for chapter in chapters.iter().filter(|chapter| chapter.id != chapter_id) {
+        let chars = written_chars_of(stage, chapter)?;
+        if chars == 0 {
+            chapters_to_write += 1;
+        } else {
+            written_chars = written_chars.saturating_add(chars);
+        }
+    }
+    if written_chars == 0 {
+        return Ok(evenly);
+    }
+    Ok((target.saturating_sub(written_chars) / chapters_to_write).max(MIN_CHAPTER_CHARS))
+}
+
+fn written_chars_of(stage: &Stage<'_>, chapter: &Chapter) -> Result<u32> {
+    let mut chars = 0usize;
+    for scene in &chapter.meta.scenes {
+        if let Some(text) = stage.project.scene_text(&chapter.id, &scene.id)? {
+            chars += count_chars(&text);
+        }
+    }
+    Ok(u32::try_from(chars).unwrap_or(u32::MAX))
 }
 
 /// シーンに s01, s02, … の id を振る。本文のファイル名はこの id になる。

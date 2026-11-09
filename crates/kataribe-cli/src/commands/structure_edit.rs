@@ -30,12 +30,23 @@ pub(super) async fn run(
 ) -> anyhow::Result<Outcome> {
     let project = Project::open(folder).context("作品フォルダを開けません")?;
     let plan = kataribe_engine::plan_structure_edit(&project, edit)?;
-    console.eprint(&render_consequences(&plan))?;
+    show_and_apply(&project, &plan, dry_run, console, apply_guard).await
+}
+
+/// 変更案で起きることを知らせてから適用する（`--dry-run` なら変更案を出すだけ）。
+pub(super) async fn show_and_apply(
+    project: &Project,
+    plan: &StructurePlan,
+    dry_run: bool,
+    console: &dyn Console,
+    apply_guard: &ApplyGuard,
+) -> anyhow::Result<Outcome> {
+    console.eprint(&render_consequences(plan))?;
     if dry_run {
         console.print(&render_change_set(&plan.change_set))?;
         return Ok(Outcome::Success);
     }
-    apply_change_set(&plan.change_set, &project, apply_guard, console).await?;
+    apply_change_set(&plan.change_set, project, apply_guard, console).await?;
     report_applied_changes(console, &plan.change_set, "")?;
     console.eprint(&format!("{}\n", plan.completed_summary))?;
     Ok(Outcome::Success)

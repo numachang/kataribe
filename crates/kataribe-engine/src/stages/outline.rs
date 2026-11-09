@@ -45,13 +45,19 @@ pub(super) async fn chapters(stage: &Stage<'_>) -> Result<ChangeSet> {
         .iter()
         .map(|chapter| snapshot_chapter(stage.project, chapter.id))
         .collect::<Result<Vec<_>>>()?;
+    let manuscript = stage.existing_manuscript(OUTLINE_OUTPUT_TOKENS);
+    let materials = stage.material_budget(&manuscript, OUTLINE_OUTPUT_TOKENS);
     let prompt = stage.prompts.render(
         PromptTemplate::Outline,
         &context! {
             project => &stage.info,
-            concept => excerpt::head(&document_body(stage.project, layout::CONCEPT)?, CONCEPT_CHARS),
+            concept => excerpt::head(
+                &document_body(stage.project, layout::CONCEPT)?,
+                materials.chars(CONCEPT_CHARS),
+            ),
             characters => briefs(&stage.project.characters()?, 0),
-            synopsis => excerpt::head(&synopsis, SYNOPSIS_CHARS),
+            synopsis => excerpt::head(&synopsis, materials.chars(SYNOPSIS_CHARS)),
+            manuscript => manuscript,
             chapter_count => chapter_count,
             chars_per_chapter => round_to_hundreds(stage.manifest.target_length / chapter_count),
         },

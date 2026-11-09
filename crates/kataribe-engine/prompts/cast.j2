@@ -14,6 +14,10 @@
 
 {{ m.document("世界観", world) }}
 
+{% if manuscript %}
+{{ m.existing_manuscript(manuscript) }}
+
+{% endif %}
 【指示】
 この作品の主な登場人物を {{ cast_size }} 人前後で考え、JSON で出力してください。
 - 物語の葛藤を生む関係になるよう、目的や立場が異なる人物を組み合わせること。

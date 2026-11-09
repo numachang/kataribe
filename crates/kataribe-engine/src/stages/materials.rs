@@ -92,6 +92,22 @@ pub(crate) fn document_body(project: &Project, path: &str) -> Result<String> {
         .unwrap_or_default())
 }
 
+/// 章立てに載っているシーンの本文すべて（読む順）。本文のないシーンは飛ばす。
+pub(crate) fn manuscript_text(project: &Project) -> Result<String> {
+    let mut scenes = Vec::new();
+    for chapter in project.chapters()? {
+        for scene in &chapter.meta.scenes {
+            let text = project
+                .scene_text(&chapter.id, &scene.id)?
+                .unwrap_or_default();
+            if !text.trim().is_empty() {
+                scenes.push(text);
+            }
+        }
+    }
+    Ok(scenes.join("\n\n"))
+}
+
 /// 世界観の資料すべて（概要を先頭に）。
 pub(crate) fn world_text(project: &Project) -> Result<String> {
     let documents = project.world_docs()?;

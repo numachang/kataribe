@@ -14,7 +14,7 @@ use crate::prompt::{Prompt, PromptTemplate};
 use crate::settings::DraftUnit;
 use crate::stages::Stage;
 use crate::stages::materials::CharacterBrief;
-use crate::stages::references;
+use crate::stages::{WIDE_CONTEXT_TOKENS, references};
 
 /// 文体ガイドのうち、切り詰めても残したい節（見出しに含まれる語）。
 const STYLE_ESSENTIALS: &[&str] = &["文体見本", "人称", "視点", "避けること"];
@@ -28,9 +28,6 @@ const NARRATION_CHARS: usize = 400;
 /// ローカル LLM は前のシーンの決まり文句を場面をまたいで繰り返しがちなので、機械的に拾って伝える。
 const OVERUSED_MIN_COUNT: usize = 3;
 const MAX_OVERUSED_PHRASES: usize = 8;
-/// この長さ以上の文脈を持つモデルには、資料を広く渡し、書き終えた本文をそのまま渡す。
-/// ローカル LLM の 16,384 トークンで実測して決めた `LEVELS` の動きを変えないよう、それより十分に大きい値にしている。
-const WIDE_CONTEXT_TOKENS: u32 = 32_000;
 /// そのまま渡す本文を決めるときに、資料（文体ガイド・人物・シーンの設計など）のために残すトークン数。
 /// `LEVELS` の上のほうの段が入る大きさにして、本文を増やしたせいで資料が今より減らないようにする。
 const MATERIAL_RESERVE_TOKENS: usize = 8_000;

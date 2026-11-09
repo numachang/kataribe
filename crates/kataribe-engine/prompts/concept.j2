@@ -10,6 +10,10 @@
 {% block user %}
 {{ m.project_info(project) }}
 
+{% if manuscript %}
+{{ m.existing_manuscript(manuscript) }}
+
+{% endif %}
 【指示】
 上の構想をもとに、この作品の企画書を書いてください。構想に書かれていない要素は、ジャンルとトーンに合う形で補ってください。
 構想に書かれた人物の名前・舞台・出来事は、そのまま企画書に書き込むこと。

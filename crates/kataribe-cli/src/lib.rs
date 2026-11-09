@@ -137,6 +137,7 @@ async fn dispatch(
             commands::run::run(args, &cli.global, console, cancel, apply_guard).await
         }
         Command::Add(args) => commands::add::run(args, console, apply_guard).await,
+        Command::Import(args) => commands::import::run(args, console, apply_guard).await,
         Command::Remove(args) => commands::remove::run(args, console, apply_guard).await,
         Command::Move(args) => commands::reorder::run(args, console, apply_guard).await,
         Command::Quality(args) => commands::quality::run(args, console),

@@ -28,6 +28,10 @@
 {{ instruction }}
 {% endif %}
 
+{% if manuscript %}
+{{ m.existing_manuscript(manuscript) }}
+
+{% endif %}
 【指示】
 「{{ character.name }}」の人物資料を書いてください。一覧のほかの人物との関係と矛盾させないこと。
 

@@ -4,9 +4,34 @@ use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
+use kataribe_engine::DEFAULT_MIN_SCENE_CHARS;
 use kataribe_project::{ChapterId, SceneId};
 
 use crate::target_spec::{MoveTarget, RemoveTarget};
+
+/// `import` の引数。
+#[derive(Debug, Args)]
+pub struct ImportArgs {
+    /// 作品フォルダ。
+    #[arg(value_name = "FOLDER")]
+    pub folder: PathBuf,
+
+    /// 取り込む原稿（UTF-8 のテキスト。空行がシーンの区切りになる）。
+    #[arg(long, value_name = "PATH")]
+    pub from: PathBuf,
+
+    /// 作る章の題。
+    #[arg(long, value_name = "TEXT")]
+    pub chapter_title: String,
+
+    /// これより短い塊は、次のシーンにつなげる（字数）。
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_MIN_SCENE_CHARS)]
+    pub min_scene_chars: usize,
+
+    /// 変更案を表示するだけで、書き込まない。
+    #[arg(long)]
+    pub dry_run: bool,
+}
 
 #[derive(Debug, Args)]
 pub struct AddArgs {

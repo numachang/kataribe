@@ -206,6 +206,7 @@ async fn write_profile(
             cast => everyone,
             character => newcomer,
             instruction => instruction,
+            manuscript => "",
         },
     )?;
     let output_tokens = stage.output_tokens(&prompt, PROFILE_OUTPUT_TOKENS)?;

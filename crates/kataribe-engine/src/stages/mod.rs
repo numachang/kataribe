@@ -11,10 +11,13 @@ mod revise;
 mod scene_plan;
 
 use kataribe_project::{Manifest, Project, RelPath, TextFile};
+use kataribe_text::tokens::estimate_tokens;
 
 use crate::caller::Caller;
 use crate::change_set::ChangeSet;
 use crate::error::{EngineError, Result};
+use crate::events::{NoticeLevel, notice};
+use crate::excerpt;
 use crate::genre::GenreCatalog;
 use crate::prompt::{Prompt, PromptLibrary};
 use crate::settings::GenerationSettings;
@@ -23,6 +26,33 @@ use materials::ProjectInfo;
 
 /// 生成の出力に回すトークンの下限。これを確保できないほど文脈が長いなら、設定の見直しを促す。
 const MIN_OUTPUT_TOKENS: usize = 512;
+/// この長さ以上の文脈を持つモデルには、資料を広く渡し、書き終えた本文をそのまま渡す。
+/// ローカル LLM の 16,384 トークンで実測して決めた資料の上限の動きを変えないよう、それより十分に大きい値にしている。
+pub(crate) const WIDE_CONTEXT_TOKENS: u32 = 32_000;
+/// 長い文脈のモデルに、本文と一緒に資料を渡すときの、資料 1 つの上限の字数。
+const WIDE_MATERIAL_CHARS: usize = 30_000;
+/// 本文を除いた残りの予算を、いくつに分けて資料に割り振るか。1 つのプロンプトに入る資料は多くても
+/// 4 種類（企画・世界観・あらすじ・人物の一覧）なので、全部が上限まであっても文脈に収まる。
+const MATERIAL_SHARES: usize = 4;
+
+/// 本文と一緒に渡す資料の上限（[`Stage::material_budget`]）。
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct MaterialBudget {
+    /// 資料 1 種類に使ってよい字数。広げないときは 0。
+    chars_per_share: usize,
+}
+
+impl MaterialBudget {
+    /// 資料 1 つの上限の字数。広げない場合は `narrow_chars`。
+    pub fn chars(self, narrow_chars: usize) -> usize {
+        narrow_chars.max(self.chars_per_share)
+    }
+
+    /// `count` 個で 1 種類の資料（人物の一覧など）の、1 つあたりの上限の字数。
+    pub fn chars_each(self, narrow_chars: usize, count: usize) -> usize {
+        narrow_chars.max(self.chars_per_share / count.max(1))
+    }
+}
 
 /// 1 つのタスクの実行に必要なものをまとめたもの。
 pub(crate) struct Stage<'a> {
@@ -81,6 +111,36 @@ impl<'a> Stage<'a> {
     fn usable_context(&self) -> usize {
         let context = self.settings.context_tokens as usize;
         context - context / 20
+    }
+
+    /// すでに書かれている本文（読む順）。資料の生成で、本文と矛盾させないために渡す。
+    /// `output_tokens` を確保したあとの文脈の予算の半分に収まるよう、先頭から切り詰める。本文が無ければ空。
+    /// 章立てが読めなくても資料の生成は止めない（壊れた章立てがあっても、企画などは作れるようにする）。
+    pub fn existing_manuscript(&self, output_tokens: u32) -> String {
+        let text = materials::manuscript_text(self.project).unwrap_or_else(|error| {
+            notice(
+                self.caller.sink(),
+                NoticeLevel::Warning,
+                format!("章立てを読めないため、本文を資料の生成に渡しません: {error}"),
+            );
+            String::new()
+        });
+        excerpt::head(&text, self.prompt_budget(output_tokens) / 2)
+    }
+
+    /// 本文と一緒に渡す資料の上限。長い文脈のモデルで本文があるときだけ広げる（本文が無いときのプロンプトは変えないため）。
+    /// `output_tokens` と本文の分を除いた残りの予算で決めるので、広げたせいで文脈に収まらなくなることはない。
+    pub fn material_budget(&self, manuscript: &str, output_tokens: u32) -> MaterialBudget {
+        let is_wide = self.settings.context_tokens >= WIDE_CONTEXT_TOKENS && !manuscript.is_empty();
+        if !is_wide {
+            return MaterialBudget::default();
+        }
+        let room = self
+            .prompt_budget(output_tokens)
+            .saturating_sub(estimate_tokens(manuscript));
+        MaterialBudget {
+            chars_per_share: (room / MATERIAL_SHARES).min(WIDE_MATERIAL_CHARS),
+        }
     }
 
     /// 出力に確保するトークン数。望ましい値 `desired` を、文脈の残りに収まるよう切り詰める。

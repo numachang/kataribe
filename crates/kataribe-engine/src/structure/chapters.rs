@@ -19,12 +19,17 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use kataribe_project::{Chapter, ChapterId, ChapterMeta, Project, RelPath, frontmatter, layout};
+use kataribe_project::{
+    Chapter, ChapterId, ChapterMeta, Project, RelPath, SceneId, ScenePlan, frontmatter, layout,
+};
 
 use super::plan::{RenumberedChapter, StructurePlan, Wording};
 use super::position::{ensure_new_position, move_item};
 use crate::change_set::{ChangeSet, FileChange};
 use crate::error::{EngineError, Result};
+
+/// 1 つの章に入れられるシーンの数。シーンの ID は `s999` まで（`s1000` は章立てを読めなくする）。
+const MAX_SCENES_PER_CHAPTER: usize = 999;
 
 /// 章を足す変更案。後ろの章の番号を振り直し、新しい章の章立て（シーン構成なし）を新規に書く。
 pub(super) fn add(
@@ -33,15 +38,7 @@ pub(super) fn add(
     title: &str,
     storyline: &str,
 ) -> Result<StructurePlan> {
-    let title = title.trim();
-    if title.is_empty() {
-        return Err(EngineError::InvalidInput("章題を入力してください。".into()));
-    }
-    if title.contains(['\n', '\r']) {
-        return Err(EngineError::InvalidInput(
-            "章題は 1 行で入力してください。".into(),
-        ));
-    }
+    let title = validated_title(title)?;
     let existing = project.chapter_ids()?;
     let (new_id, shifted) = match before {
         Some(before) => {
@@ -74,6 +71,69 @@ pub(super) fn add(
         renumbered,
         ..StructurePlan::new(changes, &wording).opening(path)
     })
+}
+
+/// 本文のある章を末尾に足す変更案（原稿の取り込み）。章立てと、シーンごとの本文を新規に書く。
+/// 本文のシーンには題の代わりに番号を付け、あらすじは空にする（要約は本文から作られる）。
+pub(super) fn add_with_manuscript(
+    project: &Project,
+    title: &str,
+    scene_texts: &[&str],
+) -> Result<StructurePlan> {
+    let title = validated_title(title)?;
+    if scene_texts.len() > MAX_SCENES_PER_CHAPTER {
+        return Err(EngineError::InvalidInput(format!(
+            "シーンが {} 個になり、1 つの章に入れられる数（{MAX_SCENES_PER_CHAPTER}）を超えます。--min-scene-chars を大きくするか、原稿を分けて取り込んでください。",
+            scene_texts.len()
+        )));
+    }
+    let new_id = next_chapter_id(&project.chapter_ids()?)?;
+    let wording = Wording::new(format!(
+        "{}を {} シーンで取り込み",
+        chapter_label(new_id, Some(title)),
+        scene_texts.len()
+    ));
+    let mut changes = ChangeSet::new(wording.planned());
+    let mut scene_ids: Vec<SceneId> = Vec::new();
+    let mut scenes = Vec::new();
+    for (index, text) in scene_texts.iter().enumerate() {
+        let id = SceneId::next_available(&scene_ids);
+        scene_ids.push(id);
+        scenes.push(imported_scene(id, index + 1));
+        changes.put(
+            layout::scene_text_path(&new_id, &id),
+            format!("{text}\n"),
+            None,
+        );
+    }
+    let path = layout::chapter_path(&new_id);
+    let chapter = Chapter {
+        id: new_id,
+        meta: ChapterMeta {
+            title: title.to_owned(),
+            scenes,
+            extra: BTreeMap::new(),
+        },
+        storyline: String::new(),
+    };
+    changes.put(path.clone(), chapter.render()?, None);
+    ensure_slots_free(project, &changes, [new_id])?;
+    Ok(StructurePlan::new(changes, &wording).opening(path))
+}
+
+fn imported_scene(id: SceneId, number: usize) -> ScenePlan {
+    ScenePlan {
+        id,
+        title: format!("シーン {number}"),
+        summary: String::new(),
+        pov: None,
+        characters: Vec::new(),
+        place: None,
+        time: None,
+        target_chars: None,
+        beats: Vec::new(),
+        extra: BTreeMap::new(),
+    }
 }
 
 /// 章を消す変更案。章立てと本文のフォルダをゴミ箱へ移し、後ろの章の番号を 1 つ前へずらす。
@@ -180,6 +240,19 @@ fn chapters_where(existing: &[ChapterId], keep: impl Fn(u32) -> bool) -> Vec<Cha
 }
 
 /// 末尾に足す章の id。最大の番号の次で、章が無ければ 01。
+fn validated_title(title: &str) -> Result<&str> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(EngineError::InvalidInput("章題を入力してください。".into()));
+    }
+    if title.contains(['\n', '\r']) {
+        return Err(EngineError::InvalidInput(
+            "章題は 1 行で入力してください。".into(),
+        ));
+    }
+    Ok(title)
+}
+
 fn next_chapter_id(existing: &[ChapterId]) -> Result<ChapterId> {
     let Some(last) = existing.iter().max_by_key(|id| id.number()) else {
         return Ok(ChapterId::from_number(1));

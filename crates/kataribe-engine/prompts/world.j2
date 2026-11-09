@@ -12,6 +12,10 @@
 
 {{ m.document("企画", concept) }}
 
+{% if manuscript %}
+{{ m.existing_manuscript(manuscript) }}
+
+{% endif %}
 【指示】
 この作品の世界観の資料を書いてください。物語に関係する要素に絞り、書き手が場面を描くときに参照できるよう具体的に書くこと。
 
