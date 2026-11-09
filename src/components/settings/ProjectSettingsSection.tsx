@@ -89,7 +89,7 @@ export function ProjectSettingsSection({ app, value, onChange }: ProjectSettings
     );
   }
 
-  function switchRow(key: "polish" | "disable_thinking", label: string) {
+  function switchRow(key: "polish" | "disable_thinking" | "show_dont_tell", label: string) {
     return (
       <OverrideRow
         label={label}
@@ -225,6 +225,7 @@ export function ProjectSettingsSection({ app, value, onChange }: ProjectSettings
         {numberRow("quality_retries", "品質チェックの再生成回数")}
         {switchRow("polish", "本文を書いたあとに推敲パスをかける")}
         {switchRow("disable_thinking", "推論モデルの思考を止める")}
+        {switchRow("show_dont_tell", "「行動・会話・五感の描写で場面を立ち上げる」約束を入れる")}
       </section>
     </>
   );

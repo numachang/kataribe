@@ -103,6 +103,10 @@ pub struct GenerationSettings {
     /// 推論モデルの「思考」を止める。ローカル LLM では思考に出力の上限を使い切って
     /// 本文が空になることがあるため、既定で止める。クラウドの API でエラーになる場合は切る。
     pub disable_thinking: bool,
+    /// 「説明で済ませず、行動・会話・五感の描写で場面を立ち上げる」という組み込みの約束を、
+    /// 本文の生成と推敲のプロンプトに入れるか。地の文で理屈を重ねる文体の作品では、
+    /// この一般則が文体ガイドより強く効いて短い会話中心の文になるため、作品ごとに外せる。
+    pub show_dont_tell: bool,
 }
 
 impl Default for GenerationSettings {
@@ -115,6 +119,7 @@ impl Default for GenerationSettings {
             polish: false,
             quality_retries: 1,
             disable_thinking: true,
+            show_dont_tell: true,
         }
     }
 }

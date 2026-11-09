@@ -70,6 +70,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     polish: true,
     quality_retries: 1,
     disable_thinking: true,
+    show_dont_tell: true,
   },
   editor: { vertical: true, font_style: "mincho", font_size: 17, line_height: 1.9 },
   recent_projects: [SAMPLE_PROJECT_FOLDER],

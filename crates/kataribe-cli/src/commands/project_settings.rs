@@ -141,6 +141,7 @@ fn as_project_settings(effective: &EngineSettings) -> ProjectSettings {
     settings.polish = Some(generation.polish);
     settings.quality_retries = Some(generation.quality_retries);
     settings.disable_thinking = Some(generation.disable_thinking);
+    settings.show_dont_tell = Some(generation.show_dont_tell);
     settings
 }
 

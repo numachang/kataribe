@@ -17,6 +17,7 @@ const KNOWN_PROJECT_SETTINGS: Record<keyof ProjectSettings, true> = {
   polish: true,
   quality_retries: true,
   disable_thinking: true,
+  show_dont_tell: true,
 };
 
 /**
@@ -64,6 +65,7 @@ export function applyProjectSettings(
       polish: project.polish ?? base.generation.polish,
       quality_retries: project.quality_retries ?? base.generation.quality_retries,
       disable_thinking: project.disable_thinking ?? base.generation.disable_thinking,
+      show_dont_tell: project.show_dont_tell ?? base.generation.show_dont_tell,
     },
   };
 }

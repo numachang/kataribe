@@ -128,6 +128,7 @@ async fn polish(stage: &Stage<'_>, job: &ProseJob<'_>, draft: Attempt) -> Result
             style => excerpt::head(job.style, STYLE_CHARS_FOR_POLISH),
             text => &draft.text,
             issues => issues,
+            show_dont_tell => stage.settings.show_dont_tell,
         },
     )?;
     let original_chars = count_chars(&draft.text);

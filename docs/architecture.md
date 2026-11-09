@@ -532,7 +532,7 @@ Gemma には前者だけ、Qwen には後者だけが効き、両方を指定す
 
 | 書ける項目 | 書けない項目（アプリ全体の設定だけ） |
 |---|---|
-| `provider`・`model`・`claude_model`・`codex_model`・`codex_reasoning_effort`・`draft_unit`・`chars_per_call`・`context_tokens`・`temperature`・`polish`・`quality_retries`・`disable_thinking` | `base_url`・`claude_command`・`codex_command`（PC ごとに違いうる）、API キー、エディタの見た目、最近の作品 |
+| `provider`・`model`・`claude_model`・`codex_model`・`codex_reasoning_effort`・`draft_unit`・`chars_per_call`・`context_tokens`・`temperature`・`polish`・`quality_retries`・`disable_thinking`・`show_dont_tell` | `base_url`・`claude_command`・`codex_command`（PC ごとに違いうる）、API キー、エディタの見た目、最近の作品 |
 
 - どの項目も省略でき、省略した項目はアプリ全体の設定を使う。空なら `settings` の項目ごと書かない。
 - この版が知らない項目は、保存し直しても残す（新しい版で足した設定を古い版で消さないため）。
