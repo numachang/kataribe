@@ -14,6 +14,7 @@ use crate::prompt::{Prompt, PromptTemplate};
 use crate::settings::DraftUnit;
 use crate::stages::Stage;
 use crate::stages::materials::CharacterBrief;
+use crate::stages::references;
 
 /// 文体ガイドのうち、切り詰めても残したい節（見出しに含まれる語）。
 const STYLE_ESSENTIALS: &[&str] = &["文体見本", "人称", "視点", "避けること"];
@@ -43,6 +44,8 @@ struct Caps {
     profile: usize,
     story_entries: usize,
     previous_text: usize,
+    /// 文体の手本（参考文の抜粋）の合計字数。文体ガイドより先に減らす。
+    references: usize,
 }
 
 const LEVELS: [Caps; 6] = [
@@ -52,6 +55,7 @@ const LEVELS: [Caps; 6] = [
         profile: 900,
         story_entries: 12,
         previous_text: 1500,
+        references: 0,
     },
     Caps {
         style: 2500,
@@ -59,6 +63,7 @@ const LEVELS: [Caps; 6] = [
         profile: 900,
         story_entries: 8,
         previous_text: 1500,
+        references: 0,
     },
     Caps {
         style: 2500,
@@ -66,6 +71,7 @@ const LEVELS: [Caps; 6] = [
         profile: 600,
         story_entries: 5,
         previous_text: 1500,
+        references: 0,
     },
     Caps {
         style: 2000,
@@ -73,6 +79,7 @@ const LEVELS: [Caps; 6] = [
         profile: 400,
         story_entries: 3,
         previous_text: 1000,
+        references: 0,
     },
     Caps {
         style: 1500,
@@ -80,6 +87,7 @@ const LEVELS: [Caps; 6] = [
         profile: 250,
         story_entries: 2,
         previous_text: 800,
+        references: 0,
     },
     Caps {
         style: 1000,
@@ -87,26 +95,40 @@ const LEVELS: [Caps; 6] = [
         profile: 150,
         story_entries: 1,
         previous_text: 500,
+        references: 0,
     },
 ];
 
-/// 長い文脈を持つモデルで、`LEVELS` より先に試す段。
-const WIDE_LEVELS: [Caps; 2] = [
+/// 長い文脈を持つモデルで、`LEVELS` より先に試す段。段を下げるときは、資料より先に文体の手本を減らす。
+const WIDE_LEVELS: [Caps; 4] = [
     Caps {
-        style: 30_000,
-        world: 30_000,
-        profile: 8_000,
-        story_entries: usize::MAX,
-        previous_text: 30_000,
+        references: 20_000,
+        ..WIDEST_MATERIALS
     },
+    Caps {
+        references: 6_000,
+        ..WIDEST_MATERIALS
+    },
+    WIDEST_MATERIALS,
     Caps {
         style: 8_000,
         world: 8_000,
         profile: 3_000,
         story_entries: 30,
         previous_text: 8_000,
+        references: 0,
     },
 ];
+
+/// 長い文脈のモデルに、文体の手本を含めずに渡す資料の上限。
+const WIDEST_MATERIALS: Caps = Caps {
+    style: 30_000,
+    world: 30_000,
+    profile: 8_000,
+    story_entries: usize::MAX,
+    previous_text: 30_000,
+    references: 0,
+};
 
 const NARROWEST_LEVEL: Caps = LEVELS[LEVELS.len() - 1];
 
@@ -166,6 +188,8 @@ pub(crate) struct DraftMaterial<'a> {
     pub verbatim_scenes: &'a [VerbatimScene],
     /// このシーンより前の本文の末尾（使いすぎの表現を探すのに使う）。
     pub recent_prose: &'a str,
+    /// 文体の手本にする参考文（`references/`）。
+    pub references: &'a [String],
 }
 
 #[derive(Debug, Serialize)]
@@ -245,6 +269,7 @@ impl DraftMaterial<'_> {
                 characters => self.cast(caps.profile),
                 story_so_far => &self.story_so_far[story_start..],
                 verbatim_scenes => self.verbatim_scenes,
+                style_examples => references::excerpts(self.references, caps.references),
                 chapter => self.chapter_context(),
                 scene => self.scene_context(),
                 unit => unit_name(self.unit),
@@ -386,11 +411,29 @@ mod tests {
         let all: Vec<Caps> = levels_for(WIDE_CONTEXT_TOKENS).collect();
         for pair in all.windows(2) {
             let (wider, narrower) = (pair[0], pair[1]);
+            assert!(narrower.references <= wider.references);
             assert!(narrower.style <= wider.style);
             assert!(narrower.world <= wider.world);
             assert!(narrower.profile <= wider.profile);
             assert!(narrower.story_entries <= wider.story_entries);
             assert!(narrower.previous_text <= wider.previous_text);
+        }
+    }
+
+    #[test]
+    fn the_measured_levels_never_carry_style_examples() {
+        assert!(LEVELS.iter().all(|caps| caps.references == 0));
+    }
+
+    #[test]
+    fn style_examples_are_dropped_before_any_material_is_narrowed() {
+        let [widest, reduced, without_examples, ..] = WIDE_LEVELS;
+        assert!(widest.references > reduced.references && reduced.references > 0);
+        assert_eq!(without_examples.references, 0);
+        for level in [widest, reduced] {
+            assert_eq!(level.style, without_examples.style);
+            assert_eq!(level.profile, without_examples.profile);
+            assert_eq!(level.previous_text, without_examples.previous_text);
         }
     }
 

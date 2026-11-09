@@ -12,6 +12,7 @@ use kataribe_project::{ChapterId, SceneId};
 
 use super::Stage;
 use super::materials::require;
+use super::references;
 use crate::change_set::ChangeSet;
 use crate::error::Result;
 use crate::settings::DraftUnit;
@@ -47,6 +48,7 @@ pub(super) async fn write(
     // そのまま渡すシーンの要約は要らないので、LLM に作らせない
     let story_so_far = digest::story_so_far(stage, &story, verbatim.start).await?;
     let recent_prose = story.recent_prose(stage.project, position, RECENT_PROSE_CHARS)?;
+    let references = references::load(stage)?;
     let material = DraftMaterial {
         story: &story,
         position,
@@ -55,6 +57,7 @@ pub(super) async fn write(
         story_so_far: &story_so_far,
         verbatim_scenes: &verbatim.scenes,
         recent_prose: &recent_prose,
+        references: &references,
     };
     match stage.settings.draft_unit {
         DraftUnit::Scene => units::by_scene(stage, &material).await,

@@ -6,6 +6,7 @@ use minijinja::context;
 
 use super::Stage;
 use super::materials::{briefs, document_body, require, world_text};
+use super::references;
 use crate::change_set::ChangeSet;
 use crate::cleanup::clean_markdown;
 use crate::error::{EngineError, Result};
@@ -18,6 +19,10 @@ const DOCUMENT_OUTPUT_TOKENS: u32 = 4096;
 const CONCEPT_CHARS: usize = 2500;
 const WORLD_CHARS: usize = 2500;
 const PROFILE_CHARS: usize = 400;
+/// 文体ガイドの「文体見本」として参考文から引く字数。
+const STYLE_SAMPLE_CHARS: usize = 600;
+/// 文体ガイドの見本の見出し。
+const STYLE_SAMPLE_HEADING: &str = "文体見本";
 
 pub(super) async fn concept(stage: &Stage<'_>) -> Result<ChangeSet> {
     require(
@@ -33,11 +38,47 @@ pub(super) async fn concept(stage: &Stage<'_>) -> Result<ChangeSet> {
 
 pub(super) async fn style(stage: &Stage<'_>) -> Result<ChangeSet> {
     let concept = required_concept(stage)?;
+    let references = references::load(stage)?;
+    let excerpts =
+        references::excerpts(&references, stage.prompt_budget(DOCUMENT_OUTPUT_TOKENS) / 2);
+    // 読ませていない参考文の見本を足すと、ガイドと見本が食い違う
+    let sample = if excerpts.is_empty() {
+        None
+    } else {
+        references::sample(&references, STYLE_SAMPLE_CHARS)
+    };
+    if !references.is_empty() && sample.is_none() {
+        notice(
+            stage.caller.sink(),
+            NoticeLevel::Warning,
+            "文脈の長さが足りず参考文を読ませられないので、参考文を使わずに文体ガイドを作ります。使うには設定の「文脈の長さ」を増やしてください。",
+        );
+    }
     let prompt = stage.prompts.render(
         PromptTemplate::Style,
-        &context! { project => &stage.info, concept => concept },
+        &context! {
+            project => &stage.info,
+            concept => concept,
+            references => excerpts,
+        },
     )?;
-    generate(stage, "文体ガイド", layout::STYLE, &prompt).await
+    generate_finished_by(stage, "文体ガイド", layout::STYLE, &prompt, |body| {
+        with_style_sample(body, sample.as_deref())
+    })
+    .await
+}
+
+/// 参考文があるときの文体ガイドの見本は、LLM に作文させず、書き手の文章そのものから引く。
+/// LLM が指示に反して「文体見本」の節を書いていたら、それは捨てる。
+fn with_style_sample(body: String, sample: Option<&str>) -> String {
+    let Some(sample) = sample else {
+        return body;
+    };
+    let without_sample = excerpt::without_section(&body, STYLE_SAMPLE_HEADING);
+    format!(
+        "{}\n\n## {STYLE_SAMPLE_HEADING}\n{sample}\n",
+        without_sample.trim_end()
+    )
 }
 
 pub(super) async fn world(stage: &Stage<'_>) -> Result<ChangeSet> {
@@ -77,11 +118,22 @@ async fn generate(
     path: &str,
     prompt: &Prompt,
 ) -> Result<ChangeSet> {
+    generate_finished_by(stage, label, path, prompt, |body| body).await
+}
+
+/// 資料を生成し、`finish` で仕上げてから変更案にする。
+async fn generate_finished_by(
+    stage: &Stage<'_>,
+    label: &str,
+    path: &str,
+    prompt: &Prompt,
+    finish: impl FnOnce(String) -> String,
+) -> Result<ChangeSet> {
     let path = RelPath::new(path)?;
     let base = stage.snapshot(&path)?;
     let output_tokens = stage.output_tokens(prompt, DOCUMENT_OUTPUT_TOKENS)?;
     let body = write_document(stage, &format!("{label}を生成"), prompt, output_tokens).await?;
-    let content = replace_body(base.as_ref(), body)?;
+    let content = replace_body(base.as_ref(), finish(body))?;
     let mut changes = ChangeSet::new(format!("{label}を生成しました。"));
     changes.put(path, content, base);
     Ok(changes)
