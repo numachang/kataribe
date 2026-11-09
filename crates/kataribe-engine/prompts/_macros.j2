@@ -52,6 +52,11 @@
 {% if scene.pov %}視点: {{ scene.pov }}　{% endif %}{% if scene.place %}場所: {{ scene.place }}　{% endif %}{% if scene.time %}時間: {{ scene.time }}　{% endif %}{% if scene.characters %}登場: {{ scene.characters | join("、") }}{% endif %}
 {% endmacro %}
 
+{% macro existing_manuscript(text) %}
+【すでに書かれている本文（作者の原稿。この本文と矛盾させない。人物・小道具・語り口・起きた出来事は本文のとおりにする）】
+{{ text }}
+{% endmacro %}
+
 {% macro output_rules() %}
 【出力の約束】
 - 日本語で書く。

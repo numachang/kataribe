@@ -240,6 +240,47 @@ async fn generate_reports_missing_prerequisites_as_a_failure() {
 }
 
 #[tokio::test]
+async fn import_turns_a_text_file_into_a_chapter_that_status_counts() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let project_dir = temp_dir.path().join("my-novel");
+    create_test_project(&project_dir).await;
+    let draft = temp_dir.path().join("draft.txt");
+    let paragraph = format!("　{}。\n", "雨".repeat(300));
+    std::fs::write(&draft, format!("{paragraph}\n{paragraph}")).unwrap();
+
+    let import_console = BufferConsole::new();
+    let code = run(
+        [
+            "kataribe-cli".to_owned(),
+            "import".to_owned(),
+            project_dir.display().to_string(),
+            "--from".to_owned(),
+            draft.display().to_string(),
+            "--chapter-title".to_owned(),
+            "第一章".to_owned(),
+        ],
+        &import_console,
+    )
+    .await;
+    assert_eq!(code, std::process::ExitCode::from(0));
+
+    let status_console = BufferConsole::new();
+    let code = run(
+        [
+            "kataribe-cli".to_owned(),
+            "status".to_owned(),
+            project_dir.display().to_string(),
+            "--json".to_owned(),
+        ],
+        &status_console,
+    )
+    .await;
+    assert_eq!(code, std::process::ExitCode::from(0));
+    let payload: Value = serde_json::from_str(&status_console.stdout()).unwrap();
+    assert_eq!(payload["overview"]["total_chars"], 602);
+}
+
+#[tokio::test]
 async fn unknown_task_argument_is_a_usage_error() {
     let temp_dir = tempfile::tempdir().unwrap();
     let console = BufferConsole::new();

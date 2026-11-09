@@ -29,15 +29,16 @@ pub(super) async fn concept(stage: &Stage<'_>) -> Result<ChangeSet> {
         !stage.info.idea.is_empty(),
         "企画の種（作品情報の idea）を書いてから生成してください。",
     )?;
+    let manuscript = stage.existing_manuscript(DOCUMENT_OUTPUT_TOKENS);
     let prompt = stage.prompts.render(
         PromptTemplate::Concept,
-        &context! { project => &stage.info },
+        &context! { project => &stage.info, manuscript => manuscript },
     )?;
     generate(stage, "企画", layout::CONCEPT, &prompt).await
 }
 
 pub(super) async fn style(stage: &Stage<'_>) -> Result<ChangeSet> {
-    let concept = required_concept(stage)?;
+    let concept = required_concept(stage, CONCEPT_CHARS)?;
     let references = references::load(stage)?;
     let excerpts =
         references::excerpts(&references, stage.prompt_budget(DOCUMENT_OUTPUT_TOKENS) / 2);
@@ -82,16 +83,18 @@ fn with_style_sample(body: String, sample: Option<&str>) -> String {
 }
 
 pub(super) async fn world(stage: &Stage<'_>) -> Result<ChangeSet> {
-    let concept = required_concept(stage)?;
+    let manuscript = stage.existing_manuscript(DOCUMENT_OUTPUT_TOKENS);
+    let concept = required_concept(stage, stage.material_chars(CONCEPT_CHARS, &manuscript))?;
     let prompt = stage.prompts.render(
         PromptTemplate::World,
-        &context! { project => &stage.info, concept => concept },
+        &context! { project => &stage.info, concept => concept, manuscript => manuscript },
     )?;
     generate(stage, "世界観", layout::WORLD_OVERVIEW, &prompt).await
 }
 
 pub(super) async fn synopsis(stage: &Stage<'_>) -> Result<ChangeSet> {
-    let concept = required_concept(stage)?;
+    let manuscript = stage.existing_manuscript(DOCUMENT_OUTPUT_TOKENS);
+    let concept = required_concept(stage, stage.material_chars(CONCEPT_CHARS, &manuscript))?;
     let characters = stage.project.characters()?;
     require(!characters.is_empty(), "先に登場人物を生成してください。")?;
     let prompt = stage.prompts.render(
@@ -99,17 +102,21 @@ pub(super) async fn synopsis(stage: &Stage<'_>) -> Result<ChangeSet> {
         &context! {
             project => &stage.info,
             concept => concept,
-            world => excerpt::head(&world_text(stage.project)?, WORLD_CHARS),
-            characters => briefs(&characters, PROFILE_CHARS),
+            world => excerpt::head(
+                &world_text(stage.project)?,
+                stage.material_chars(WORLD_CHARS, &manuscript),
+            ),
+            characters => briefs(&characters, stage.material_chars(PROFILE_CHARS, &manuscript)),
+            manuscript => manuscript,
         },
     )?;
     generate(stage, "あらすじ", layout::SYNOPSIS, &prompt).await
 }
 
-fn required_concept(stage: &Stage<'_>) -> Result<String> {
+fn required_concept(stage: &Stage<'_>, max_chars: usize) -> Result<String> {
     let concept = document_body(stage.project, layout::CONCEPT)?;
     require(!concept.is_empty(), "先に企画を生成してください。")?;
-    Ok(excerpt::head(&concept, CONCEPT_CHARS))
+    Ok(excerpt::head(&concept, max_chars))
 }
 
 async fn generate(

@@ -7,7 +7,7 @@ use kataribe_engine::{DraftUnit, LlmProvider, Task};
 use kataribe_project::Rating;
 
 use crate::stage::Stage;
-use crate::structure_args::{AddArgs, MoveArgs, RemoveArgs};
+use crate::structure_args::{AddArgs, ImportArgs, MoveArgs, RemoveArgs};
 use crate::task_spec::TaskSpec;
 
 /// GUI と同じ執筆エンジンを画面なしで動かす。
@@ -111,6 +111,8 @@ pub enum Command {
     Run(RunArgs),
     /// 登場人物・世界観の資料・章・シーンを、自分で書いて足す（LLM は使わない）。
     Add(AddArgs),
+    /// 手元のテキスト原稿を、1 つの章として末尾に取り込む（LLM は使わない）。
+    Import(ImportArgs),
     /// 登場人物・世界観の資料・章・シーンを、ゴミ箱（.kataribe/trash/）へ移して消す（LLM は使わない）。
     Remove(RemoveArgs),
     /// 登場人物・章・シーンの順番を変える（LLM は使わない）。章を動かすと、動く範囲の章の番号を振り直す。

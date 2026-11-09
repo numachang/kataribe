@@ -42,8 +42,9 @@ pub use settings::{
     load_settings, save_settings,
 };
 pub use structure::{
-    NewScenePlan, RenumberedChapter, SceneReference, StructureEdit, StructurePlan,
-    plan_structure_edit, suggest_character_id,
+    DEFAULT_MIN_SCENE_CHARS, ManuscriptImport, NewScenePlan, RenumberedChapter, SceneReference,
+    StructureEdit, StructurePlan, plan_manuscript_import, plan_structure_edit,
+    suggest_character_id,
 };
 pub use task::Task;
 

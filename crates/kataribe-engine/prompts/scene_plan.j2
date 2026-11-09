@@ -18,6 +18,10 @@
 {{ other.number }}. {{ other.title }}{% if other.is_current %}　←今回{% endif %}: {{ other.storyline }}
 {% endfor %}
 
+{% if manuscript %}
+{{ m.existing_manuscript(manuscript) }}
+
+{% endif %}
 【指示】
 第{{ chapter.number }}章「{{ chapter.title }}」を {{ scene_count }} 個のシーンに分け、JSON で出力してください。
 - この章のストーリーラインの出来事を漏らさず、順序を変えずに配分すること。前後の章の出来事は含めないこと。

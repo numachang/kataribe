@@ -393,6 +393,10 @@ Claude Code と同じ考え方で、ChatGPT のログインで動く Codex CLI �
 | `AddCharacter { instruction }` | 企画・世界観・既存の人物・あらすじの抜粋・指示 | 新しい人物 `characters/<id>.md`（項目と本文。LLM を 2 回呼ぶ） |
 | `AddWorldDocument { name, instruction }` | 企画・世界観の概要と既存の資料・既存の資料の題・人物・指示 | 新しい世界観の資料 `world/<name>.md`（`name` が `None` なら題から決める） |
 
+企画・世界観・登場人物・人物資料・あらすじ・章立て・シーン構成の生成は、すでに本文があれば（§4.8.1 の取り込みなど）、その本文も渡して「本文と矛盾させない」と指示する。
+文脈の予算の半分までを本文の先頭から渡す。`context_tokens` が 32,000 以上で本文があるときは、一緒に渡す資料の上限も広げる。本文が無いときのプロンプトは変わらない。文体ガイドだけは本文を読まない（手本は `references/` で書き手が選ぶ。§4.3.1）。
+シーン構成の字数は、ほかの章に本文があれば、目標からその字数を引いた残りを本文のない章で分ける（下限は 1 章 1,000 字）。
+
 `Revise`・`AddCharacter`・`AddWorldDocument` は、取りかかれる工程ではないので工程の一覧（`pipeline`）には出ない。
 `AddCharacter` / `AddWorldDocument` は、指示から人物・世界観の資料を 1 つ作って足す（自分で書いて足す構成の操作 §4.8 の、LLM に作らせる版）。
 `stages/addition/` が、LLM の出力を検証して `StructureEdit::AddCharacter` / `AddWorldDocument` に組み立て、`plan_structure_edit` に渡して変更案にする。
@@ -667,6 +671,18 @@ pub struct StructurePlan {
 - 目次の項目 `OverviewEntry` は、章立て・本文の章見出し・シーンの本文の項目に `chapter`、シーンの本文の項目に `scene` を持つ
   （本文の章見出しにはパスが無いので、画面が章番号を知るため）。
 
+### 4.8.1 原稿の取り込み
+
+手元のテキスト原稿から作品を始めるための操作（`plan_manuscript_import`）。LLM も設定も使わない。今は CLI（`import`）だけから使える。
+取り込む範囲は、ファイルを切り出して渡す（範囲の指定は無い）。
+
+- 章立てと本文を、全部か無しかで反映する変更案（`StructurePlan`）にする。章は末尾に足す（番号の規則は `AddChapter` と同じ）。章が置かれる場所が塞がっていれば断る。
+  本文のファイルも章立ても新規（「無いこと」が条件）なので、同じ番号の本文を上書きしない。
+- 空行をシーンの区切りにする。全角空白だけの行も空行とみなす。短すぎる塊（既定は 200 字未満。場面の書き出しの一文だけを独立させたものなど）は次のシーンにつなげ、最後の塊なら前のシーンにつなげる。つなぐ間の空行は書かれたまま残す。
+- 本文は書かれたまま取り込む（字下げ・記号を整形しない。行末の全角空白も残る）。BOM と CRLF だけを正規化する。空のシーンは作らない。
+- シーンの題は「シーン 1」のように番号で付け、あらすじは空にする（これまでの物語の要約は、今と同じく本文から作られる）。`target_chars` は付けない。
+- 本文のあるシーンは「済み」なので、取り込めばその後のシーンの本文に進める。続きの章は `add chapter` と `scenes:<NN>` で作る（章立ての工程は、章が 1 つでもあれば「済み」になり、`outline` では作れない）。
+
 ## 5. アプリ（src-tauri）と画面（src）
 
 - Rust 側は engine を Tauri コマンドとして公開するだけの薄い層にする。
@@ -934,6 +950,8 @@ kataribe-cli [グローバルオプション] <サブコマンド>
   add world     <FOLDER> --title <T> [--name <SLUG>] [--body <T> | --body-file <PATH>] [--dry-run]
   add chapter   <FOLDER> --title <T> [--storyline <T> | --storyline-file <PATH>] [--before <NN>] [--dry-run]
       章を足す。--before <NN> でその章の前に入り、その番号以降の章は 1 つ後ろへずれる（省略すると末尾）
+  import <FOLDER> --from <PATH> --chapter-title <T> [--min-scene-chars <N>] [--dry-run]
+      手元のテキスト原稿（UTF-8）を 1 つの章として末尾に取り込む（LLM は使わない。§4.8.1）。短い塊をつなげる字数の既定は 200
   add scene     <FOLDER> <NN> --title <T> [--summary <T>] [--pov <名前>] [--characters <A,B>] [--place <T>]
                          [--time <T>] [--target-chars <N>] [--before <sNN>] [--dry-run]
       人物・世界観の資料・章・シーンを、自分で書いて足す（LLM は使わない。§4.8）。

@@ -52,13 +52,18 @@ pub(super) async fn roster(stage: &Stage<'_>) -> Result<ChangeSet> {
         .iter()
         .map(|character| snapshot_character(stage.project, &character.id))
         .collect::<Result<Vec<_>>>()?;
+    let manuscript = stage.existing_manuscript(ROSTER_OUTPUT_TOKENS);
     let prompt = stage.prompts.render(
         PromptTemplate::Cast,
         &context! {
             project => &stage.info,
-            concept => excerpt::head(&concept, CONCEPT_CHARS),
-            world => excerpt::head(&world_text(stage.project)?, WORLD_CHARS),
+            concept => excerpt::head(&concept, stage.material_chars(CONCEPT_CHARS, &manuscript)),
+            world => excerpt::head(
+                &world_text(stage.project)?,
+                stage.material_chars(WORLD_CHARS, &manuscript),
+            ),
             cast_size => cast_size_for(stage.manifest.target_length),
+            manuscript => manuscript,
         },
     )?;
     let output_tokens = stage.output_tokens(&prompt, ROSTER_OUTPUT_TOKENS)?;
@@ -101,15 +106,20 @@ pub(super) async fn profile(stage: &Stage<'_>, id: &CharacterId) -> Result<Chang
     let (character, base) = snapshot_character(stage.project, id)?;
     let cast = stage.project.characters()?;
     let concept = document_body(stage.project, layout::CONCEPT)?;
+    let manuscript = stage.existing_manuscript(PROFILE_OUTPUT_TOKENS);
     let prompt = stage.prompts.render(
         PromptTemplate::Character,
         &context! {
             project => &stage.info,
-            concept => excerpt::head(&concept, CONCEPT_CHARS),
-            world => excerpt::head(&world_text(stage.project)?, WORLD_CHARS),
+            concept => excerpt::head(&concept, stage.material_chars(CONCEPT_CHARS, &manuscript)),
+            world => excerpt::head(
+                &world_text(stage.project)?,
+                stage.material_chars(WORLD_CHARS, &manuscript),
+            ),
             cast => briefs(&cast, 0),
             character => CharacterBrief::new(&character, 0),
             instruction => "",
+            manuscript => manuscript,
         },
     )?;
     let output_tokens = stage.output_tokens(&prompt, PROFILE_OUTPUT_TOKENS)?;

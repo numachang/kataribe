@@ -17,6 +17,10 @@
 
 {{ m.document("あらすじ", synopsis) }}
 
+{% if manuscript %}
+{{ m.existing_manuscript(manuscript) }}
+
+{% endif %}
 【指示】
 あらすじを {{ chapter_count }} 章に分け、各章の題とストーリーラインを JSON で出力してください。
 - 各章は約{{ chars_per_chapter }}字の分量になる。一つの章に出来事を詰め込みすぎないこと。
