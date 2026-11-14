@@ -40,7 +40,10 @@ fn write_output(project: &Project, path: &Path, force: bool, text: &str) -> anyh
 /// 実体で比べれば、管理共有はもちろん、大文字小文字の違いやジャンクション越しの別名も、
 /// 実際には作品フォルダそのものなら見抜ける。
 fn reject_path_inside_project(project: &Project, path: &Path) -> anyhow::Result<()> {
-    let start = existing_ancestor(syntactic_parent(path))
+    // 相対パスの祖先をたどると最後に空のパスが現れ、実体の比較が失敗する。先に絶対パスにしておく。
+    let absolute_path = std::path::absolute(path)
+        .with_context(|| format!("書き出し先を絶対パスにできません: {}", path.display()))?;
+    let start = existing_ancestor(syntactic_parent(&absolute_path))
         .with_context(|| format!("書き出し先の親フォルダを確認できません: {}", path.display()))?;
     for ancestor in start.ancestors() {
         let is_project_root = same_file::is_same_file(ancestor, project.root())
@@ -326,6 +329,33 @@ mod tests {
         write_output(&project, &output, false, "本文").unwrap();
 
         assert_eq!(std::fs::read_to_string(&output).unwrap(), "本文");
+    }
+
+    /// カレントディレクトリを変えるテストは並行実行できないので、一つにまとめて直列に確かめる。
+    #[test]
+    fn write_output_handles_relative_destinations_against_the_current_directory() {
+        let folder = tempfile::tempdir().unwrap();
+        let project = new_project(folder.path());
+        let working_dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(working_dir.path().join("exports")).unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(working_dir.path()).unwrap();
+
+        let with_parent = write_output(&project, Path::new("exports/out.txt"), false, "本文");
+        let file_name_only = write_output(&project, Path::new("out.txt"), false, "本文");
+        std::env::set_current_dir(project.root()).unwrap();
+        let inside = write_output(&project, Path::new("novel.txt"), false, "本文");
+        std::env::set_current_dir(original_dir).unwrap();
+
+        with_parent.unwrap();
+        file_name_only.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(working_dir.path().join("exports/out.txt")).unwrap(),
+            "本文"
+        );
+        assert!(working_dir.path().join("out.txt").is_file());
+        assert!(inside.unwrap_err().to_string().contains("作品フォルダの中"));
+        assert!(!project.root().join("novel.txt").exists());
     }
 
     #[test]
